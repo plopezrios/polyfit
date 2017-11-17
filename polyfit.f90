@@ -64,7 +64,6 @@ PROGRAM polyfit
      &trim(fname)//'".')
   write(6,*)'"'//trim(fname)//'" contains '//trim(i2s(nxy))//' lines with '//&
      &trim(i2s(ncolumn))//' columns.'
-  write(6,*)
   call get_columns(ncolumn,icol_x,icol_y,icol_dx,icol_dy)
   have_dx=icol_dx>0
   have_dy=icol_dy>0
@@ -72,6 +71,58 @@ PROGRAM polyfit
   if(ialloc/=0)call quit('Allocation error.')
   call read_file(io,fname,ncolumn,icol_x,icol_y,icol_dx,icol_dy,nxy,x,y,dx,dy)
   close(io)
+
+  ! Transform data.
+  write(6,*)'The following data transformations are available:'
+  write(6,*)'  [recx] x   -> 1/x'
+  write(6,*)'  [recy] y   -> 1/y'
+  write(6,*)'  [rec]  x,y -> 1/x,1/y'
+  write(6,*)'  [logx] x   -> log(x)'
+  write(6,*)'  [logy] y   -> log(y)'
+  write(6,*)'  [log]  x,y -> log(x),log(y)'
+  write(6,*)'Enter the code of a transformation to apply (blank for none):'
+  read(5,*,iostat=ierr)char2048
+  if(ierr/=0)call quit()
+  write(6,*)
+  select case(trim(char2048))
+  case('recx')
+    if(any(abs(x)<=0.d0))&
+       &call quit('Transformation causes floating-point exception.')
+    x=1.d0/x
+    if(have_dx)dx=dx/x**2
+  case('recy')
+    if(any(abs(y)<=0.d0))&
+       &call quit('Transformation causes floating-point exception.')
+    y=1.d0/y
+    if(have_dy)dy=dy/y**2
+  case('rec')
+    if(any(abs(x)<=0.d0.or.abs(y)<=0.d0))&
+       &call quit('Transformation causes floating-point exception.')
+    x=1.d0/x
+    y=1.d0/y
+    if(have_dx)dx=dx/x**2
+    if(have_dy)dy=dy/y**2
+  case('logx')
+    if(any(x<=0.d0))&
+       &call quit('Transformation causes floating-point exception.')
+    x=log(x)
+    if(have_dx)dx=dx/x
+  case('logy')
+    if(any(y<=0.d0))&
+       &call quit('Transformation causes floating-point exception.')
+    y=log(y)
+    if(have_dy)dy=dy/y
+  case('log')
+    if(any(x<=0.d0.or.y<=0.d0))&
+       &call quit('Transformation causes floating-point exception.')
+    x=log(x)
+    y=log(y)
+    if(have_dx)dx=dx/x
+    if(have_dy)dy=dy/y
+  case default
+    write(6,*)'No transformation applied.'
+    write(6,*)
+  end select
 
   ! Various stats.
   xmin=minval(x)
@@ -180,7 +231,7 @@ PROGRAM polyfit
     x=x-x0
 
     ! Assess integer expansion orders up to order 8.
-    ntest=min(nxy,9)
+    ntest=min(nxy-1,9)
 
     ! Allocate work arrays.
     allocate(chi2_vector(ntest),rmsc_100_vector(ntest),&
@@ -252,11 +303,12 @@ PROGRAM polyfit
     write(6,*)
     write(6,'(34x,a)')'RMS curvature'
     write(6,'(22x,36("-"))')
-    write(6,'(1x,a,t10,a,t23,a,t36,a,t49,a)')'Order','chi^2','Data range',&
+    write(6,'(1x,a,t10,a,t23,a,t36,a,t49,a)')'Order','chi^2/Ndf','Data range',&
        &'+50%','+100%'
     write(6,'(1x,57("-"))')
     do npoly=1,ntest
-      write(6,'(1x,i5,4(1x,es12.4),1x,a)')npoly-1,chi2_vector(npoly),&
+      write(6,'(1x,i5,4(1x,es12.4),1x,a)')npoly-1,&
+         &chi2_vector(npoly)/dble(nxy-npoly),&
          &rmsc_100_vector(npoly),rmsc_150_vector(npoly),rmsc_200_vector(npoly)
     enddo
     write(6,'(1x,57("-"))')
@@ -483,7 +535,8 @@ PROGRAM polyfit
     write(6,*)'<x1>:<x2>:<n> a grid, "skip" to skip]:'
 
     do
-      read(5,'(a)')char2048
+      read(5,'(a)',iostat=ierr)char2048
+      if(ierr/=0)char2048='skip'
       write(6,*)
 
       char2048=adjustl(char2048)
@@ -497,6 +550,7 @@ PROGRAM polyfit
         enddo ! i
         nx=nxy
       case('skip','-','x')
+        nx=0
         exit
       case default
         ! Parse input string.
@@ -551,6 +605,7 @@ PROGRAM polyfit
 
       exit
     enddo
+    if(nx<1)cycle
 
     ! Allocate x array.
     allocate(x_target(nx),stat=ialloc)
@@ -953,7 +1008,7 @@ CONTAINS
     INTEGER ierr
 
     ! Promt and read use input.
-    write(6,*)'Enter the indices for x, y, dx, dy:'
+    write(6,*)'Enter the column indices for x, y, dx, dy:'
     read(5,'(a)',iostat=ierr)char1024
     if(ierr/=0)call quit()
     write(6,*)
@@ -1028,6 +1083,7 @@ CONTAINS
     cdata=trim(cdata)//')'
     ccol=trim(ccol)//')'
     write(6,*)'Parsing '//trim(cdata)//' from columns '//trim(ccol)//'.'
+    write(6,*)
 
   END SUBROUTINE get_columns
 
