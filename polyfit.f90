@@ -16,7 +16,7 @@ PROGRAM polyfit
   ! Local variables.
   ! (x,y,dy) data.
   CHARACTER(256) fname
-  INTEGER nxy
+  INTEGER nxy,ncolumn,icol_x,icol_y,icol_dx,icol_dy
   LOGICAL have_dx,have_dy,weighted
   DOUBLE PRECISION,ALLOCATABLE :: x(:),y(:),dx(:),dy(:),weight(:)
   DOUBLE PRECISION xrange,xmin,xmax,xcentre,xmean,xmedian
@@ -57,34 +57,20 @@ PROGRAM polyfit
   ! Read in (x,y) data from file specified by user.
   call get_file(fname)
   open(unit=io,file=trim(fname),status='old',iostat=ierr)
-  if(ierr/=0)then
-    write(6,*)'Error opening "'//trim(fname)//'".'
-    stop
-  endif ! ierr
-  call check_file(io,fname,nxy,have_dx,have_dy)
-  if(nxy<1)then
-    write(6,*)'No data found.'
-    stop
-  endif
-  if(have_dx.and.have_dy)then
-    write(6,*)'"'//trim(fname)//'" contains '//trim(i2s(nxy))//&
-       &' (x,dx,y,dy) points:'
-  elseif(have_dx)then
-    write(6,*)'"'//trim(fname)//'" contains '//trim(i2s(nxy))//&
-       &' (x,dx,y) points:'
-  elseif(have_dy)then
-    write(6,*)'"'//trim(fname)//'" contains '//trim(i2s(nxy))//&
-       &' (x,y,dy) points:'
-  else
-    write(6,*)'"'//trim(fname)//'" contains '//trim(i2s(nxy))//&
-       &' (x,y) points:'
-  endif
+  if(ierr/=0)call quit('Error opening "'//trim(fname)//'".')
+  call check_file(io,fname,nxy,ncolumn)
+  if(nxy<1)call quit('No data found in file "'//trim(fname)//'".')
+  if(ncolumn<2)call quit('Not enough data columns found in file "'//&
+     &trim(fname)//'".')
+  write(6,*)'"'//trim(fname)//'" contains '//trim(i2s(nxy))//' lines with '//&
+     &trim(i2s(ncolumn))//' columns.'
+  write(6,*)
+  call get_columns(ncolumn,icol_x,icol_y,icol_dx,icol_dy)
+  have_dx=icol_dx>0
+  have_dy=icol_dy>0
   allocate(x(nxy),y(nxy),dx(nxy),dy(nxy),weight(nxy),stat=ialloc)
-  if(ialloc/=0)then
-    write(6,*)'Allocation error.'
-    stop
-  endif ! ialloc/=0
-  call read_file(io,fname,have_dx,have_dy,nxy,x,y,dx,dy)
+  if(ialloc/=0)call quit('Allocation error.')
+  call read_file(io,fname,ncolumn,icol_x,icol_y,icol_dx,icol_dy,nxy,x,y,dx,dy)
   close(io)
 
   ! Various stats.
@@ -181,8 +167,7 @@ PROGRAM polyfit
         case default
           read(char2048,*,iostat=ierr)x0
           if(ierr<0)then
-            write(6,*)'Quitting.'
-            stop
+            call quit('Quitting.')
           elseif(ierr>0)then
             write(6,*)'Input problem, try again.'
             write(6,*)
@@ -200,20 +185,14 @@ PROGRAM polyfit
     ! Allocate work arrays.
     allocate(chi2_vector(ntest),rmsc_100_vector(ntest),&
        &rmsc_150_vector(ntest),rmsc_200_vector(ntest),stat=ialloc)
-    if(ialloc/=0)then
-      write(6,*)'Allocation error.'
-      stop
-    endif ! ialloc/=0
+    if(ialloc/=0)call quit('Allocation error.')
 
     ! Loop over expansion orders.
     do npoly=1,ntest
       ! Allocate work arrays.
       allocate(pow(npoly),a(npoly),da(npoly),op_pow((npoly*(npoly+1))/2),&
          &op_a((npoly*(npoly+1))/2),stat=ialloc)
-      if(ialloc/=0)then
-        write(6,*)'Allocation error.'
-        stop
-      endif ! ialloc/=0
+      if(ialloc/=0)call quit('Allocation error.')
       ! Fit to polynomial of order npoly-1.
       do i=1,npoly
         pow(i)=dble(i-1)
@@ -304,10 +283,7 @@ PROGRAM polyfit
         open(unit=io,file='poly_orders.dat',status='replace')
         do npoly=1,ntest
           allocate(pow(npoly),a(npoly),da(npoly),stat=ialloc)
-          if(ialloc/=0)then
-            write(6,*)'Allocation error.'
-            stop
-          endif ! ialloc/=0
+          if(ialloc/=0)call quit('Allocation error.')
           do i=1,npoly
             pow(i)=dble(i-1)
           enddo ! i
@@ -347,10 +323,7 @@ PROGRAM polyfit
         cycle parse_exp
       endif ! npoly<1 or npoly>nxy
       allocate(pow(npoly),stat=ialloc)
-      if(ialloc/=0)then
-        write(6,*)'Allocation error.'
-        stop
-      endif ! ialloc/=0
+      if(ialloc/=0)call quit('Allocation error.')
       read(char2048,*,iostat=ierr)pow(1:npoly)
       ! Make near-{,half,third,quarter}-integers exactly {*}-integers.
       do idiv=2,4
@@ -394,10 +367,7 @@ PROGRAM polyfit
 
   ! Allocate coefficient vectors.
   allocate(a(npoly),da(npoly),stat=ialloc)
-  if(ialloc/=0)then
-    write(6,*)'Allocation error (2).'
-    stop
-  endif ! ialloc/=0
+  if(ialloc/=0)call quit('Allocation error (2).')
 
   ! Print polynomial form.
   write(6,*)
@@ -457,8 +427,7 @@ PROGRAM polyfit
       read(5,'(a)',iostat=ierr)char2048
       write(6,*)
       if(ierr<0)then
-        write(6,*)'Quitting.'
-        stop
+        call quit()
       elseif(ierr>0)then
         write(6,*)'Input problem, try again.'
         cycle
@@ -483,17 +452,11 @@ PROGRAM polyfit
 
   ! Allocate work arrays.
   allocate(op_pow(npoly),op_a(npoly),stat=ialloc)
-  if(ialloc/=0)then
-    write(6,*)'Allocation problem (op_*).'
-    stop
-  endif
+  if(ialloc/=0)call quit('Allocation problem (op_*).')
   if(have_dx.or.have_dy)then
     allocate(ran_gauss_x(nxy),ran_gauss_y(nxy),ran_x(nxy),ran_y(nxy),&
        &ran_a(npoly),w_vector(nrandom),stat=ialloc)
-    if(ialloc/=0)then
-      write(6,*)'Allocation problem (w_vector).'
-      stop
-    endif
+    if(ialloc/=0)call quit('Allocation problem (w_vector).')
   endif
 
   ! Loop over sets of operations.
@@ -591,10 +554,7 @@ PROGRAM polyfit
 
     ! Allocate x array.
     allocate(x_target(nx),stat=ialloc)
-    if(ialloc/=0)then
-      write(6,*)'Allocation problem (f_array).'
-      stop
-    endif
+    if(ialloc/=0)call quit('Allocation problem (f_array).')
     if(len_trim(char2048)==0)then
       if(nx==1)then
         x_target(1)=grid_x1
@@ -611,10 +571,7 @@ PROGRAM polyfit
 
       ! Allocate work array.
       allocate(f_array(nrandom,nx),stat=ialloc)
-      if(ialloc/=0)then
-        write(6,*)'Allocation problem (f_array).'
-        stop
-      endif
+      if(ialloc/=0)call quit('Allocation problem (f_array).')
 
       ! Do random sampling of data space.
       ran_x=x
@@ -756,32 +713,17 @@ CONTAINS
     ! Invert matrix M.
     Minv=M
     call dsytrf('L',npoly,Minv(1,1),npoly,ipiv(1),tempr(1),-1,info)
-    if(info/=0)then
-      write(6,*)'Matrix inversion failed (1).'
-      stop
-    endif ! info/=0
+    if(info/=0)call quit('Matrix inversion failed (1).')
     lwork=nint(tempr(1))
     allocate(work(lwork),stat=ialloc)
-    if(ialloc/=0)then
-      write(6,*)'Allocation error: WORK (1).'
-      stop
-    endif ! ialloc/=0
+    if(ialloc/=0)call quit('Allocation error: WORK (1).')
     call dsytrf('L',npoly,Minv(1,1),npoly,ipiv(1),work(1),lwork,info)
-    if(info/=0)then
-      write(6,*)'Matrix inversion failed (2).'
-      stop
-    endif ! info/=0
+    if(info/=0)call quit('Matrix inversion failed (2).')
     deallocate(work)
     allocate(work(npoly),stat=ialloc)
-    if(ialloc/=0)then
-      write(6,*)'Allocation error: WORK (2).'
-      stop
-    endif ! ialloc/-0
+    if(ialloc/=0)call quit('Allocation error: WORK (2).')
     call dsytri('L',npoly,Minv(1,1),npoly,ipiv(1),work(1),info)
-    if(info/=0)then
-      write(6,*)'Matrix inversion failed (3).'
-      stop
-    endif ! info/=0
+    if(info/=0)call quit('Matrix inversion failed (3).')
     deallocate(work)
 
     ! Complete the upper triangle of Minv.
@@ -942,120 +884,184 @@ CONTAINS
   END SUBROUTINE get_file
 
 
-  SUBROUTINE check_file(io,fname,nline,have_dx,have_dy)
-    !------------------------------------!
-    ! Count the lines in the input file. !
-    !------------------------------------!
+  SUBROUTINE check_file(io,fname,nline,ncolumn)
+    !----------------------------------------------------!
+    ! Check file contains data, and return the number of !
+    ! data lines and the number of data columns in it.   !
+    !----------------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: io
     CHARACTER(*),INTENT(in) :: fname
-    INTEGER,INTENT(out) :: nline
-    LOGICAL,INTENT(out) :: have_dx,have_dy
-    INTEGER ierr,ipos,pline,count_dx,count_no_dx,count_dy,count_no_dy
-    DOUBLE PRECISION dummy(4)
-    CHARACTER(1024) line
-    count_dx=0
-    count_no_dx=0
-    count_dy=0
-    count_no_dy=0
+    INTEGER,INTENT(out) :: nline,ncolumn
+    CHARACTER(1024) char1024
+    INTEGER pline,ierr
+    DOUBLE PRECISION t1
+
+    ! Initialize.
     nline=0
+    ncolumn=0
     pline=0
+
     ! Look for first line containing data.
     do
-      read(io,'(a)',iostat=ierr)line
+      read(io,'(a)',iostat=ierr)char1024
       if(ierr<0)exit
       pline=pline+1
-      if(ierr>0)then
-        write(6,*)'Error reading '//trim(fname)//' at line '//&
-           &trim(i2s(pline))//'.'
-        stop
-      endif
-      line=adjustl(line)
+      if(ierr>0)call quit('Error reading '//trim(fname)//' at line '//&
+         &trim(i2s(pline))//'.')
+      char1024=adjustl(char1024)
       ! Skip comments.
-      ipos=scan(line,'#!')
+      ipos=scan(char1024,'#!')
       if(ipos==1)cycle
-      if(ipos>1)line=line(1:ipos-1)
+      if(ipos>1)char1024=char1024(1:ipos-1)
       ! Skip empty lines.
-      if(len_trim(line)==0)cycle
-      ! Try to read line with dx and dy.
-      read(line,*,iostat=ierr)dummy(1:4)
-      if(ierr/=0)then
-        ! Try to read line with dy.
-        read(line,*,iostat=ierr)dummy(1:3)
-        if(ierr/=0)then
-          ! Try to read line without dx or dy.
-          read(line,*,iostat=ierr)dummy(1:2)
-          if(ierr/=0)then
-            ! Must be one or the other.
-            write(6,*)'Error reading '//trim(fname)//' at line '//&
-               &trim(i2s(pline))//'.'
-            stop
-          endif
-          count_no_dx=count_no_dx+1
-          count_no_dy=count_no_dy+1
-        else
-          count_no_dx=count_no_dx+1
-          count_dy=count_dy+1
-        endif
+      if(len_trim(char1024)==0)cycle
+      if(ncolumn==0)then
+        ! Find how many elements there are in this line.
+        do
+          read(char1024,*,iostat=ierr)(t1,i=1,ncolumn+1)
+          if(ierr/=0)exit
+          ncolumn=ncolumn+1
+        enddo
       else
-        count_dx=count_dx+1
-        count_dy=count_dy+1
+        ! Ensure we can read ncolumn elements in this line.
+        do
+          read(char1024,*,iostat=ierr)(t1,i=1,ncolumn)
+          if(ierr==0)exit
+          ncolumn=ncolumn-1
+        enddo
       endif
+      if(ncolumn<2)call quit('Too few columns found at line '//&
+         &trim(i2s(pline))//' of file "'//trim(fname)//'".')
       nline=nline+1
     enddo
-    ! Prepare for full read.
+
+    ! Rewind file.
     rewind(io)
-    ! Error out if no data.
-    if(nline==0)then
-      write(6,*)'File '//trim(fname)//' doesn''t contain any data.'
-      stop
-    endif
-    ! Report presence of error bars if all lines have them.
-    have_dx=count_no_dx==0
-    have_dy=count_no_dy==0
-    ! Warn if some lines contain error bars and some don't.
-    if(count_dx>0.and.count_no_dx>0)then
-      write(6,*)'WARNING: '//trim(i2s(count_dx))//' lines contain dx &
-         &and '//trim(i2s(count_no_dx))//' do not.'
-      write(6,*)'Ignoring dx.'
-      write(6,*)
-    endif
-    if(count_dy>0.and.count_no_dy>0)then
-      write(6,*)'WARNING: '//trim(i2s(count_dy))//' lines contain dy &
-         &and '//trim(i2s(count_no_dy))//' do not.'
-      write(6,*)'Ignoring dy.'
-      write(6,*)
-    endif
+
   END SUBROUTINE check_file
 
 
-  SUBROUTINE read_file(io,fname,have_dx,have_dy,nxy,x,y,dx,dy)
+  SUBROUTINE get_columns(ncolumn,icol_x,icol_y,icol_dx,icol_dy)
+    !----------------------------------------!
+    ! Ask the user for which columns to use. !
+    !----------------------------------------!
+    IMPLICIT NONE
+    INTEGER, INTENT(in) :: ncolumn
+    INTEGER, INTENT(inout) :: icol_x, icol_y, icol_dx, icol_dy
+    CHARACTER(1024) char1024,cdata,ccol
+    INTEGER ierr
+
+    ! Promt and read use input.
+    write(6,*)'Enter the indices for x, y, dx, dy:'
+    read(5,'(a)',iostat=ierr)char1024
+    if(ierr/=0)call quit()
+    write(6,*)
+
+    ! Parse input.
+    if(len_trim(char1024)==0)then
+      ! Use default if empty input.
+      select case(ncolumn)
+      case(1)
+        icol_x=0
+        icol_y=1
+        icol_dx=0
+        icol_dy=1
+      case(2)
+        icol_x=1
+        icol_y=2
+        icol_dx=0
+        icol_dy=0
+      case(3)
+        icol_x=1
+        icol_y=2
+        icol_dx=0
+        icol_dy=3
+      case default
+        icol_x=1
+        icol_y=3
+        icol_dx=2
+        icol_dy=4
+      end select
+    else
+      ! Adapt parsing to number of fields in input string.
+      read(char1024,*,iostat=ierr)icol_x,icol_y,icol_dx,icol_dy
+      if(ierr/=0)then
+        icol_dx=0
+        read(char1024,*,iostat=ierr)icol_x,icol_y,icol_dy
+        if(ierr/=0)then
+          icol_dy=0
+          read(char1024,*,iostat=ierr)icol_x,icol_y
+          if(ierr/=0)then
+            icol_x=0
+            read(char1024,*,iostat=ierr)icol_y
+            if(ierr/=0)call quit('Could not parse column indices.')
+          endif
+        endif
+      endif
+      if(icol_x>ncolumn.or.icol_y>ncolumn.or.icol_dx>ncolumn.or.&
+         &icol_dy>ncolumn)call quit('Column indices out of range.')
+    endif
+
+    ! Report.
+    cdata='(x,y'
+    ccol='('
+    if(icol_x==0)then
+      ccol=trim(ccol)//'INDEX'
+    else
+      ccol=trim(ccol)//trim(i2s(icol_x))
+    endif
+    ccol=trim(ccol)//','
+    if(icol_y==0)then
+      ccol=trim(ccol)//'INDEX'
+    else
+      ccol=trim(ccol)//trim(i2s(icol_y))
+    endif
+    if(icol_dx>0)then
+      cdata=trim(cdata)//',dx'
+      ccol=trim(ccol)//','//trim(i2s(icol_dx))
+    endif
+    if(icol_dy>0)then
+      cdata=trim(cdata)//',dy'
+      ccol=trim(ccol)//','//trim(i2s(icol_dy))
+    endif
+    cdata=trim(cdata)//')'
+    ccol=trim(ccol)//')'
+    write(6,*)'Parsing '//trim(cdata)//' from columns '//trim(ccol)//'.'
+
+  END SUBROUTINE get_columns
+
+
+  SUBROUTINE read_file(io,fname,ncolumn,icol_x,icol_y,icol_dx,icol_dy,nxy,&
+     &x,y,dx,dy)
     !-------------------------------------!
     ! Read in the data in the input file. !
     !-------------------------------------!
     IMPLICIT NONE
-    INTEGER,INTENT(in) :: nxy,io
+    INTEGER,INTENT(in) :: io,ncolumn,icol_x,icol_y,icol_dx,icol_dy,nxy
     CHARACTER(*),INTENT(in) :: fname
-    LOGICAL,INTENT(in) :: have_dx,have_dy
     DOUBLE PRECISION,INTENT(out) :: x(nxy),y(nxy),dx(nxy),dy(nxy)
+    DOUBLE PRECISION tvec(ncolumn)
     INTEGER i,ierr,ipos,pline
     CHARACTER(1024) line
+
+    ! Initialize.
     pline=0
+    x=(/(dble(i),i=1,nxy)/)
+    y=(/(dble(i),i=1,nxy)/)
+    dx=0.d0
+    dy=0.d0
+
+    ! Loop over data lines.
     do i=1,nxy
       ! Load next line containing data.
       do
         read(io,'(a)',iostat=ierr)line
-        if(ierr<0)then
-          write(6,*)'Error reading '//trim(fname)//' at line '//&
-             &trim(i2s(pline))//': unexpected end of file.'
-          stop
-        endif
+        if(ierr<0)call quit('Error reading '//trim(fname)//' at line '//&
+           &trim(i2s(pline))//': unexpected end of file.')
         pline=pline+1
-        if(ierr>0)then
-          write(6,*)'Error reading '//trim(fname)//' at line '//&
-             &trim(i2s(pline))//'.'
-          stop
-        endif
+        if(ierr>0)call quit('Error reading '//trim(fname)//' at line '//&
+           &trim(i2s(pline))//'.')
         line=adjustl(line)
         ! Skip comments.
         ipos=scan(line,'#!')
@@ -1065,36 +1071,25 @@ CONTAINS
         if(len_trim(line)==0)cycle
         exit
       enddo
-      ! Read (x,y) or (x,y,dy) from string.
-      if(have_dx.and.have_dy)then
-        read(line,*,iostat=ierr)x(i),y(i),dx(i),dy(i)
-      elseif(have_dx)then
-        read(line,*,iostat=ierr)x(i),y(i),dx(i)
-      elseif(have_dy)then
-        read(line,*,iostat=ierr)x(i),y(i),dy(i)
-      else
-        read(line,*,iostat=ierr)x(i),y(i)
-      endif
-      if(ierr/=0)then
-        write(6,*)'Error reading '//trim(fname)//'.'
-        stop
-      endif ! ierr/=0
-      ! Check that the error bar is positive.
-      if(have_dx)then
-        if(dx(i)<=0.d0)then
-          write(6,*)'Error reading '//trim(fname)//' at line '//&
-             &trim(i2s(pline))//': non-positive dx.'
-          stop
-        endif
+      ! Read data point from string.
+      read(line,*,iostat=ierr)tvec(1:ncolumn)
+      if(ierr/=0)call quit('Error reading '//trim(fname)//' at line '//&
+         &trim(i2s(pline))//'.')
+      ! Set data and check that error bars are positive.
+      if(icol_x>0)x(i)=tvec(icol_x)
+      if(icol_y>0)y(i)=tvec(icol_y)
+      if(icol_dx>0)then
+        dx(i)=tvec(icol_dx)
+        if(dx(i)<=0.d0)call quit('Error reading '//trim(fname)//' at line '//&
+           &trim(i2s(pline))//': non-positive dx.')
       endif ! have_dx
-      if(have_dy)then
-        if(dy(i)<=0.d0)then
-          write(6,*)'Error reading '//trim(fname)//' at line '//&
-             &trim(i2s(pline))//': non-positive dy.'
-          stop
-        endif
+      if(icol_dy>0)then
+        dy(i)=tvec(icol_dy)
+        if(dy(i)<=0.d0)call quit('Error reading '//trim(fname)//' at line '//&
+           &trim(i2s(pline))//': non-positive dy.')
       endif ! have_dy
     enddo ! i
+
   END SUBROUTINE read_file
 
 
@@ -1550,6 +1545,21 @@ CONTAINS
     i=j
     j=k
   END SUBROUTINE iswap1
+
+
+  SUBROUTINE quit (msg)
+    !---------------------!
+    ! Quit with an error. !
+    !---------------------!
+    IMPLICIT NONE
+    CHARACTER(*), INTENT(in), OPTIONAL :: msg
+    if (present(msg)) then
+      write(6,*)'ERROR : '//msg
+    else
+      write(6,*)'Quitting.'
+    endif
+    stop
+  END SUBROUTINE quit
 
 
 END PROGRAM polyfit
