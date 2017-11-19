@@ -1,5 +1,7 @@
 PROGRAM polyfit
   !-----------------------------------------------------------!
+  ! POLYFIT                                                   !
+  ! =======                                                   !
   ! This is extrapolate_tau extended to:                      !
   ! - compute errorbars on parameters using a bootstrap Monte !
   !   Carlo method.                                           !
@@ -13,721 +15,757 @@ PROGRAM polyfit
   ! Precision for real-to-integer conversions and exponent comparisons.
   DOUBLE PRECISION,PARAMETER :: tol_zero=1.d-8
 
-  ! Local variables.
-  ! (x,y,dy) data.
-  CHARACTER(256) fname
-  INTEGER nxy,ncolumn,icol_x,icol_y,icol_dx,icol_dy
-  LOGICAL have_dx,have_dy,weighted
-  DOUBLE PRECISION,ALLOCATABLE :: x(:),y(:),dx(:),dy(:),weight(:)
-  DOUBLE PRECISION xrange,xmin,xmax,xcentre,xmean,xmedian
-  DOUBLE PRECISION dxrange,dxmin,dxmax,dxcentre,dxmean,dxmedian
-  DOUBLE PRECISION yrange,ymin,ymax,ycentre,ymean,ymedian
-  DOUBLE PRECISION dyrange,dymin,dymax,dycentre,dymean,dymedian
-  ! Fitting function.
-  INTEGER npoly
-  DOUBLE PRECISION x0
-  DOUBLE PRECISION,ALLOCATABLE :: pow(:),a(:),da(:)
-  ! Polynomials resulting from operations on fitting polynomial.
-  INTEGER op_npoly
-  DOUBLE PRECISION,ALLOCATABLE :: op_pow(:),op_a(:)
-  ! Automatic assessment variables.
-  DOUBLE PRECISION,ALLOCATABLE ::  chi2_vector(:),rmsc_100_vector(:),&
-     &rmsc_150_vector(:),rmsc_200_vector(:)
-  INTEGER ntest
-  ! Random sampling vectors.
-  INTEGER nrandom,nx
-  DOUBLE PRECISION grid_x1,grid_x2,f95_lo,f1s_lo,f1s_hi,f95_hi
-  DOUBLE PRECISION,ALLOCATABLE :: ran_gauss_x(:),ran_gauss_y(:),ran_x(:),&
-     &ran_y(:),ran_a(:),f_array(:,:),w_vector(:),x_target(:)
-  ! Distribution analysis.
-  DOUBLE PRECISION mean,var,skew,kurt
-  ! I/O unit.
-  INTEGER,PARAMETER :: io=10
-  ! Misc local variables.
-  INTEGER i,j,idiv,nderiv,irandom,ierr,ialloc,np,ix,ipos
-  CHARACTER(2048) char2048
-  CHARACTER(40) print_dble1,long_label,set_label,file_label
-  DOUBLE PRECISION t1,xplot,dxplot
-
-  write(6,*)'======='
-  write(6,*)'POLYFIT'
-  write(6,*)'======='
-  write(6,*)
-
-  ! Read in (x,y) data from file specified by user.
-  call get_file(fname)
-  open(unit=io,file=trim(fname),status='old',iostat=ierr)
-  if(ierr/=0)call quit('Error opening "'//trim(fname)//'".')
-  call check_file(io,fname,nxy,ncolumn)
-  if(nxy<1)call quit('No data found in file "'//trim(fname)//'".')
-  if(ncolumn<2)call quit('Not enough data columns found in file "'//&
-     &trim(fname)//'".')
-  write(6,*)'"'//trim(fname)//'" contains '//trim(i2s(nxy))//' lines with '//&
-     &trim(i2s(ncolumn))//' columns.'
-  call get_columns(ncolumn,icol_x,icol_y,icol_dx,icol_dy)
-  have_dx=icol_dx>0
-  have_dy=icol_dy>0
-  allocate(x(nxy),y(nxy),dx(nxy),dy(nxy),weight(nxy),stat=ialloc)
-  if(ialloc/=0)call quit('Allocation error.')
-  call read_file(io,fname,ncolumn,icol_x,icol_y,icol_dx,icol_dy,nxy,x,y,dx,dy)
-  close(io)
-
-  ! Transform data.
-  write(6,*)'The following data transformations are available:'
-  write(6,*)'  [recx] x   -> 1/x'
-  write(6,*)'  [recy] y   -> 1/y'
-  write(6,*)'  [rec]  x,y -> 1/x,1/y'
-  write(6,*)'  [logx] x   -> log(x)'
-  write(6,*)'  [logy] y   -> log(y)'
-  write(6,*)'  [log]  x,y -> log(x),log(y)'
-  write(6,*)'Enter the code of a transformation to apply (blank for none):'
-  read(5,*,iostat=ierr)char2048
-  if(ierr/=0)call quit()
-  write(6,*)
-  select case(trim(char2048))
-  case('recx')
-    if(any(abs(x)<=0.d0))&
-       &call quit('Transformation causes floating-point exception.')
-    x=1.d0/x
-    if(have_dx)dx=dx/x**2
-  case('recy')
-    if(any(abs(y)<=0.d0))&
-       &call quit('Transformation causes floating-point exception.')
-    y=1.d0/y
-    if(have_dy)dy=dy/y**2
-  case('rec')
-    if(any(abs(x)<=0.d0.or.abs(y)<=0.d0))&
-       &call quit('Transformation causes floating-point exception.')
-    x=1.d0/x
-    y=1.d0/y
-    if(have_dx)dx=dx/x**2
-    if(have_dy)dy=dy/y**2
-  case('logx')
-    if(any(x<=0.d0))&
-       &call quit('Transformation causes floating-point exception.')
-    x=log(x)
-    if(have_dx)dx=dx/x
-  case('logy')
-    if(any(y<=0.d0))&
-       &call quit('Transformation causes floating-point exception.')
-    y=log(y)
-    if(have_dy)dy=dy/y
-  case('log')
-    if(any(x<=0.d0.or.y<=0.d0))&
-       &call quit('Transformation causes floating-point exception.')
-    x=log(x)
-    y=log(y)
-    if(have_dx)dx=dx/x
-    if(have_dy)dy=dy/y
-  case default
-    write(6,*)'No transformation applied.'
-    write(6,*)
-  end select
-
-  ! Various stats.
-  xmin=minval(x)
-  xmax=maxval(x)
-  xrange=xmax-xmin
-  xcentre=.5d0*(xmin+xmax)
-  xmean=sum(x)/dble(nxy)
-  xmedian=median(nxy,x)
-  ymin=minval(y)
-  ymax=maxval(y)
-  yrange=ymax-ymin
-  ycentre=.5d0*(ymin+ymax)
-  ymean=sum(y)/dble(nxy)
-  ymedian=median(nxy,y)
-  if(have_dx)then
-    dxmin=minval(dx)
-    dxmax=maxval(dx)
-    dxrange=dxmax-dxmin
-    dxcentre=.5d0*(dxmin+dxmax)
-    dxmean=sum(dx)/dble(nxy)
-    dxmedian=median(nxy,dx)
-  endif ! have_dy
-  if(have_dy)then
-    dymin=minval(dy)
-    dymax=maxval(dy)
-    dyrange=dymax-dymin
-    dycentre=.5d0*(dymin+dymax)
-    dymean=sum(dy)/dble(nxy)
-    dymedian=median(nxy,dy)
-  endif ! have_dy
-  write(6,*)
-  write(6,*)'Data statistics:'
-  write(6,*)
-  write(6,'(t8,a,t21,a,t34,a,t47,a,t60,a)')'min','mean','median','centre','max'
-  write(6,'(t2,70("-"))')
-  write(6,'(t2,a,t5,5(1x,es12.4))')'X',xmin,xmean,xmedian,xcentre,xmax
-  write(6,'(t2,a,t5,5(1x,es12.4))')'Y',ymin,ymean,ymedian,ycentre,ymax
-  if(have_dx)write(6,'(t2,a,t5,5(1x,es12.4))')'DY',dxmin,dxmean,dxmedian,&
-     &dxcentre,dxmax
-  if(have_dy)write(6,'(t2,a,t5,5(1x,es12.4))')'DY',dymin,dymean,dymedian,&
-     &dycentre,dymax
-  write(6,'(t2,70("-"))')
-  write(6,*)
-  if(have_dx.and.have_dy)then
-    weight=1.d0/(dx*dy)**2
-  elseif(have_dx)then
-    weight=1.d0/dx**2
-  elseif(have_dy)then
-    weight=1.d0/dy**2
-  else
-    weight=1.d0
-  endif
-  weighted=have_dx.or.have_dy
-
-  restart_loop: do
-
-    ! Get optional offset.
-    do
-      write(6,*)'X offset [number, left/mean/median/centre/min/max/right, or &
-         &blank for 0.0]:'
-      read(5,'(a)',iostat=ierr)char2048
-      write(6,*)
-      x0=0.d0
-      if(ierr==0)then
-        char2048=adjustl(char2048)
-        select case(trim(char2048))
-        case('left')
-          x0=xmin
-        case('right')
-          x0=xmax
-        case('min')
-          do i=1,nxy
-            if(abs(y(i)-ymin)<tol_zero)then
-              x0=x(i)
-              exit
-            endif
-          enddo
-        case('max')
-          do i=1,nxy
-            if(abs(y(i)-ymax)<tol_zero)then
-              x0=x(i)
-              exit
-            endif
-          enddo
-        case('centre')
-          x0=xcentre
-        case('mean')
-          x0=xmean
-        case('median')
-          x0=xmedian
-        case('')
-          continue
-        case default
-          read(char2048,*,iostat=ierr)x0
-          if(ierr<0)then
-            call quit('Quitting.')
-          elseif(ierr>0)then
-            write(6,*)'Input problem, try again.'
-            write(6,*)
-            cycle
-          endif
-        end select
-      endif
-      exit
-    enddo
-    x=x-x0
-
-    ! Assess integer expansion orders up to order 8.
-    ntest=min(nxy-1,9)
-
-    ! Allocate work arrays.
-    allocate(chi2_vector(ntest),rmsc_100_vector(ntest),&
-       &rmsc_150_vector(ntest),rmsc_200_vector(ntest),stat=ialloc)
-    if(ialloc/=0)call quit('Allocation error.')
-
-    ! Loop over expansion orders.
-    do npoly=1,ntest
-      ! Allocate work arrays.
-      allocate(pow(npoly),a(npoly),da(npoly),op_pow((npoly*(npoly+1))/2),&
-         &op_a((npoly*(npoly+1))/2),stat=ialloc)
-      if(ialloc/=0)call quit('Allocation error.')
-      ! Fit to polynomial of order npoly-1.
-      do i=1,npoly
-        pow(i)=dble(i-1)
-      enddo ! i
-      call calc_parameters(nxy,npoly,x,y,weight,pow,a,da,weighted)
-      ! Evaluate chi^2.
-      chi2_vector(npoly)=chi_squared(nxy,npoly,x,y,weight,pow,a,weighted)
-      ! Evaluate root mean square curvature of fit as measure of smoothness.
-      np=npoly
-      call deriv_poly(np,pow,a,op_npoly,op_pow,op_a)
-      call deriv_poly(op_npoly,op_pow,op_a)
-      call square_poly(op_npoly,op_pow,op_a)
-      call int_poly(op_npoly,op_pow,op_a)
-      rmsc_100_vector(npoly)=&
-         &sqrt(abs((&
-         &eval_poly(op_npoly,op_pow,op_a,x(nxy))-&
-         &eval_poly(op_npoly,op_pow,op_a,x(1))&
-         &)/xrange))
-      rmsc_150_vector(npoly)=&
-         &sqrt(abs((&
-         &eval_poly(op_npoly,op_pow,op_a,x(nxy)+0.25d0*xrange)-&
-         &eval_poly(op_npoly,op_pow,op_a,x(1)-0.25d0*xrange)&
-         &)/(1.5d0*xrange)))
-      rmsc_200_vector(npoly)=&
-         &sqrt(abs((&
-         &eval_poly(op_npoly,op_pow,op_a,x(nxy)+0.5d0*xrange)-&
-         &eval_poly(op_npoly,op_pow,op_a,x(1)-0.5d0*xrange)&
-         &)/(2.d0*xrange)))
-      ! Destroy work arrays.
-      deallocate(pow,a,da,op_pow,op_a)
-    enddo ! npoly
-
-    ! Report.
-    write(6,*)
-    write(6,*)'FIT ASSESSMENT'
-    write(6,*)'=============='
-    write(6,*)'The following table gives chi^2 values and RMS curvatures for &
-       &various integer'
-    write(6,*)'expansion orders to help you choose a good fitting function.  &
-       &Chi^2 is a'
-    write(6,*)'measure of fit accuracy (lower is better), and the RMS &
-       &curvature is an'
-    write(6,*)'indicator of overfitting (lower is better).  The RMS curvature &
-       &is given for'
-    write(6,*)'the original data interval and for symmetrically extended &
-       &intervals, the'
-    write(6,*)'latter being of particular relevance if the fit is to be used &
-       &for'
-    write(6,*)'extrapolations.'
-    write(6,*)
-    write(6,*)'Generally:'
-    write(6,*)'* If chi^2 does not decrease monotonically, try a different x0.'
-    write(6,*)'* If chi^2 has a plateau, the onset may be a reasonable &
-       &expansion order.'
-    write(6,*)'* Jumps in the RMS curvature with expansion order may indicate &
-       &overfitting.'
-    write(6,*)
-    write(6,'(34x,a)')'RMS curvature'
-    write(6,'(22x,36("-"))')
-    write(6,'(1x,a,t10,a,t23,a,t36,a,t49,a)')'Order','chi^2/Ndf','Data range',&
-       &'+50%','+100%'
-    write(6,'(1x,57("-"))')
-    do npoly=1,ntest
-      write(6,'(1x,i5,4(1x,es12.4),1x,a)')npoly-1,&
-         &chi2_vector(npoly)/dble(nxy-npoly),&
-         &rmsc_100_vector(npoly),rmsc_150_vector(npoly),rmsc_200_vector(npoly)
-    enddo
-    write(6,'(1x,57("-"))')
-    write(6,*)
-    write(6,*)'You can plot these polynomials by typing "plot" below.'
-    write(6,*)
-
-    ! Destroy work arrays.
-    deallocate(chi2_vector,rmsc_100_vector,rmsc_150_vector,rmsc_200_vector)
-
-    ! Ask user to enter exponents for fitting polynomial.
-    parse_exp: do
-
-      write(6,*)'Enter exponents in fitting polynomial as a space-separated &
-         &list ["restart"'
-      write(6,*)'to provide another X offset, "plot" to plot, blank to quit]:'
-      read(5,'(a)')char2048
-      write(6,*)
-
-      ! Plot all polynomial orders.
-      char2048=adjustl(char2048)
-      select case(trim(char2048))
-      case('plot')
-        open(unit=io,file='poly_orders.dat',status='replace')
-        do npoly=1,ntest
-          allocate(pow(npoly),a(npoly),da(npoly),stat=ialloc)
-          if(ialloc/=0)call quit('Allocation error.')
-          do i=1,npoly
-            pow(i)=dble(i-1)
-          enddo ! i
-          call calc_parameters(nxy,npoly,x,y,weight,pow,a,da,weighted)
-          xplot=x(1)-0.5d0*xrange
-          dxplot=(xrange*2.d0)/dble(1000)
-          do i=0,1000
-            write(io,*)xplot+x0,eval_poly(npoly,pow,a,xplot)
-            xplot=xplot+dxplot
-          enddo ! i
-          deallocate(pow,a,da)
-          write(io,'(a)')'&'
-        enddo ! npoly
-        close(io)
-        write(6,*)'Data written to poly_orders.dat.'
-        write(6,*)
-        cycle parse_exp
-      case('restart')
-        cycle restart_loop
-      end select
-
-      ! Parse input string.
-      npoly=0
-      do
-        read(char2048,*,iostat=ierr)(t1,i=1,npoly+1)
-        if(ierr/=0)exit
-        npoly=npoly+1
-      enddo
-      if(npoly<1)then
-        write(6,*)'Interpolating polynomial must have at least one term.  &
-           &Try again.'
-        write(6,*)
-        cycle parse_exp
-      elseif(npoly>nxy)then
-        write(6,*)'Number of terms cannot exceed number of points.  Try again.'
-        write(6,*)
-        cycle parse_exp
-      endif ! npoly<1 or npoly>nxy
-      allocate(pow(npoly),stat=ialloc)
-      if(ialloc/=0)call quit('Allocation error.')
-      read(char2048,*,iostat=ierr)pow(1:npoly)
-      ! Make near-{,half,third,quarter}-integers exactly {*}-integers.
-      do idiv=2,4
-        do i=1,npoly
-          if(abs(anint(pow(i)*idiv)-pow(i)*idiv)<tol_zero)&
-             &pow(i)=anint(pow(i)*idiv)/dble(idiv)
-        enddo ! i
-      enddo ! idiv
-      ! Forbid negative powers.
-      if(any(pow<0.d0))then
-        write(6,*)'Found negative exponent.  Try again.'
-        write(6,*)
-        deallocate(pow)
-        cycle parse_exp
-      endif
-      ! Forbid repeated powers.
-      do i=2,npoly
-        if(any(abs(pow(1:i-1)-pow(i))<2.d0*tol_zero))then
-          write(6,*)'Two exponents appear to be identical.  Try again.'
-          write(6,*)
-          deallocate(pow)
-          cycle parse_exp
-        endif ! Identical exponents
-      enddo ! i
-      exit parse_exp
-    enddo parse_exp
-
-    exit restart_loop
-  enddo restart_loop
-
-  ! Sort exponents into ascending order
-  do i=1,npoly-1
-    do j=i+1,npoly
-      if(pow(j)<pow(i))then
-        t1=pow(i)
-        pow(i)=pow(j)
-        pow(j)=t1
-      endif ! Swap needed
-    enddo ! j
-  enddo ! i
-
-  ! Allocate coefficient vectors.
-  allocate(a(npoly),da(npoly),stat=ialloc)
-  if(ialloc/=0)call quit('Allocation error (2).')
-
-  ! Print polynomial form.
-  write(6,*)
-  write(6,*)'FITTING'
-  write(6,*)'======='
-  write(6,*)'Form of fitting polynomial:'
-  write(6,*)'  '//trim(print_poly_sym(npoly,pow,x0))
-  write(6,*)
-
-  ! Compute fit.
-  call calc_parameters(nxy,npoly,x,y,weight,pow,a,da,weighted)
-
-  ! Print fit coefficients.
-  write(6,*)'Fit parameters:'
-  if(weighted)then
-    do j=1,npoly
-      write(6,'("   ",a," = ",es24.16," +/- ",es24.16)')'k'//trim(i2s(j)),&
-         &a(j),da(j)
-    enddo ! j
-  else
-    do j=1,npoly
-      write(6,'("   ",a," = ",es24.16)')'k'//trim(i2s(j)),a(j)
-    enddo ! j
-  endif ! weighted
-  ! Evaluate chi-squared.
-  t1=chi_squared(nxy,npoly,x,y,weight,pow,a,weighted)
-  if(weighted)then
-    write(6,*)'Chi-squared value: ',t1
-  else
-    write(6,*)'Least-squares function: ',t1
-  endif ! weighted
-  write(6,*)
-
-  ! Write out fitted polynomial.
-  ! NB, this is good for pasting into xmgrace, but xmgrace has a string
-  ! length limit of 256 characters.
-  write(6,*)'Fitted polynomial:'
-  write(6,*)'  '//trim(print_poly_num(npoly,pow,a,x0))
-  write(6,*)
-
-  ! Write heading for operations part.
-  write(6,*)
-  write(6,*)'VALUES AND DERIVATIVES'
-  write(6,*)'======================'
-  write(6,*)'Now you can calculate specific values of the fitted polynomial &
-     &and its'
-  write(6,*)'first two derivatives, with error bars calculated using a Monte &
-     &Carlo method.'
-  write(6,*)
-
-  ! Ask for number of random points.
-  nrandom=0
-  if(have_dx.or.have_dy)then
-    do
-      write(6,*)'Enter number of random points for Monte Carlo [blank for &
-         &10000]:'
-      read(5,'(a)',iostat=ierr)char2048
-      write(6,*)
-      if(ierr<0)then
-        call quit()
-      elseif(ierr>0)then
-        write(6,*)'Input problem, try again.'
-        cycle
-      endif
-      char2048=adjustl(char2048)
-      if(trim(char2048)=='')then
-        nrandom=10000
-        exit
-      endif
-      read(char2048,*,iostat=ierr)nrandom
-      if(ierr/=0)then
-        write(6,*)'Bad input, try again.'
-        cycle
-      endif
-      if(nrandom<10)then
-        write(6,*)'Number of random points must be => 10.'
-        cycle
-      endif
-      exit
-    enddo
-  endif
-
-  ! Allocate work arrays.
-  allocate(op_pow(npoly),op_a(npoly),stat=ialloc)
-  if(ialloc/=0)call quit('Allocation problem (op_*).')
-  if(have_dx.or.have_dy)then
-    allocate(ran_gauss_x(nxy),ran_gauss_y(nxy),ran_x(nxy),ran_y(nxy),&
-       &ran_a(npoly),w_vector(nrandom),stat=ialloc)
-    if(ialloc/=0)call quit('Allocation problem (w_vector).')
-  endif
-
-  ! Loop over sets of operations.
-  do nderiv=0,2
-
-    select case(nderiv)
-    case(0)
-      long_label='Values'
-      set_label="y"
-      file_label='values'
-    case(1)
-      long_label='First derivatives'
-      set_label="y'"
-      file_label='fderiv'
-    case(2)
-      long_label='Second derivatives'
-      set_label="y''"
-      file_label='sderiv'
-    end select
-    write(6,*)trim(long_label)
-    write(6,'(1x,'//trim(i2s(len_trim(long_label)))//'("-"))')
-    write(6,*)'Enter space-separated list of X values [blank for X of source &
-       &data,'
-    write(6,*)'<x1>:<x2>:<n> a grid, "skip" to skip]:'
-
-    do
-      read(5,'(a)',iostat=ierr)char2048
-      if(ierr/=0)char2048='skip'
-      write(6,*)
-
-      char2048=adjustl(char2048)
-      select case(trim(char2048))
-      case('')
-        write(char2048,*)x(1)+x0
-        char2048=adjustl(char2048)
-        do i=2,nxy
-          write(print_dble1,*)x(i)+x0
-          char2048=trim(char2048)//' '//trim(adjustl(print_dble1))
-        enddo ! i
-        nx=nxy
-      case('skip','-','x')
-        nx=0
-        exit
-      case default
-        ! Parse input string.
-        nx=0
-        do
-          read(char2048,*,iostat=ierr)(t1,i=1,nx+1)
-          if(ierr/=0)exit
-          nx=nx+1
-        enddo
-        if(nx==0)then
-          ! Try to parse grid.
-          ipos=scan(char2048,':')
-          if(ipos<1)then
-            write(6,*)'Input problem - try again.'
-            write(6,*)
-            cycle
-          endif
-          read(char2048(1:ipos-1),*,iostat=ierr)grid_x1
-          if(ierr/=0)then
-            write(6,*)'Input problem - try again.'
-            write(6,*)
-            cycle
-          endif
-          char2048=adjustl(char2048(ipos+1:))
-          ipos=scan(char2048,':')
-          if(ipos<1)then
-            write(6,*)'Input problem - try again.'
-            write(6,*)
-            cycle
-          endif
-          read(char2048(1:ipos-1),*,iostat=ierr)grid_x2
-          if(ierr/=0)then
-            write(6,*)'Input problem - try again.'
-            write(6,*)
-            cycle
-          endif
-          char2048=adjustl(char2048(ipos+1:))
-          read(char2048,*,iostat=ierr)nx
-          if(ierr/=0)then
-            write(6,*)'Input problem - try again.'
-            write(6,*)
-            cycle
-          endif
-          if(nx<1)then
-            write(6,*)'Need at least one point in grid.  Try again.'
-            write(6,*)
-            cycle
-          endif
-          char2048=''
-        endif
-      end select
-
-      exit
-    enddo
-    if(nx<1)cycle
-
-    ! Allocate x array.
-    allocate(x_target(nx),stat=ialloc)
-    if(ialloc/=0)call quit('Allocation problem (f_array).')
-    if(len_trim(char2048)==0)then
-      if(nx==1)then
-        x_target(1)=grid_x1
-      else
-        do i=1,nx
-          x_target(i)=grid_x1+(grid_x2-grid_x1)*dble(i-1)/dble(nx-1)
-        enddo ! i
-      endif
-    else
-      read(char2048,*,iostat=ierr)x_target(1:nx)
-    endif
-
-    if(have_dx.or.have_dy)then
-
-      ! Allocate work array.
-      allocate(f_array(nrandom,nx),stat=ialloc)
-      if(ialloc/=0)call quit('Allocation problem (f_array).')
-
-      ! Do random sampling of data space.
-      ran_x=x
-      ran_y=y
-      do irandom=1,nrandom
-        if(have_dx)then
-          ran_gauss_x=gaussian_random_number(dx)
-          ran_x=x+ran_gauss_x
-        endif
-        if(have_dy)then
-          ran_gauss_y=gaussian_random_number(dy)
-          ran_y=y+ran_gauss_y
-        endif
-        call calc_parameters(nxy,npoly,ran_x,ran_y,weight,pow,ran_a,da,.false.)
-        !w_vector(irandom)=1.d0/&
-        !   &chi_squared(nxy,npoly,x,ran_y,weight,pow,ran_a,.false.)
-        w_vector(irandom)=1.d0
-        op_npoly=npoly
-        op_pow=pow
-        op_a=ran_a
-        do i=1,nderiv
-          call deriv_poly(op_npoly,op_pow,op_a)
-        enddo ! i
-        do ix=1,nx
-          t1=eval_poly(op_npoly,op_pow,op_a,x_target(ix)-x0)
-          f_array(irandom,ix)=t1
-        enddo ! ix
-      enddo ! irandom
-
-    endif ! have_dx.or.have_dy
-
-    ! Open file.
-    fname='polyfit_'//trim(file_label)//'.dat'
-    open(unit=io,file=trim(fname),status='replace')
-
-    if(.not.(have_dx.or.have_dy))then
-
-      ! Write header.
-      write(io,'(a)')'# x  '//trim(set_label)
-      ! Construct target polynomial at original parameter set.
-      op_npoly=npoly
-      op_pow=pow
-      op_a=a
-      do i=1,nderiv
-        call deriv_poly(op_npoly,op_pow,op_a)
-      enddo ! i
-      ! Loop over values of x.
-      do ix=1,nx
-        ! Evaluate target polynomial at x.
-        t1=eval_poly(op_npoly,op_pow,op_a,x_target(ix)-x0)
-        write(io,*)x_target(ix),t1
-      enddo ! ix
-
-    else
-
-      ! Write header.
-      write(io,'(a)')'# x  '//trim(set_label)//&
-         &'  stderr  stderr+  stderr-  95%err+  95%err-  skew  kurt'
-      ! Loop over values of x.
-      do ix=1,nx
-        ! Report various statistics.
-        mean=sum(f_array(:,ix)*w_vector)/sum(w_vector)
-        call characterize_dist(nrandom,f_array(:,ix),w_vector,var,skew,&
-           &kurt)
-        f95_lo=find_pth_smallest(nint(dble(nrandom)*0.025d0),nrandom,&
-           &f_array(:,ix))
-        f1s_lo=find_pth_smallest(nint(dble(nrandom)*0.158655254d0),nrandom,&
-           &f_array(:,ix))
-        f1s_hi=find_pth_smallest(nint(dble(nrandom)*0.841344746d0),nrandom,&
-           &f_array(:,ix))
-        f95_hi=find_pth_smallest(nint(dble(nrandom)*0.975d0),nrandom,&
-           &f_array(:,ix))
-        write(io,*)x_target(ix),mean,sqrt(var),mean-f95_lo,mean-f1s_lo,&
-           &f1s_hi-mean,f95_hi-mean,skew,kurt
-      enddo ! ix
-
-    endif ! .not.(have_dx.or.have_dy) or have_dx.or.have_dy
-
-    ! Close file.
-    close(io)
-    write(6,*)'Data written to "'//trim(fname)//'".'
-    write(6,*)
-
-    ! Clean up.
-    if(have_dx.or.have_dy)deallocate(f_array)
-    deallocate(x_target)
-
-  enddo ! loop over y / y' / y''
-
-  ! Clean up.
-  if(have_dx.or.have_dy)deallocate(ran_gauss_x,ran_gauss_y,ran_x,ran_y,ran_a,&
-     &w_vector)
-  deallocate(op_pow,op_a)
-
-  ! Finish off.
-  deallocate(x,y,dx,dy,weight,pow,a,da)
-  write(6,*)'Program finished.'
-  write(6,*)
+  call main()
 
 
 CONTAINS
+
+
+  SUBROUTINE main()
+    !--------------!
+    ! Main driver. !
+    !--------------!
+    IMPLICIT NONE
+    ! (x,y[,dx][,dy]) data.
+    INTEGER nxy
+    LOGICAL have_dx,have_dy
+    DOUBLE PRECISION,ALLOCATABLE :: x(:),y(:),dx(:),dy(:)
+    ! Input file information.
+    INTEGER ncolumn,icol_x,icol_y,icol_dx,icol_dy
+    CHARACTER(256) fname
+    ! Misc variables.
+    INTEGER ierr
+
+    ! Write header.
+    write(6,*)'======='
+    write(6,*)'POLYFIT'
+    write(6,*)'======='
+    write(6,*)
+
+    ! Read in (x,y[,dx][,dy]) data from file specified by user.
+    call get_file(fname)
+    call check_file(fname,nxy,ncolumn)
+    if(nxy<1)call quit('No data found in file "'//trim(fname)//'".')
+    if(ncolumn<2)call quit('Not enough data columns found in file "'//&
+       &trim(fname)//'".')
+    write(6,*)'"'//trim(fname)//'" contains '//trim(i2s(nxy))//' lines with '//&
+       &trim(i2s(ncolumn))//' columns.'
+    call get_columns(ncolumn,icol_x,icol_y,icol_dx,icol_dy)
+    have_dx=icol_dx>0
+    have_dy=icol_dy>0
+    allocate(x(nxy),y(nxy),dx(nxy),dy(nxy),stat=ierr)
+    if(ierr/=0)call quit('Allocation error.')
+    call read_file(fname,ncolumn,icol_x,icol_y,icol_dx,icol_dy,nxy,x,y,dx,dy)
+
+    ! Run main menu.
+    call user_interaction(nxy,have_dx,have_dy,x,y,dx,dy)
+
+    ! Finish off.
+    deallocate(x,y,dx,dy)
+    write(6,*)'Program finished.'
+    write(6,*)
+
+  END SUBROUTINE main
+
+
+  SUBROUTINE user_interaction(nxy,have_dx,have_dy,x,y,dx,dy)
+    !-------------------------!
+    ! Interact with the user. !
+    !-------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: nxy
+    LOGICAL,INTENT(in) :: have_dx,have_dy
+    DOUBLE PRECISION,INTENT(inout) :: x(nxy),y(nxy),dx(nxy),dy(nxy)
+    ! Local variables.
+    ! (x,y,dy) data.
+    LOGICAL weighted
+    DOUBLE PRECISION,ALLOCATABLE :: weight(:)
+    DOUBLE PRECISION xrange,xmin,xmax,xcentre,xmean,xmedian
+    DOUBLE PRECISION dxrange,dxmin,dxmax,dxcentre,dxmean,dxmedian
+    DOUBLE PRECISION yrange,ymin,ymax,ycentre,ymean,ymedian
+    DOUBLE PRECISION dyrange,dymin,dymax,dycentre,dymean,dymedian
+    ! Fitting function.
+    INTEGER npoly
+    DOUBLE PRECISION x0
+    DOUBLE PRECISION,ALLOCATABLE :: pow(:),a(:),da(:)
+    ! Polynomials resulting from operations on fitting polynomial.
+    INTEGER op_npoly
+    DOUBLE PRECISION,ALLOCATABLE :: op_pow(:),op_a(:)
+    ! Automatic assessment variables.
+    DOUBLE PRECISION,ALLOCATABLE ::  chi2_vector(:),rmsc_100_vector(:),&
+       &rmsc_150_vector(:),rmsc_200_vector(:)
+    INTEGER ntest
+    ! Random sampling vectors.
+    INTEGER nrandom,nx
+    DOUBLE PRECISION grid_x1,grid_x2,f95_lo,f1s_lo,f1s_hi,f95_hi
+    DOUBLE PRECISION,ALLOCATABLE :: ran_gauss_x(:),ran_gauss_y(:),ran_x(:),&
+       &ran_y(:),ran_a(:),f_array(:,:),w_vector(:),x_target(:)
+    ! Distribution analysis.
+    DOUBLE PRECISION mean,var,skew,kurt
+    ! I/O unit and dump file name.
+    CHARACTER(256) fname
+    INTEGER,PARAMETER :: io=10
+    ! Misc local variables.
+    INTEGER i,j,idiv,nderiv,irandom,ierr,ialloc,np,ix,ipos
+    CHARACTER(2048) char2048
+    CHARACTER(40) print_dble1,long_label,set_label,file_label
+    DOUBLE PRECISION t1,xplot,dxplot
+
+    ! Allocate weight array.
+    allocate(weight(nxy),stat=ialloc)
+    if(ialloc/=0)call quit('Allocation error.')
+
+    ! Transform data.
+    write(6,*)'The following data transformations are available:'
+    write(6,*)'  [recx] x   -> 1/x'
+    write(6,*)'  [recy] y   -> 1/y'
+    write(6,*)'  [rec]  x,y -> 1/x,1/y'
+    write(6,*)'  [logx] x   -> log(x)'
+    write(6,*)'  [logy] y   -> log(y)'
+    write(6,*)'  [log]  x,y -> log(x),log(y)'
+    write(6,*)'Enter the code of a transformation to apply (blank for none):'
+    read(5,*,iostat=ierr)char2048
+    if(ierr/=0)call quit()
+    write(6,*)
+    select case(trim(char2048))
+    case('recx')
+      if(any(abs(x)<=0.d0))&
+         &call quit('Transformation causes floating-point exception.')
+      x=1.d0/x
+      if(have_dx)dx=dx/x**2
+    case('recy')
+      if(any(abs(y)<=0.d0))&
+         &call quit('Transformation causes floating-point exception.')
+      y=1.d0/y
+      if(have_dy)dy=dy/y**2
+    case('rec')
+      if(any(abs(x)<=0.d0.or.abs(y)<=0.d0))&
+         &call quit('Transformation causes floating-point exception.')
+      x=1.d0/x
+      y=1.d0/y
+      if(have_dx)dx=dx/x**2
+      if(have_dy)dy=dy/y**2
+    case('logx')
+      if(any(x<=0.d0))&
+         &call quit('Transformation causes floating-point exception.')
+      x=log(x)
+      if(have_dx)dx=dx/x
+    case('logy')
+      if(any(y<=0.d0))&
+         &call quit('Transformation causes floating-point exception.')
+      y=log(y)
+      if(have_dy)dy=dy/y
+    case('log')
+      if(any(x<=0.d0.or.y<=0.d0))&
+         &call quit('Transformation causes floating-point exception.')
+      x=log(x)
+      y=log(y)
+      if(have_dx)dx=dx/x
+      if(have_dy)dy=dy/y
+    case default
+      write(6,*)'No transformation applied.'
+      write(6,*)
+    end select
+
+    ! Various stats.
+    xmin=minval(x)
+    xmax=maxval(x)
+    xrange=xmax-xmin
+    xcentre=.5d0*(xmin+xmax)
+    xmean=sum(x)/dble(nxy)
+    xmedian=median(nxy,x)
+    ymin=minval(y)
+    ymax=maxval(y)
+    yrange=ymax-ymin
+    ycentre=.5d0*(ymin+ymax)
+    ymean=sum(y)/dble(nxy)
+    ymedian=median(nxy,y)
+    if(have_dx)then
+      dxmin=minval(dx)
+      dxmax=maxval(dx)
+      dxrange=dxmax-dxmin
+      dxcentre=.5d0*(dxmin+dxmax)
+      dxmean=sum(dx)/dble(nxy)
+      dxmedian=median(nxy,dx)
+    endif ! have_dy
+    if(have_dy)then
+      dymin=minval(dy)
+      dymax=maxval(dy)
+      dyrange=dymax-dymin
+      dycentre=.5d0*(dymin+dymax)
+      dymean=sum(dy)/dble(nxy)
+      dymedian=median(nxy,dy)
+    endif ! have_dy
+    write(6,*)
+    write(6,*)'Data statistics:'
+    write(6,*)
+    write(6,'(t8,a,t21,a,t34,a,t47,a,t60,a)')'min','mean','median','centre','max'
+    write(6,'(t2,70("-"))')
+    write(6,'(t2,a,t5,5(1x,es12.4))')'X',xmin,xmean,xmedian,xcentre,xmax
+    write(6,'(t2,a,t5,5(1x,es12.4))')'Y',ymin,ymean,ymedian,ycentre,ymax
+    if(have_dx)write(6,'(t2,a,t5,5(1x,es12.4))')'DY',dxmin,dxmean,dxmedian,&
+       &dxcentre,dxmax
+    if(have_dy)write(6,'(t2,a,t5,5(1x,es12.4))')'DY',dymin,dymean,dymedian,&
+       &dycentre,dymax
+    write(6,'(t2,70("-"))')
+    write(6,*)
+    if(have_dx.and.have_dy)then
+      weight=1.d0/(dx*dy)**2
+    elseif(have_dx)then
+      weight=1.d0/dx**2
+    elseif(have_dy)then
+      weight=1.d0/dy**2
+    else
+      weight=1.d0
+    endif
+    weighted=have_dx.or.have_dy
+
+    restart_loop: do
+
+      ! Get optional offset.
+      do
+        write(6,*)'X offset [number, left/mean/median/centre/min/max/right, or &
+           &blank for 0.0]:'
+        read(5,'(a)',iostat=ierr)char2048
+        write(6,*)
+        x0=0.d0
+        if(ierr==0)then
+          char2048=adjustl(char2048)
+          select case(trim(char2048))
+          case('left')
+            x0=xmin
+          case('right')
+            x0=xmax
+          case('min')
+            do i=1,nxy
+              if(abs(y(i)-ymin)<tol_zero)then
+                x0=x(i)
+                exit
+              endif
+            enddo
+          case('max')
+            do i=1,nxy
+              if(abs(y(i)-ymax)<tol_zero)then
+                x0=x(i)
+                exit
+              endif
+            enddo
+          case('centre')
+            x0=xcentre
+          case('mean')
+            x0=xmean
+          case('median')
+            x0=xmedian
+          case('')
+            continue
+          case default
+            read(char2048,*,iostat=ierr)x0
+            if(ierr<0)then
+              call quit('Quitting.')
+            elseif(ierr>0)then
+              write(6,*)'Input problem, try again.'
+              write(6,*)
+              cycle
+            endif
+          end select
+        endif
+        exit
+      enddo
+      x=x-x0
+
+      ! Assess integer expansion orders up to order 8.
+      ntest=min(nxy-1,9)
+
+      ! Allocate work arrays.
+      allocate(chi2_vector(ntest),rmsc_100_vector(ntest),&
+         &rmsc_150_vector(ntest),rmsc_200_vector(ntest),stat=ialloc)
+      if(ialloc/=0)call quit('Allocation error.')
+
+      ! Loop over expansion orders.
+      do npoly=1,ntest
+        ! Allocate work arrays.
+        allocate(pow(npoly),a(npoly),da(npoly),op_pow((npoly*(npoly+1))/2),&
+           &op_a((npoly*(npoly+1))/2),stat=ialloc)
+        if(ialloc/=0)call quit('Allocation error.')
+        ! Fit to polynomial of order npoly-1.
+        do i=1,npoly
+          pow(i)=dble(i-1)
+        enddo ! i
+        call calc_parameters(nxy,npoly,x,y,weight,pow,a,da,weighted)
+        ! Evaluate chi^2.
+        chi2_vector(npoly)=chi_squared(nxy,npoly,x,y,weight,pow,a,weighted)
+        ! Evaluate root mean square curvature of fit as measure of smoothness.
+        np=npoly
+        call deriv_poly(np,pow,a,op_npoly,op_pow,op_a)
+        call deriv_poly(op_npoly,op_pow,op_a)
+        call square_poly(op_npoly,op_pow,op_a)
+        call int_poly(op_npoly,op_pow,op_a)
+        rmsc_100_vector(npoly)=&
+           &sqrt(abs((&
+           &eval_poly(op_npoly,op_pow,op_a,x(nxy))-&
+           &eval_poly(op_npoly,op_pow,op_a,x(1))&
+           &)/xrange))
+        rmsc_150_vector(npoly)=&
+           &sqrt(abs((&
+           &eval_poly(op_npoly,op_pow,op_a,x(nxy)+0.25d0*xrange)-&
+           &eval_poly(op_npoly,op_pow,op_a,x(1)-0.25d0*xrange)&
+           &)/(1.5d0*xrange)))
+        rmsc_200_vector(npoly)=&
+           &sqrt(abs((&
+           &eval_poly(op_npoly,op_pow,op_a,x(nxy)+0.5d0*xrange)-&
+           &eval_poly(op_npoly,op_pow,op_a,x(1)-0.5d0*xrange)&
+           &)/(2.d0*xrange)))
+        ! Destroy work arrays.
+        deallocate(pow,a,da,op_pow,op_a)
+      enddo ! npoly
+
+      ! Report.
+      write(6,*)
+      write(6,*)'FIT ASSESSMENT'
+      write(6,*)'=============='
+      write(6,*)'The following table gives chi^2 values and RMS curvatures for &
+         &various integer'
+      write(6,*)'expansion orders to help you choose a good fitting function.  &
+         &Chi^2 is a'
+      write(6,*)'measure of fit accuracy (lower is better), and the RMS &
+         &curvature is an'
+      write(6,*)'indicator of overfitting (lower is better).  The RMS curvature &
+         &is given for'
+      write(6,*)'the original data interval and for symmetrically extended &
+         &intervals, the'
+      write(6,*)'latter being of particular relevance if the fit is to be used &
+         &for'
+      write(6,*)'extrapolations.'
+      write(6,*)
+      write(6,*)'Generally:'
+      write(6,*)'* If chi^2 does not decrease monotonically, try a different x0.'
+      write(6,*)'* If chi^2 has a plateau, the onset may be a reasonable &
+         &expansion order.'
+      write(6,*)'* Jumps in the RMS curvature with expansion order may indicate &
+         &overfitting.'
+      write(6,*)
+      write(6,'(34x,a)')'RMS curvature'
+      write(6,'(22x,36("-"))')
+      write(6,'(1x,a,t10,a,t23,a,t36,a,t49,a)')'Order','chi^2/Ndf','Data range',&
+         &'+50%','+100%'
+      write(6,'(1x,57("-"))')
+      do npoly=1,ntest
+        write(6,'(1x,i5,4(1x,es12.4),1x,a)')npoly-1,&
+           &chi2_vector(npoly)/dble(nxy-npoly),&
+           &rmsc_100_vector(npoly),rmsc_150_vector(npoly),rmsc_200_vector(npoly)
+      enddo
+      write(6,'(1x,57("-"))')
+      write(6,*)
+      write(6,*)'You can plot these polynomials by typing "plot" below.'
+      write(6,*)
+
+      ! Destroy work arrays.
+      deallocate(chi2_vector,rmsc_100_vector,rmsc_150_vector,rmsc_200_vector)
+
+      ! Ask user to enter exponents for fitting polynomial.
+      parse_exp: do
+
+        write(6,*)'Enter exponents in fitting polynomial as a space-separated &
+           &list ["restart"'
+        write(6,*)'to provide another X offset, "plot" to plot, blank to quit]:'
+        read(5,'(a)')char2048
+        write(6,*)
+
+        ! Plot all polynomial orders.
+        char2048=adjustl(char2048)
+        select case(trim(char2048))
+        case('plot')
+          open(unit=io,file='poly_orders.dat',status='replace')
+          do npoly=1,ntest
+            allocate(pow(npoly),a(npoly),da(npoly),stat=ialloc)
+            if(ialloc/=0)call quit('Allocation error.')
+            do i=1,npoly
+              pow(i)=dble(i-1)
+            enddo ! i
+            call calc_parameters(nxy,npoly,x,y,weight,pow,a,da,weighted)
+            xplot=x(1)-0.5d0*xrange
+            dxplot=(xrange*2.d0)/dble(1000)
+            do i=0,1000
+              write(io,*)xplot+x0,eval_poly(npoly,pow,a,xplot)
+              xplot=xplot+dxplot
+            enddo ! i
+            deallocate(pow,a,da)
+            write(io,'(a)')'&'
+          enddo ! npoly
+          close(io)
+          write(6,*)'Data written to poly_orders.dat.'
+          write(6,*)
+          cycle parse_exp
+        case('restart')
+          cycle restart_loop
+        end select
+
+        ! Parse input string.
+        npoly=0
+        do
+          read(char2048,*,iostat=ierr)(t1,i=1,npoly+1)
+          if(ierr/=0)exit
+          npoly=npoly+1
+        enddo
+        if(npoly<1)then
+          write(6,*)'Interpolating polynomial must have at least one term.  &
+             &Try again.'
+          write(6,*)
+          cycle parse_exp
+        elseif(npoly>nxy)then
+          write(6,*)'Number of terms cannot exceed number of points.  Try again.'
+          write(6,*)
+          cycle parse_exp
+        endif ! npoly<1 or npoly>nxy
+        allocate(pow(npoly),stat=ialloc)
+        if(ialloc/=0)call quit('Allocation error.')
+        read(char2048,*,iostat=ierr)pow(1:npoly)
+        ! Make near-{,half,third,quarter}-integers exactly {*}-integers.
+        do idiv=2,4
+          do i=1,npoly
+            if(abs(anint(pow(i)*idiv)-pow(i)*idiv)<tol_zero)&
+               &pow(i)=anint(pow(i)*idiv)/dble(idiv)
+          enddo ! i
+        enddo ! idiv
+        ! Forbid negative powers.
+        if(any(pow<0.d0))then
+          write(6,*)'Found negative exponent.  Try again.'
+          write(6,*)
+          deallocate(pow)
+          cycle parse_exp
+        endif
+        ! Forbid repeated powers.
+        do i=2,npoly
+          if(any(abs(pow(1:i-1)-pow(i))<2.d0*tol_zero))then
+            write(6,*)'Two exponents appear to be identical.  Try again.'
+            write(6,*)
+            deallocate(pow)
+            cycle parse_exp
+          endif ! Identical exponents
+        enddo ! i
+        exit parse_exp
+      enddo parse_exp
+
+      exit restart_loop
+    enddo restart_loop
+
+    ! Sort exponents into ascending order
+    do i=1,npoly-1
+      do j=i+1,npoly
+        if(pow(j)<pow(i))then
+          t1=pow(i)
+          pow(i)=pow(j)
+          pow(j)=t1
+        endif ! Swap needed
+      enddo ! j
+    enddo ! i
+
+    ! Allocate coefficient vectors.
+    allocate(a(npoly),da(npoly),stat=ialloc)
+    if(ialloc/=0)call quit('Allocation error (2).')
+
+    ! Print polynomial form.
+    write(6,*)
+    write(6,*)'FITTING'
+    write(6,*)'======='
+    write(6,*)'Form of fitting polynomial:'
+    write(6,*)'  '//trim(print_poly_sym(npoly,pow,x0))
+    write(6,*)
+
+    ! Compute fit.
+    call calc_parameters(nxy,npoly,x,y,weight,pow,a,da,weighted)
+
+    ! Print fit coefficients.
+    write(6,*)'Fit parameters:'
+    if(weighted)then
+      do j=1,npoly
+        write(6,'("   ",a," = ",es24.16," +/- ",es24.16)')'k'//trim(i2s(j)),&
+           &a(j),da(j)
+      enddo ! j
+    else
+      do j=1,npoly
+        write(6,'("   ",a," = ",es24.16)')'k'//trim(i2s(j)),a(j)
+      enddo ! j
+    endif ! weighted
+    ! Evaluate chi-squared.
+    t1=chi_squared(nxy,npoly,x,y,weight,pow,a,weighted)
+    if(weighted)then
+      write(6,*)'Chi-squared value: ',t1
+    else
+      write(6,*)'Least-squares function: ',t1
+    endif ! weighted
+    write(6,*)
+
+    ! Write out fitted polynomial.
+    ! NB, this is good for pasting into xmgrace, but xmgrace has a string
+    ! length limit of 256 characters.
+    write(6,*)'Fitted polynomial:'
+    write(6,*)'  '//trim(print_poly_num(npoly,pow,a,x0))
+    write(6,*)
+
+    ! Write heading for operations part.
+    write(6,*)
+    write(6,*)'VALUES AND DERIVATIVES'
+    write(6,*)'======================'
+    write(6,*)'Now you can calculate specific values of the fitted polynomial &
+       &and its'
+    write(6,*)'first two derivatives, with error bars calculated using a Monte &
+       &Carlo method.'
+    write(6,*)
+
+    ! Ask for number of random points.
+    nrandom=0
+    if(have_dx.or.have_dy)then
+      do
+        write(6,*)'Enter number of random points for Monte Carlo [blank for &
+           &10000]:'
+        read(5,'(a)',iostat=ierr)char2048
+        write(6,*)
+        if(ierr<0)then
+          call quit()
+        elseif(ierr>0)then
+          write(6,*)'Input problem, try again.'
+          cycle
+        endif
+        char2048=adjustl(char2048)
+        if(trim(char2048)=='')then
+          nrandom=10000
+          exit
+        endif
+        read(char2048,*,iostat=ierr)nrandom
+        if(ierr/=0)then
+          write(6,*)'Bad input, try again.'
+          cycle
+        endif
+        if(nrandom<10)then
+          write(6,*)'Number of random points must be => 10.'
+          cycle
+        endif
+        exit
+      enddo
+    endif
+
+    ! Allocate work arrays.
+    allocate(op_pow(npoly),op_a(npoly),stat=ialloc)
+    if(ialloc/=0)call quit('Allocation problem (op_*).')
+    if(have_dx.or.have_dy)then
+      allocate(ran_gauss_x(nxy),ran_gauss_y(nxy),ran_x(nxy),ran_y(nxy),&
+         &ran_a(npoly),w_vector(nrandom),stat=ialloc)
+      if(ialloc/=0)call quit('Allocation problem (w_vector).')
+    endif
+
+    ! Loop over sets of operations.
+    do nderiv=0,2
+
+      select case(nderiv)
+      case(0)
+        long_label='Values'
+        set_label="y"
+        file_label='values'
+      case(1)
+        long_label='First derivatives'
+        set_label="y'"
+        file_label='fderiv'
+      case(2)
+        long_label='Second derivatives'
+        set_label="y''"
+        file_label='sderiv'
+      end select
+      write(6,*)trim(long_label)
+      write(6,'(1x,'//trim(i2s(len_trim(long_label)))//'("-"))')
+      write(6,*)'Enter space-separated list of X values [blank for X of source &
+         &data,'
+      write(6,*)'<x1>:<x2>:<n> a grid, "skip" to skip]:'
+
+      do
+        read(5,'(a)',iostat=ierr)char2048
+        if(ierr/=0)char2048='skip'
+        write(6,*)
+
+        char2048=adjustl(char2048)
+        select case(trim(char2048))
+        case('')
+          write(char2048,*)x(1)+x0
+          char2048=adjustl(char2048)
+          do i=2,nxy
+            write(print_dble1,*)x(i)+x0
+            char2048=trim(char2048)//' '//trim(adjustl(print_dble1))
+          enddo ! i
+          nx=nxy
+        case('skip','-','x')
+          nx=0
+          exit
+        case default
+          ! Parse input string.
+          nx=0
+          do
+            read(char2048,*,iostat=ierr)(t1,i=1,nx+1)
+            if(ierr/=0)exit
+            nx=nx+1
+          enddo
+          if(nx==0)then
+            ! Try to parse grid.
+            ipos=scan(char2048,':')
+            if(ipos<1)then
+              write(6,*)'Input problem - try again.'
+              write(6,*)
+              cycle
+            endif
+            read(char2048(1:ipos-1),*,iostat=ierr)grid_x1
+            if(ierr/=0)then
+              write(6,*)'Input problem - try again.'
+              write(6,*)
+              cycle
+            endif
+            char2048=adjustl(char2048(ipos+1:))
+            ipos=scan(char2048,':')
+            if(ipos<1)then
+              write(6,*)'Input problem - try again.'
+              write(6,*)
+              cycle
+            endif
+            read(char2048(1:ipos-1),*,iostat=ierr)grid_x2
+            if(ierr/=0)then
+              write(6,*)'Input problem - try again.'
+              write(6,*)
+              cycle
+            endif
+            char2048=adjustl(char2048(ipos+1:))
+            read(char2048,*,iostat=ierr)nx
+            if(ierr/=0)then
+              write(6,*)'Input problem - try again.'
+              write(6,*)
+              cycle
+            endif
+            if(nx<1)then
+              write(6,*)'Need at least one point in grid.  Try again.'
+              write(6,*)
+              cycle
+            endif
+            char2048=''
+          endif
+        end select
+
+        exit
+      enddo
+      if(nx<1)cycle
+
+      ! Allocate x array.
+      allocate(x_target(nx),stat=ialloc)
+      if(ialloc/=0)call quit('Allocation problem (f_array).')
+      if(len_trim(char2048)==0)then
+        if(nx==1)then
+          x_target(1)=grid_x1
+        else
+          do i=1,nx
+            x_target(i)=grid_x1+(grid_x2-grid_x1)*dble(i-1)/dble(nx-1)
+          enddo ! i
+        endif
+      else
+        read(char2048,*,iostat=ierr)x_target(1:nx)
+      endif
+
+      if(have_dx.or.have_dy)then
+
+        ! Allocate work array.
+        allocate(f_array(nrandom,nx),stat=ialloc)
+        if(ialloc/=0)call quit('Allocation problem (f_array).')
+
+        ! Do random sampling of data space.
+        ran_x=x
+        ran_y=y
+        do irandom=1,nrandom
+          if(have_dx)then
+            ran_gauss_x=gaussian_random_number(dx)
+            ran_x=x+ran_gauss_x
+          endif
+          if(have_dy)then
+            ran_gauss_y=gaussian_random_number(dy)
+            ran_y=y+ran_gauss_y
+          endif
+          call calc_parameters(nxy,npoly,ran_x,ran_y,weight,pow,ran_a,da,.false.)
+          !w_vector(irandom)=1.d0/&
+          !   &chi_squared(nxy,npoly,x,ran_y,weight,pow,ran_a,.false.)
+          w_vector(irandom)=1.d0
+          op_npoly=npoly
+          op_pow=pow
+          op_a=ran_a
+          do i=1,nderiv
+            call deriv_poly(op_npoly,op_pow,op_a)
+          enddo ! i
+          do ix=1,nx
+            t1=eval_poly(op_npoly,op_pow,op_a,x_target(ix)-x0)
+            f_array(irandom,ix)=t1
+          enddo ! ix
+        enddo ! irandom
+
+      endif ! have_dx.or.have_dy
+
+      ! Open file.
+      fname='polyfit_'//trim(file_label)//'.dat'
+      open(unit=io,file=trim(fname),status='replace')
+
+      if(.not.(have_dx.or.have_dy))then
+
+        ! Write header.
+        write(io,'(a)')'# x  '//trim(set_label)
+        ! Construct target polynomial at original parameter set.
+        op_npoly=npoly
+        op_pow=pow
+        op_a=a
+        do i=1,nderiv
+          call deriv_poly(op_npoly,op_pow,op_a)
+        enddo ! i
+        ! Loop over values of x.
+        do ix=1,nx
+          ! Evaluate target polynomial at x.
+          t1=eval_poly(op_npoly,op_pow,op_a,x_target(ix)-x0)
+          write(io,*)x_target(ix),t1
+        enddo ! ix
+
+      else
+
+        ! Write header.
+        write(io,'(a)')'# x  '//trim(set_label)//&
+           &'  stderr  stderr+  stderr-  95%err+  95%err-  skew  kurt'
+        ! Loop over values of x.
+        do ix=1,nx
+          ! Report various statistics.
+          mean=sum(f_array(:,ix)*w_vector)/sum(w_vector)
+          call characterize_dist(nrandom,f_array(:,ix),w_vector,var,skew,&
+             &kurt)
+          f95_lo=find_pth_smallest(nint(dble(nrandom)*0.025d0),nrandom,&
+             &f_array(:,ix))
+          f1s_lo=find_pth_smallest(nint(dble(nrandom)*0.158655254d0),nrandom,&
+             &f_array(:,ix))
+          f1s_hi=find_pth_smallest(nint(dble(nrandom)*0.841344746d0),nrandom,&
+             &f_array(:,ix))
+          f95_hi=find_pth_smallest(nint(dble(nrandom)*0.975d0),nrandom,&
+             &f_array(:,ix))
+          write(io,*)x_target(ix),mean,sqrt(var),mean-f95_lo,mean-f1s_lo,&
+             &f1s_hi-mean,f95_hi-mean,skew,kurt
+        enddo ! ix
+
+      endif ! .not.(have_dx.or.have_dy) or have_dx.or.have_dy
+
+      ! Close file.
+      close(io)
+      write(6,*)'Data written to "'//trim(fname)//'".'
+      write(6,*)
+
+      ! Clean up.
+      if(have_dx.or.have_dy)deallocate(f_array)
+      deallocate(x_target)
+
+    enddo ! loop over y / y' / y''
+
+    ! Clean up.
+    if(have_dx.or.have_dy)deallocate(ran_gauss_x,ran_gauss_y,ran_x,ran_y,ran_a,&
+       &w_vector)
+    deallocate(op_pow,op_a)
+    deallocate(weight,pow,a,da)
+
+  END SUBROUTINE user_interaction
 
 
   SUBROUTINE calc_parameters(nxy,npoly,x,y,weight,pow,a,da,weighted)
@@ -905,7 +943,7 @@ CONTAINS
       if(i==0)exit
     enddo ! j
     if(n<0)then
-      i2s='-'//adjustl(i2s)
+      i2s='-'//adjustl(i2s(2:12))
     else
       i2s=adjustl(i2s)
     endif ! n<0
@@ -939,18 +977,23 @@ CONTAINS
   END SUBROUTINE get_file
 
 
-  SUBROUTINE check_file(io,fname,nline,ncolumn)
+  SUBROUTINE check_file(fname,nline,ncolumn)
     !----------------------------------------------------!
     ! Check file contains data, and return the number of !
     ! data lines and the number of data columns in it.   !
     !----------------------------------------------------!
     IMPLICIT NONE
-    INTEGER,INTENT(in) :: io
     CHARACTER(*),INTENT(in) :: fname
     INTEGER,INTENT(out) :: nline,ncolumn
     CHARACTER(1024) char1024
-    INTEGER pline,ierr
+    INTEGER i,ipos,pline,ierr
     DOUBLE PRECISION t1
+    ! Constants.
+    INTEGER, PARAMETER :: io=10
+
+    ! Open file.
+    open(unit=io,file=trim(fname),status='old',iostat=ierr)
+    if(ierr/=0)call quit('Error opening "'//trim(fname)//'".')
 
     ! Initialize.
     nline=0
@@ -991,8 +1034,8 @@ CONTAINS
       nline=nline+1
     enddo
 
-    ! Rewind file.
-    rewind(io)
+    ! Close file.
+    close(io)
 
   END SUBROUTINE check_file
 
@@ -1088,18 +1131,24 @@ CONTAINS
   END SUBROUTINE get_columns
 
 
-  SUBROUTINE read_file(io,fname,ncolumn,icol_x,icol_y,icol_dx,icol_dy,nxy,&
+  SUBROUTINE read_file(fname,ncolumn,icol_x,icol_y,icol_dx,icol_dy,nxy,&
      &x,y,dx,dy)
     !-------------------------------------!
     ! Read in the data in the input file. !
     !-------------------------------------!
     IMPLICIT NONE
-    INTEGER,INTENT(in) :: io,ncolumn,icol_x,icol_y,icol_dx,icol_dy,nxy
+    INTEGER,INTENT(in) :: ncolumn,icol_x,icol_y,icol_dx,icol_dy,nxy
     CHARACTER(*),INTENT(in) :: fname
     DOUBLE PRECISION,INTENT(out) :: x(nxy),y(nxy),dx(nxy),dy(nxy)
     DOUBLE PRECISION tvec(ncolumn)
     INTEGER i,ierr,ipos,pline
     CHARACTER(1024) line
+    ! Constants.
+    INTEGER, PARAMETER :: io=10
+
+    ! Open file.
+    open(unit=io,file=trim(fname),status='old',iostat=ierr)
+    if(ierr/=0)call quit('Error opening "'//trim(fname)//'".')
 
     ! Initialize.
     pline=0
@@ -1145,6 +1194,9 @@ CONTAINS
            &trim(i2s(pline))//': non-positive dy.')
       endif ! have_dy
     enddo ! i
+
+    ! Close file.
+    close(io)
 
   END SUBROUTINE read_file
 
