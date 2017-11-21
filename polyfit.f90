@@ -13,7 +13,7 @@ PROGRAM polyfit
 
   ! Global variables.
   ! Precision for real-to-integer conversions and exponent comparisons.
-  DOUBLE PRECISION,PARAMETER :: tol_zero=1.d-8
+  DOUBLE PRECISION,PARAMETER :: tol_zero=1.d-10
   ! Transformations.
   INTEGER,PARAMETER :: NTRANSF=3
   INTEGER,PARAMETER :: ITRANSF_NONE=0,ITRANSF_REC=1,ITRANSF_LOG=2,ITRANSF_EXP=3
@@ -86,7 +86,7 @@ CONTAINS
     LOGICAL,INTENT(in) :: have_dx,have_dy
     DOUBLE PRECISION,INTENT(inout) :: x(nxy),y(nxy),dx(nxy),dy(nxy)
     ! Fitting function.
-    INTEGER npoly,itransfx,itransfy
+    INTEGER npoly,itransfx,itransfy,i
     DOUBLE PRECISION x0
     DOUBLE PRECISION,ALLOCATABLE :: pow(:)
     ! Misc local variables.
@@ -114,15 +114,15 @@ CONTAINS
       write(6,*)'* Data analysis and pre-fit assessment:'
       write(6,*)'  [r] Show basic data-range statistics'
       write(6,*)'  [e] Show expansion-order analysis'
-      write(6,*)'  [n] Show combined number of points/expansion-order analysis'
+      write(6,*)'  [d] Show dual number of points/expansion-order analysis'
       write(6,*)'  [p] Plot fits at multiple expansion orders'
       write(6,*)'* Fitting:'
       if(npoly<1)then
-        write(6,*)'  [f] Set fit exponents [not yet chosen] and perform fit'
-        write(6,*)'* Post-fit analysis [must set fit exponents first]:'
+        write(6,*)'  [f] Set form and perform fit [form not yet chosen]'
+        write(6,*)'* Post-fit analysis [must set fit form first]:'
       else
-        write(6,*)'  [f] Set fit exponents ['//trim(i2s(npoly))//'-term &
-           &polynomial] and perform fit'
+        write(6,*)'  [f] Set form and perform fit ['//&
+           &trim(print_poly_sym(npoly,pow,x0))//']'
         write(6,*)'* Post-fit analysis:'
       endif
       write(6,*)'  [v] Compute values/derivatives of fit'
@@ -143,8 +143,9 @@ CONTAINS
       case('0')
         call ask_centre(nxy,have_dx,have_dy,x,y,dx,dy,itransfx,itransfy,x0)
       case('f')
-        call ask_poly(nxy,char2048,npoly)
-        if(npoly<1)cycle
+        call ask_poly(nxy,char2048,i)
+        if(i<1)cycle
+        npoly=i
         if(allocated(pow))deallocate(pow)
         allocate(pow(npoly),stat=ierr)
         if(ierr/=0)call quit('Allocation error.')
@@ -158,11 +159,20 @@ CONTAINS
       case('r')
         call show_statistics(nxy,have_dx,have_dy,x,y,dx,dy,itransfx,itransfy)
       case('e')
-        call assess_exporder(nxy,have_dx,have_dy,x,y,dx,dy,itransfx,itransfy,&
-           &x0)
-      case('n')
-        ! FIXME - write
-        continue
+        call show_exporder_assessment(nxy,have_dx,have_dy,x,y,dx,dy,&
+           &itransfx,itransfy,x0,i,char2048)
+        if(i>0)then
+          npoly=i
+          if(allocated(pow))deallocate(pow)
+          allocate(pow(npoly),stat=ierr)
+          if(ierr/=0)call quit('Allocation error.')
+          call parse_poly(char2048,npoly,pow)
+          call show_poly(nxy,have_dx,have_dy,x,y,dx,dy,itransfx,itransfy,x0,&
+             &npoly,pow)
+        endif
+      case('d')
+        call show_dual_assessment(nxy,have_dx,have_dy,x,y,dx,dy,itransfx,&
+           &itransfy,x0)
       case('p')
         call plot_exporder(nxy,have_dx,have_dy,x,y,dx,dy,itransfx,itransfy,x0)
       case('v')
@@ -199,8 +209,8 @@ CONTAINS
     DOUBLE PRECISION vmin,vmax,vcentre,vmean,vmedian
 
     ! Apply scale transformations.
-    call scale_transform(nxy,have_dx,x,dx,itransfx,tx,dtx)
-    call scale_transform(nxy,have_dy,y,dy,itransfy,ty,dty)
+    call scale_transform(nxy,itransfx,x,tx,have_dx,dx,dtx)
+    call scale_transform(nxy,itransfy,y,ty,have_dy,dy,dty)
 
     ! Print stats.
     write(6,*)'Data-range statistics:'
@@ -297,7 +307,7 @@ CONTAINS
     if(ierr==0)then
       write(6,*)'X is x in '//trim(TRANSF_NAME(itransfx))//' scale.'
     else
-      write(6,*)'x scale unchanged.'
+      write(6,*)'X scale unchanged.'
     endif
     write(6,*)
 
@@ -335,7 +345,7 @@ CONTAINS
     if(ierr==0)then
       write(6,*)'Y is y in '//trim(TRANSF_NAME(itransfy))//' scale.'
     else
-      write(6,*)'y scale unchanged.'
+      write(6,*)'Y scale unchanged.'
     endif
     write(6,*)
 
@@ -355,8 +365,8 @@ CONTAINS
     INTEGER i,ierr
 
     ! Evaluate transformed variables.
-    call scale_transform(nxy,have_dx,x,dx,itransfx,tx,dtx)
-    call scale_transform(nxy,have_dy,y,dy,itransfy,ty,dty)
+    call scale_transform(nxy,itransfx,x,tx,have_dx,dx,dtx)
+    call scale_transform(nxy,itransfy,y,ty,have_dy,dy,dty)
 
     ! Get fit centre X0.
     write(6,*)'Current fit centre X0 = ',x0
@@ -412,35 +422,37 @@ CONTAINS
   END SUBROUTINE ask_centre
 
 
-  SUBROUTINE scale_transform(nxy,have_dx,x,dx,itransfx,tx,dtx)
+  SUBROUTINE scale_transform(nxy,itransfx,x,tx,have_dx,dx,dtx)
     !---------------------------------------!
     ! Apply a scale transformation x -> tx. !
     !---------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: nxy,itransfx
+    DOUBLE PRECISION,INTENT(in) :: x(nxy)
+    DOUBLE PRECISION,INTENT(inout) :: tx(nxy)
     LOGICAL,INTENT(in) :: have_dx
-    DOUBLE PRECISION,INTENT(in) :: x(nxy),dx(nxy)
-    DOUBLE PRECISION,INTENT(inout) :: tx(nxy),dtx(nxy)
-    dtx=0.d0
+    DOUBLE PRECISION,INTENT(in),OPTIONAL :: dx(nxy)
+    DOUBLE PRECISION,INTENT(inout),OPTIONAL :: dtx(nxy)
+    if(present(dtx))dtx=0.d0
     select case(itransfx)
     case(ITRANSF_NONE)
       tx=x
-      if(have_dx)dtx=dx
+      if(have_dx.and.present(dx).and.present(dtx))dtx=dx
     case(ITRANSF_REC)
       tx=1.d0/x
-      if(have_dx)dtx=dx*tx**2
+      if(have_dx.and.present(dx).and.present(dtx))dtx=dx*tx**2
     case(ITRANSF_LOG)
       tx=log(x)
-      if(have_dx)dtx=dx/x
+      if(have_dx.and.present(dx).and.present(dtx))dtx=dx/x
     case(ITRANSF_EXP)
       tx=exp(x)
-      if(have_dx)dtx=dx*tx
+      if(have_dx.and.present(dx).and.present(dtx))dtx=dx*tx
     end select
   END SUBROUTINE scale_transform
 
 
-  SUBROUTINE assess_exporder(nxy,have_dx,have_dy,x,y,dx,dy,itransfx,itransfy,&
-     &x0)
+  SUBROUTINE show_exporder_assessment(nxy,have_dx,have_dy,x,y,dx,dy,itransfx,&
+     &itransfy,x0,npoly_out,char2048)
     !--------------------------------------------------------!
     ! Perform an assessment of the performance of polynomial !
     ! fits as a function of expansion order.                 !
@@ -449,6 +461,8 @@ CONTAINS
     INTEGER,INTENT(in) :: nxy,itransfx,itransfy
     LOGICAL,INTENT(in) :: have_dx,have_dy
     DOUBLE PRECISION,INTENT(in) :: x(nxy),y(nxy),dx(nxy),dy(nxy),x0
+    INTEGER,INTENT(inout) :: npoly_out
+    CHARACTER(*),INTENT(inout) :: char2048
     DOUBLE PRECISION,ALLOCATABLE :: chi2_vector(:),rmsc_100_vector(:),&
        &rmsc_150_vector(:),rmsc_200_vector(:),pow(:),a(:),da(:),op_pow(:),&
        &op_a(:)
@@ -456,10 +470,14 @@ CONTAINS
     INTEGER ntest,npoly,op_npoly,i,np,ierr
     LOGICAL weighted
 
+    ! Initialize.
+    npoly_out=0
+    char2048=''
+
     ! Evaluate transformed variables and fit weights.
-    call scale_transform(nxy,have_dx,x,dx,itransfx,tx,dtx)
+    call scale_transform(nxy,itransfx,x,tx,have_dx,dx,dtx)
     tx=tx-x0
-    call scale_transform(nxy,have_dy,y,dy,itransfy,ty,dty)
+    call scale_transform(nxy,itransfy,y,ty,have_dy,dy,dty)
     if(have_dx.and.have_dy)then
       weight=1.d0/(dtx*dty)**2
     elseif(have_dx)then
@@ -489,7 +507,7 @@ CONTAINS
       do i=1,npoly
         pow(i)=dble(i-1)
       enddo ! i
-      call calc_parameters(nxy,npoly,tx,ty,weight,pow,a,da,weighted)
+      call calc_parameters(nxy,npoly,tx,ty,pow,a,weighted,weight,da)
       ! Evaluate chi^2.
       chi2_vector(npoly)=chi_squared(nxy,npoly,tx,ty,weight,pow,a,weighted)
       ! Evaluate root mean square curvature of fit as measure of smoothness.
@@ -552,13 +570,173 @@ CONTAINS
     enddo
     write(6,'(1x,57("-"))')
     write(6,*)
-    write(6,*)'You can plot these polynomials by typing "plot" below.'
-    write(6,*)
+
+    ! Allow user to choose one of the above expansion orders.
+    write(6,*)'Enter order to choose fit form [empty to skip]:'
+    read(5,'(a)',iostat=ierr)char2048
+    if(ierr==0)then
+      write(6,*)
+      if(len_trim(char2048)>0)then
+        read(char2048,*,iostat=ierr)i
+        if(ierr==0)then
+          if(i>=0.and.i<=ntest)then
+            npoly_out=i+1
+            char2048=''
+            do i=0,npoly_out-1
+              char2048=trim(char2048)//' '//trim(i2s(i))
+            enddo ! i
+          endif
+        endif
+      endif
+    endif
 
     ! Destroy work arrays.
     deallocate(chi2_vector,rmsc_100_vector,rmsc_150_vector,rmsc_200_vector)
 
-  END SUBROUTINE assess_exporder
+  END SUBROUTINE show_exporder_assessment
+
+
+  SUBROUTINE show_dual_assessment(nxy,have_dx,have_dy,x,y,dx,dy,itransfx,&
+     &itransfy,x0)
+    !-----------------------------------------------------------!
+    ! Perform an "extrapolation" assessment in which the number !
+    ! of points included in the fit and the expansion order are !
+    ! simultaneously optimized.                                 !
+    !-----------------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: nxy,itransfx,itransfy
+    LOGICAL,INTENT(in) :: have_dx,have_dy
+    DOUBLE PRECISION,INTENT(in) :: x(nxy),y(nxy),dx(nxy),dy(nxy),x0
+    DOUBLE PRECISION, ALLOCATABLE :: chi2_array(:,:),pow(:),a(:),da(:)
+    DOUBLE PRECISION tx(nxy),ty(nxy),dtx(nxy),dty(nxy),weight(nxy),&
+       &rtx(nxy),rty(nxy),rweight(nxy),xtarget,min_chi2,t1,&
+       &rx(nxy),ry(nxy),rdx(nxy),rdy(nxy)
+    INTEGER i,ntest,npoly,rnxy,nderiv,ierr,indx(nxy),imin_chi2,nrandom,ibest_f
+    LOGICAL mask(nxy),weighted
+    CHARACTER(20) drop_by,drop_criterion
+    DOUBLE PRECISION fmean(1),ferr(1),best_f,best_df
+
+    ! Initialize.
+    nderiv=0
+    xtarget=0.d0
+    nrandom=10000
+    drop_by='X'
+    drop_criterion='largest'
+
+    ! Evaluate transformed variables and fit weights.
+    call scale_transform(nxy,itransfx,x,tx,have_dx,dx,dtx)
+    tx=tx-x0
+    call scale_transform(nxy,itransfy,y,ty,have_dy,dy,dty)
+    if(have_dx.and.have_dy)then
+      weight=1.d0/(dtx*dty)**2
+    elseif(have_dx)then
+      weight=1.d0/dtx**2
+    elseif(have_dy)then
+      weight=1.d0/dty**2
+    else
+      weight=1.d0
+    endif
+    weighted=have_dx.or.have_dy
+
+    ! Perform sort.
+    select case(trim(drop_by))
+    case('X')
+      call isort(nxy,tx,indx)
+    case('Y')
+      call isort(nxy,ty,indx)
+    case('x')
+      call isort(nxy,x,indx)
+    case('y')
+      call isort(nxy,y,indx)
+    case('index')
+      indx=(/(i,i=1,nxy)/)
+    end select
+
+    ! Assess integer expansion orders up to order 8.
+    ntest=min(nxy-1,9)
+    allocate(chi2_array(nxy,ntest),stat=ierr)
+    if(ierr/=0)call quit('Allocation problem (chi2_array).')
+
+    ! Loop over expansion orders.
+    ibest_f=0
+    best_f=0.d0
+    best_df=0.d0
+    do npoly=1,ntest
+      write(6,*)'At expansion order '//trim(i2s(npoly-1))//':'
+      ! Allocate work arrays.
+      allocate(pow(npoly),a(npoly),da(npoly),stat=ierr)
+      if(ierr/=0)call quit('Allocation error.')
+      do i=1,npoly
+        pow(i)=dble(i-1)
+      enddo ! i
+      ! Loop over number of points in fit.
+      imin_chi2=0
+      min_chi2=0.d0
+      do rnxy=nxy,npoly+1,-1
+        ! Build data mask.
+        mask=.false.
+        select case(trim(drop_criterion))
+        case('smallest')
+          mask(indx(nxy-rnxy+1:nxy))=.true.
+        case('largest')
+          mask(indx(1:rnxy))=.true.
+        end select
+        ! Apply data mask.
+        rtx(1:rnxy)=pack(tx,mask)
+        rty(1:rnxy)=pack(ty,mask)
+        rweight(1:rnxy)=pack(weight,mask)
+        ! Fit to polynomial of order npoly-1.
+        call calc_parameters(rnxy,npoly,rtx,rty,pow,a,weighted,rweight,da)
+        ! Evaluate chi^2.
+        t1=chi_squared(rnxy,npoly,rtx,rty,rweight,pow,a,weighted)/&
+           &dble(rnxy-npoly)
+        chi2_array(rnxy,npoly)=t1
+        if(imin_chi2==0.or.t1<min_chi2)then
+          imin_chi2=rnxy
+          min_chi2=t1
+        endif
+        ! Report.
+        write(6,*)'  NXY = '//trim(i2s(rnxy))//' -> chi^2/Ndf = ',t1
+      enddo ! rnxy
+      if(imin_chi2>npoly+1)then
+        rnxy=imin_chi2
+        ! Build data mask.
+        mask=.false.
+        select case(trim(drop_criterion))
+        case('smallest')
+          mask(indx(nxy-rnxy+1:nxy))=.true.
+        case('largest')
+          mask(indx(1:rnxy))=.true.
+        end select
+        ! Apply data mask.
+        rx(1:rnxy)=pack(x,mask)
+        ry(1:rnxy)=pack(y,mask)
+        rdx(1:rnxy)=pack(dx,mask)
+        rdy(1:rnxy)=pack(dy,mask)
+        ! Fit to polynomial of order npoly-1.
+        call eval_fit_monte_carlo(rnxy,have_dx,have_dy,rx,ry,rdx,rdy,&
+           &itransfx,itransfy,x0,npoly,pow,nrandom,nderiv,1,(/xtarget/),&
+           &fmean,ferr)
+        write(6,*)'  At NXY = '//trim(i2s(imin_chi2))//': ',fmean(1),' +/- ',&
+           &ferr(1)
+        if(ibest_f==0.or.abs(fmean(1)-best_f)>&
+           &2.d0*sqrt(ferr(1)**2+best_df**2))then
+          ibest_f=npoly
+          best_f=fmean(1)
+          best_df=ferr(1)
+        endif
+      endif
+      write(6,*)
+      deallocate(pow,a,da)
+    enddo ! npoly
+    write(6,*)'Best expansion order: '//trim(i2s(ibest_f-1))
+    write(6,*)'  at which we get ',best_f,' +/- ',best_df
+    write(6,*)
+
+    ! Clean up.
+    deallocate(chi2_array)
+
+  END SUBROUTINE show_dual_assessment
 
 
   SUBROUTINE plot_exporder(nxy,have_dx,have_dy,x,y,dx,dy,itransfx,itransfy,x0)
@@ -579,9 +757,9 @@ CONTAINS
     INTEGER,PARAMETER :: io=10
 
     ! Evaluate transformed variables and fit weights.
-    call scale_transform(nxy,have_dx,x,dx,itransfx,tx,dtx)
+    call scale_transform(nxy,itransfx,x,tx,have_dx,dx,dtx)
     tx=tx-x0
-    call scale_transform(nxy,have_dy,y,dy,itransfy,ty,dty)
+    call scale_transform(nxy,itransfy,y,ty,have_dy,dy,dty)
     if(have_dx.and.have_dy)then
       weight=1.d0/(dtx*dty)**2
     elseif(have_dx)then
@@ -606,7 +784,7 @@ CONTAINS
         pow(i)=dble(i-1)
       enddo ! i
       ! Perform fit.
-      call calc_parameters(nxy,npoly,tx,ty,weight,pow,a,da,weighted)
+      call calc_parameters(nxy,npoly,tx,ty,pow,a,weighted,weight,da)
       ! Dump plot.
       txplot=minval(tx)-0.5d0*txrange
       dtxplot=(txrange*2.d0)/dble(npoint)
@@ -636,21 +814,37 @@ CONTAINS
     INTEGER,INTENT(in) :: nxy
     CHARACTER(*),INTENT(inout) :: char2048
     INTEGER,INTENT(inout) :: npoly
-    INTEGER i,ierr
+    INTEGER i1,i2,i,ipos,ierr
     DOUBLE PRECISION t1
 
     ! Ask user for exponents.
     npoly=0
-    write(6,*)'Enter exponents in fitting polynomial as a space-separated &
-       &list:'
+    write(6,*)'Enter exponents in fitting polynomial (space-separated &
+       &list, or i:j, or :j):'
     read(5,'(a)',iostat=ierr)char2048
     if(ierr/=0)return
     write(6,*)
+    char2048=adjustl(char2048)
     do
       read(char2048,*,iostat=ierr)(t1,i=1,npoly+1)
       if(ierr/=0)exit
       npoly=npoly+1
     enddo
+    if(npoly==0)then
+      ! Try to parse range.
+      ipos=scan(char2048,':')
+      if(ipos<1)return
+      read(char2048(1:ipos-1),*,iostat=ierr)i1
+      if(ierr/=0)i1=0
+      read(char2048(ipos+1:),*,iostat=ierr)i2
+      if(ierr/=0)return
+      npoly=i2-i1+1
+      ! Reconstruct string for later parsing.
+      char2048=''
+      do i=i1,i2
+        char2048=trim(char2048)//' '//trim(i2s(i))
+      enddo ! i
+    endif
 
     ! Check number exponents is sensible.
     if(npoly<1)then
@@ -735,9 +929,9 @@ CONTAINS
     INTEGER i
 
     ! Evaluate transformed variables and fit weights.
-    call scale_transform(nxy,have_dx,x,dx,itransfx,tx,dtx)
+    call scale_transform(nxy,itransfx,x,tx,have_dx,dx,dtx)
     tx=tx-x0
-    call scale_transform(nxy,have_dy,y,dy,itransfy,ty,dty)
+    call scale_transform(nxy,itransfy,y,ty,have_dy,dy,dty)
     if(have_dx.and.have_dy)then
       weight=1.d0/(dtx*dty)**2
     elseif(have_dx)then
@@ -755,7 +949,7 @@ CONTAINS
     write(6,*)
 
     ! Compute fit.
-    call calc_parameters(nxy,npoly,tx,ty,weight,pow,a,da,weighted)
+    call calc_parameters(nxy,npoly,tx,ty,pow,a,weighted,weight,da)
 
     ! Print fit coefficients.
     write(6,*)'Fit parameters:'
@@ -771,11 +965,8 @@ CONTAINS
     endif ! weighted
     ! Evaluate chi-squared.
     t1=chi_squared(nxy,npoly,tx,ty,weight,pow,a,weighted)
-    if(weighted)then
-      write(6,*)'Chi-squared value: ',t1
-    else
-      write(6,*)'Least-squares function: ',t1
-    endif ! weighted
+    write(6,*)'chi^2     = ',t1
+    if(nxy>npoly)write(6,*)'chi^2/Ndf = ',t1/dble(nxy-npoly)
     write(6,*)
 
     ! Write out fitted polynomial.
@@ -799,33 +990,29 @@ CONTAINS
     LOGICAL,INTENT(in) :: have_dx,have_dy
     DOUBLE PRECISION,INTENT(in) :: x(nxy),y(nxy),dx(nxy),dy(nxy),x0,pow(npoly)
     ! Transformed data.
-    DOUBLE PRECISION tx(nxy),ty(nxy),dtx(nxy),dty(nxy),weight(nxy)
+    DOUBLE PRECISION tx(nxy),ty(nxy)
     ! Fit parameters.
-    DOUBLE PRECISION a(npoly),da(npoly)
+    DOUBLE PRECISION a(npoly)
     ! Polynomials resulting from operations on fitting polynomial.
     INTEGER op_npoly
     DOUBLE PRECISION op_pow(npoly),op_a(npoly)
     ! Random sampling variables.
-    DOUBLE PRECISION ran_gauss_x(nxy),ran_gauss_y(nxy),ran_x(nxy),ran_y(nxy),&
-       &ran_a(npoly)
-    ! Random sampling vectors.
     INTEGER nrandom,nx
-    DOUBLE PRECISION grid_x1,grid_x2,f95_lo,f1s_lo,f1s_hi,f95_hi
-    DOUBLE PRECISION,ALLOCATABLE :: w_vector(:),x_target(:),f_array(:,:)
-    ! Distribution analysis.
-    DOUBLE PRECISION mean,var,skew,kurt
+    DOUBLE PRECISION grid_x1,grid_x2
+    DOUBLE PRECISION, ALLOCATABLE :: fmean(:),ferr(:),fmean_1s(:),ferr_1s(:),&
+       &fmean_2s(:),ferr_2s(:),fmed(:),fskew(:),fkurt(:)
+    DOUBLE PRECISION,ALLOCATABLE :: x_target(:)
     ! Misc local variables.
-    CHARACTER(40) set_label
+    CHARACTER(40) set_label,xprint
     CHARACTER(256) fname
     CHARACTER(2048) char2048
-    INTEGER i,nderiv,irandom,ierr,ialloc,ix,ipos
+    INTEGER i,nderiv,ierr,ix,ipos
     DOUBLE PRECISION t1
     ! Parameters.
     INTEGER,PARAMETER :: DEFAULT_NRANDOM=100000
     INTEGER,PARAMETER :: io=10
 
     ! Initialize.
-    weight=1.d0 ! (unused)
     nrandom=DEFAULT_NRANDOM
     nderiv=0
     set_label='f'
@@ -935,7 +1122,7 @@ CONTAINS
             nx=nx+1
           enddo
           if(nx>1)then
-            allocate(x_target(nx),stat=ialloc)
+            allocate(x_target(nx),stat=ierr)
             if(ierr/=0)call quit('Allocation problem.')
             read(char2048,*,iostat=ierr)x_target
           else
@@ -954,7 +1141,7 @@ CONTAINS
             if(ierr/=0)cycle
             if(i<2)cycle
             nx=i
-            allocate(x_target(nx),stat=ialloc)
+            allocate(x_target(nx),stat=ierr)
             if(ierr/=0)call quit('Allocation problem.')
             if(nx==1)then
               x_target(1)=0.5d0*(grid_x1+grid_x2)
@@ -980,106 +1167,62 @@ CONTAINS
           open(unit=io,file=trim(fname),status='replace')
         endif
 
-        ! Do random sampling of data space if needed.
+        ! Choose random sampling or deterministic fit.
         if(have_dx.or.have_dy)then
-          allocate(w_vector(nrandom),f_array(nrandom,nx),stat=ialloc)
-          if(ialloc/=0)call quit('Allocation problem (w_vector,f_array).')
-          ran_x=x
-          ran_y=y
 
-          do irandom=1,nrandom
-            if(have_dx)then
-              ran_gauss_x=gaussian_random_number(dx)
-              ran_x=x+ran_gauss_x
-            endif
-            if(have_dy)then
-              ran_gauss_y=gaussian_random_number(dy)
-              ran_y=y+ran_gauss_y
-            endif
-            call scale_transform(nxy,have_dx,ran_x,dx,itransfx,tx,dtx)
-            tx=tx-x0
-            call scale_transform(nxy,have_dy,ran_y,dy,itransfy,ty,dty)
-            call calc_parameters(nxy,npoly,tx,ty,weight,pow,ran_a,da,.false.)
-            !w_vector(irandom)=1.d0/&
-            !   &chi_squared(nxy,npoly,x,ran_y,weight,pow,ran_a,.false.)
-            w_vector(irandom)=1.d0
-            op_npoly=npoly
-            op_pow=pow
-            op_a=ran_a
-            do i=1,nderiv
-              call deriv_poly(op_npoly,op_pow,op_a)
-            enddo ! i
-            do ix=1,nx
-              t1=eval_poly(op_npoly,op_pow,op_a,x_target(ix)-x0)
-              f_array(irandom,ix)=t1
-            enddo ! ix
-          enddo ! irandom
-
-          ! Report or dump.
+          allocate(fmean(nx),ferr(nx),fmean_1s(nx),ferr_1s(nx),fmean_2s(nx),&
+             &ferr_2s(nx),fmed(nx),fskew(nx),fkurt(nx),stat=ierr)
+          if(ierr/=0)call quit('Allocation problem (fmean,etc).')
+          call eval_fit_monte_carlo(nxy,have_dx,have_dy,x,y,dx,dy,&
+             &itransfx,itransfy,x0,npoly,pow,nrandom,nderiv,nx,x_target,&
+             &fmean,ferr,fmean_1s,ferr_1s,fmean_2s,ferr_2s,fmed,fskew,fkurt)
+          ! Dump.
           if(nx==1)then
-
-            mean=sum(f_array(:,1)*w_vector)/sum(w_vector)
-            call characterize_dist(nrandom,f_array(:,1),w_vector,var,skew,&
-               &kurt)
-            f95_lo=find_pth_smallest(nint(dble(nrandom)*0.025d0),&
-               &nrandom,f_array(:,1))
-            f1s_lo=find_pth_smallest(nint(dble(nrandom)*0.158655254d0),&
-               &nrandom,f_array(:,1))
-            f1s_hi=find_pth_smallest(nint(dble(nrandom)*0.841344746d0),&
-               &nrandom,f_array(:,1))
-            f95_hi=find_pth_smallest(nint(dble(nrandom)*0.975d0),&
-               &nrandom,f_array(:,1))
-            write(6,*)trim(set_label)//' = ',mean,' +/- ',sqrt(var)
-            write(6,*)'1-sigma conf. int.: ',mean-f1s_lo,f1s_hi-mean
-            write(6,*)'95% conf. int.    : ',mean-f95_lo,f95_hi-mean
-            write(6,*)'Skewness          : ',skew
-            write(6,*)'Kurtosis          : ',kurt
+            ! Single value is printed to stdout.
+            write(xprint,*)x_target(1)
+            write(6,*)'Value of '//trim(set_label)//' at X='//&
+               &trim(adjustl(xprint))//':'
+            write(6,*)'  Mean            : ',fmean(1),' +/- ',ferr(1)
+            write(6,*)'  From 1-sigma CI : ',fmean_1s(1),' +/- ',ferr_1s(1)
+            write(6,*)'  From 2-sigma CI : ',fmean_2s(1),' +/- ',ferr_2s(1)
+            write(6,*)'  Median          : ',fmed(1)
+            write(6,*)'  Skewness        : ',fskew(1)
+            write(6,*)'  Kurtosis        : ',fkurt(1)
             write(6,*)
-
           else
-
-            ! Dump to file.
-            write(io,'(a)')'# x  '//trim(set_label)//&
-               &'  stderr  stderr+  stderr-  95%err+  95%err-  skew  kurt'
+            ! Multiple values are dumped to file.
+            write(io,'(a)')'# x  '//trim(set_label)//'  stderr  &
+               &1sigma-centre  1sigma-width  2sigma-centre  2sigma-width  &
+               &median  skew  kurt'
             do ix=1,nx
-              mean=sum(f_array(:,ix)*w_vector)/sum(w_vector)
-              call characterize_dist(nrandom,f_array(:,ix),w_vector,var,skew,&
-                 &kurt)
-              f95_lo=find_pth_smallest(nint(dble(nrandom)*0.025d0),&
-                 &nrandom,f_array(:,ix))
-              f1s_lo=find_pth_smallest(nint(dble(nrandom)*0.158655254d0),&
-                 &nrandom,f_array(:,ix))
-              f1s_hi=find_pth_smallest(nint(dble(nrandom)*0.841344746d0),&
-                 &nrandom,f_array(:,ix))
-              f95_hi=find_pth_smallest(nint(dble(nrandom)*0.975d0),&
-                 &nrandom,f_array(:,ix))
-              write(io,*)x_target(ix),mean,sqrt(var),mean-f95_lo,mean-f1s_lo,&
-                 &f1s_hi-mean,f95_hi-mean,skew,kurt
+              write(io,*)x_target(ix),fmean(ix),ferr(ix),&
+                 &fmean_1s(ix),ferr_1s(ix),fmean_2s(ix),ferr_2s(ix),&
+                 &fmed(ix),fskew(ix),fkurt(ix)
             enddo ! ix
-
           endif
-          deallocate(w_vector,f_array)
+          deallocate(fmean,ferr,fmean_1s,ferr_1s,fmean_2s,ferr_2s,fmed,fskew,&
+             &fkurt)
 
         else ! .not.(have_dx.or.have_dy)
 
           ! Perform single fit.
-          call scale_transform(nxy,have_dx,x,dx,itransfx,tx,dtx)
+          call scale_transform(nxy,itransfx,x,tx,.false.)
           tx=tx-x0
-          call scale_transform(nxy,have_dy,y,dy,itransfy,ty,dty)
-          call calc_parameters(nxy,npoly,tx,ty,weight,pow,a,da,.false.)
-
-          ! Report or dump.
+          call scale_transform(nxy,itransfy,y,ty,.false.)
+          call calc_parameters(nxy,npoly,tx,ty,pow,a,.false.)
           if(nx==1)then
+            ! Single value is printed to stdout.
             op_npoly=npoly
             op_pow=pow
             op_a=a
             do i=1,nderiv
               call deriv_poly(op_npoly,op_pow,op_a)
             enddo ! i
-            mean=eval_poly(op_npoly,op_pow,op_a,x_target(1)-x0)
-            write(6,*)trim(set_label)//' = ',mean
+            t1=eval_poly(op_npoly,op_pow,op_a,x_target(1)-x0)
+            write(6,*)trim(set_label)//' = ',t1
             write(6,*)
           else
+            ! Multiple values are dumped to file.
             write(io,'(a)')'# x  '//trim(set_label)
             op_npoly=npoly
             op_pow=pow
@@ -1113,16 +1256,18 @@ CONTAINS
   ! COMPUTATION ROUTINES
 
 
-  SUBROUTINE calc_parameters(nxy,npoly,x,y,weight,pow,a,da,weighted)
+  SUBROUTINE calc_parameters(nxy,npoly,x,y,pow,a,weighted,weight,da)
     !-------------------------------------------------------------!
     ! Evaluate the parameters using the method given in my notes. !
     !-------------------------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: nxy,npoly
-    DOUBLE PRECISION,INTENT(in) :: x(nxy),y(nxy),weight(nxy),pow(npoly)
-    DOUBLE PRECISION,INTENT(out) :: a(npoly),da(npoly)
+    DOUBLE PRECISION,INTENT(in) :: x(nxy),y(nxy),pow(npoly)
+    DOUBLE PRECISION,INTENT(out) :: a(npoly)
     LOGICAL,INTENT(in) :: weighted
-    INTEGER info,i,j,ipiv(npoly),lwork,ialloc
+    DOUBLE PRECISION,INTENT(in),OPTIONAL :: weight(nxy)
+    DOUBLE PRECISION,INTENT(out),OPTIONAL :: da(npoly)
+    INTEGER info,i,j,ipiv(npoly),lwork,ierr
     DOUBLE PRECISION M(npoly,npoly),Minv(npoly,npoly),c(npoly),tempr(1)
     DOUBLE PRECISION,ALLOCATABLE :: work(:)
     INTERFACE
@@ -1143,23 +1288,23 @@ CONTAINS
     END INTERFACE
 
     ! Construct vector c.
-    call construct_c(nxy,npoly,x,y,weight,pow,c,weighted)
+    call construct_c(nxy,npoly,x,y,pow,c,weighted,weight)
 
     ! Construct matrix M.
-    call construct_M(nxy,npoly,x,weight,pow,M,weighted)
+    call construct_M(nxy,npoly,x,pow,M,weighted,weight)
 
     ! Invert matrix M.
     Minv=M
     call dsytrf('L',npoly,Minv(1,1),npoly,ipiv(1),tempr(1),-1,info)
     if(info/=0)call quit('Matrix inversion failed (1).')
     lwork=nint(tempr(1))
-    allocate(work(lwork),stat=ialloc)
-    if(ialloc/=0)call quit('Allocation error: WORK (1).')
+    allocate(work(lwork),stat=ierr)
+    if(ierr/=0)call quit('Allocation error: WORK (1).')
     call dsytrf('L',npoly,Minv(1,1),npoly,ipiv(1),work(1),lwork,info)
     if(info/=0)call quit('Matrix inversion failed (2).')
     deallocate(work)
-    allocate(work(npoly),stat=ialloc)
-    if(ialloc/=0)call quit('Allocation error: WORK (2).')
+    allocate(work(npoly),stat=ierr)
+    if(ierr/=0)call quit('Allocation error: WORK (2).')
     call dsytri('L',npoly,Minv(1,1),npoly,ipiv(1),work(1),info)
     if(info/=0)call quit('Matrix inversion failed (3).')
     deallocate(work)
@@ -1171,7 +1316,7 @@ CONTAINS
       enddo ! j
     enddo ! i
 
-    ! Hence evaluate the coefficients of the terms in the polynomial.
+    ! Evaluate the coefficients of the terms in the polynomial.
     a=matmul(Minv,c)
 
     ! Evaluate the standard errors in the coefficients.
@@ -1179,6 +1324,8 @@ CONTAINS
       do j=1,npoly
         da(j)=sqrt(Minv(j,j))
       enddo ! j
+    elseif(present(da))then
+      da=0.d0
     endif ! weighted
 
   END SUBROUTINE calc_parameters
@@ -1211,15 +1358,16 @@ CONTAINS
   END FUNCTION chi_squared
 
 
-  SUBROUTINE construct_c(nxy,npoly,x,y,weight,pow,c,weighted)
+  SUBROUTINE construct_c(nxy,npoly,x,y,pow,c,weighted,weight)
     !----------------------------------------!
     ! Construct the vector c (see my notes). !
     !----------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: nxy,npoly
-    DOUBLE PRECISION,INTENT(in) :: x(nxy),y(nxy),weight(nxy),pow(npoly)
+    DOUBLE PRECISION,INTENT(in) :: x(nxy),y(nxy),pow(npoly)
     DOUBLE PRECISION,INTENT(out) :: c(npoly)
     LOGICAL,INTENT(in) :: weighted
+    DOUBLE PRECISION,INTENT(in),OPTIONAL :: weight(nxy)
     INTEGER i,j
     if(weighted)then
       do j=1,npoly
@@ -1239,16 +1387,17 @@ CONTAINS
   END SUBROUTINE construct_c
 
 
-  SUBROUTINE construct_M(nxy,npoly,x,weight,pow,M,weighted)
+  SUBROUTINE construct_M(nxy,npoly,x,pow,M,weighted,weight)
     !----------------------------------------!
     ! Construct the matrix M (see my notes). !
     ! Only need lower triangular part.       !
     !----------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: nxy,npoly
-    DOUBLE PRECISION,INTENT(in) :: x(nxy),weight(nxy),pow(npoly)
+    DOUBLE PRECISION,INTENT(in) :: x(nxy),pow(npoly)
     DOUBLE PRECISION,INTENT(out) :: M(npoly,npoly)
     LOGICAL,INTENT(in) :: weighted
+    DOUBLE PRECISION,INTENT(in),OPTIONAL :: weight(nxy)
     INTEGER i,j,k
     M=0.d0
     if(weighted)then
@@ -1269,6 +1418,102 @@ CONTAINS
       enddo ! k
     endif ! weighted
   END SUBROUTINE construct_M
+
+
+  SUBROUTINE eval_fit_monte_carlo(nxy,have_dx,have_dy,x,y,dx,dy,&
+     &itransfx,itransfy,x0,npoly,pow,nrandom,nderiv,nx,x_target,&
+     &fmean,ferr,fmean_1s,ferr_1s,fmean_2s,ferr_2s,fmed,fskew,fkurt)
+    !------------------------------------------------------!
+    ! Perform Monte Carlo sampling of data space to obtain !
+    ! fit values or derivatives at specified points with   !
+    ! error bars.                                          !
+    !------------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: nxy,itransfx,itransfy,npoly,nrandom,nderiv,nx
+    LOGICAL,INTENT(in) :: have_dx,have_dy
+    DOUBLE PRECISION,INTENT(in) :: x(nxy),y(nxy),dx(nxy),dy(nxy),x0,&
+       &pow(npoly),x_target(nx)
+    DOUBLE PRECISION,INTENT(inout),OPTIONAL :: fmean(nx),ferr(nx),&
+       &fmean_1s(nx),ferr_1s(nx),fmean_2s(nx),ferr_2s(nx),fmed(nx),&
+       &fskew(nx),fkurt(nx)
+    ! Transformed data.
+    DOUBLE PRECISION tx(nxy),ty(nxy)
+    ! Polynomials resulting from operations on fitting polynomial.
+    INTEGER op_npoly
+    DOUBLE PRECISION op_pow(npoly),op_a(npoly)
+    ! Random sampling arrays.
+    DOUBLE PRECISION f_array(nrandom,nx),w_vector(nrandom)
+    DOUBLE PRECISION ran_gauss_x(nxy),ran_gauss_y(nxy),ran_x(nxy),ran_y(nxy),&
+       &ran_a(npoly)
+    ! Distribution analysis.
+    DOUBLE PRECISION var,skew,kurt,f2s_lo,f1s_lo,f1s_hi,f2s_hi
+    ! Misc.
+    INTEGER i,irandom,ix
+    DOUBLE PRECISION t1
+
+    ! Initialize.
+    ran_x=x
+    ran_y=y
+
+    ! Loop over random points.
+    do irandom=1,nrandom
+      if(have_dx)then
+        ran_gauss_x=gaussian_random_number(dx)
+        ran_x=x+ran_gauss_x
+      endif
+      if(have_dy)then
+        ran_gauss_y=gaussian_random_number(dy)
+        ran_y=y+ran_gauss_y
+      endif
+      call scale_transform(nxy,itransfx,ran_x,tx,.false.)
+      tx=tx-x0
+      call scale_transform(nxy,itransfy,ran_y,ty,.false.)
+      call calc_parameters(nxy,npoly,tx,ty,pow,ran_a,.false.)
+      !w_vector(irandom)=1.d0/&
+      !   &chi_squared(nxy,npoly,x,ran_y,weight,pow,ran_a,.false.)
+      w_vector(irandom)=1.d0
+      op_npoly=npoly
+      op_pow=pow
+      op_a=ran_a
+      do i=1,nderiv
+        call deriv_poly(op_npoly,op_pow,op_a)
+      enddo ! i
+      do ix=1,nx
+        t1=eval_poly(op_npoly,op_pow,op_a,x_target(ix)-x0)
+        f_array(irandom,ix)=t1
+      enddo ! ix
+    enddo ! irandom
+
+    ! Evaluate statistics.
+    do ix=1,nx
+      call characterize_dist(nrandom,f_array(:,ix),w_vector,var,skew,kurt)
+      if(present(fmean))fmean(ix)=sum(f_array(:,ix)*w_vector)/sum(w_vector)
+      if(present(ferr))ferr(ix)=sqrt(var)
+      if(present(fskew))fskew(ix)=skew
+      if(present(fkurt))fkurt(ix)=kurt
+      if(present(fmed))fmed(ix)=median(nrandom,f_array(:,ix))
+      if(present(fmean_1s).or.present(ferr_1s))then
+        f1s_lo=find_pth_smallest(nint(dble(nrandom)*0.158655254d0),&
+           &nrandom,f_array(:,ix))
+        f1s_hi=find_pth_smallest(nint(dble(nrandom)*0.841344746d0),&
+           &nrandom,f_array(:,ix))
+        if(present(fmean_1s))fmean_1s(ix)=0.5d0*(f1s_lo+f1s_hi)
+        if(present(ferr_1s))ferr_1s(ix)=0.5d0*(f1s_hi-f1s_lo)
+      endif
+      if(present(fmean_2s).or.present(ferr_2s))then
+        f2s_lo=find_pth_smallest(nint(dble(nrandom)*0.022750131948d0),&
+           &nrandom,f_array(:,ix))
+        f2s_hi=find_pth_smallest(nint(dble(nrandom)*0.977249868052d0),&
+           &nrandom,f_array(:,ix))
+        if(present(fmean_2s))fmean_2s(ix)=0.5d0*(f2s_lo+f2s_hi)
+        if(present(ferr_2s))ferr_2s(ix)=0.5d0*(f2s_hi-f2s_lo)
+      endif
+    enddo ! ix
+
+  END SUBROUTINE eval_fit_monte_carlo
+
+
+  ! UTILITIES.
 
 
   CHARACTER(12) FUNCTION i2s(n)
@@ -1553,11 +1798,11 @@ CONTAINS
     CHARACTER(40) pwstr
     CHARACTER(6) xstr
     if(abs(x0)<tol_zero)then
-      xstr='x'
+      xstr='X'
     else
-      xstr='(x-x0)'
+      xstr='(X-X0)'
     endif
-    polystr='y ='
+    polystr='Y ='
     do j=1,npoly
       ipow=nint(pow(j))
       if(abs(dble(ipow)-pow(j))<tol_zero)then
@@ -1949,7 +2194,40 @@ CONTAINS
   END FUNCTION median
 
 
+  SUBROUTINE isort(n,x,indx)
+    !--------------------------------------------------------!
+    ! Perform insertion sort on a real vector X(1:N) so that !
+    ! X(I)<X(J) if I<J.  This sorting algorithm typically    !
+    ! costs ~ N^2, but is stable (preserves the order of     !
+    ! entries with same X) and becomes order N when X(:) is  !
+    ! nearly sorted.                                         !
+    !--------------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: n
+    DOUBLE PRECISION,INTENT(in) :: x(n)
+    INTEGER,INTENT(inout) :: indx(n)
+    INTEGER i,j
+    DOUBLE PRECISION xi
+    ! Initialize.
+    indx(1:n)=(/(i,i=1,n)/)
+    ! Loop over elements from 2:n.
+    do i=2,n
+      xi=x(indx(i))
+      ! Move i-th element upwards until it is greater than previous,
+      ! at which point the first I-th elements will be sorted.
+      do j=i-1,1,-1
+        if(xi>=x(indx(j)))exit
+        call iswap1(indx(j),indx(j+1))
+      enddo !j
+    enddo ! i
+  END SUBROUTINE isort
+
+
+
   SUBROUTINE iswap1(i,j)
+    !--------------------!
+    ! Swap two integers. !
+    !--------------------!
     IMPLICIT NONE
     INTEGER,INTENT(inout) :: i,j
     INTEGER k
