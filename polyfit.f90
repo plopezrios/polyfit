@@ -662,7 +662,6 @@ CONTAINS
     best_f=0.d0
     best_df=0.d0
     do npoly=1,ntest
-      write(6,*)'At expansion order '//trim(i2s(npoly-1))//':'
       ! Allocate work arrays.
       allocate(pow(npoly),a(npoly),da(npoly),stat=ierr)
       if(ierr/=0)call quit('Allocation error.')
@@ -695,8 +694,6 @@ CONTAINS
           imin_chi2=rnxy
           min_chi2=t1
         endif
-        ! Report.
-        write(6,*)'  NXY = '//trim(i2s(rnxy))//' -> chi^2/Ndf = ',t1
       enddo ! rnxy
       if(imin_chi2>npoly+1)then
         rnxy=imin_chi2
@@ -716,9 +713,16 @@ CONTAINS
         ! Fit to polynomial of order npoly-1.
         call eval_fit_monte_carlo(rnxy,have_dx,have_dy,rx,ry,rdx,rdy,&
            &itransfx,itransfy,x0,npoly,pow,nrandom,nderiv,1,(/xtarget/),&
-           &fmean,ferr)
-        write(6,*)'  At NXY = '//trim(i2s(imin_chi2))//': ',fmean(1),' +/- ',&
-           &ferr(1)
+           &fmean,ferr,amean=a,aerr=da)
+        write(6,*)'At expansion order '//trim(i2s(npoly-1))//':'
+        write(6,*)'  '//trim(i2s(imin_chi2))//'-point fit minimizes &
+           &chi^2/Ndf = ',min_chi2
+        write(6,*)'  Target function: ',fmean(1),' +/- ',ferr(1)
+        write(6,*)'  Parameters:'
+        do i=1,npoly
+          write(6,*)'    k_'//trim(i2s(i))//' = ',a(i),' +/- ',da(i)
+        enddo
+        write(6,*)
         if(ibest_f==0.or.abs(fmean(1)-best_f)>&
            &2.d0*sqrt(ferr(1)**2+best_df**2))then
           ibest_f=npoly
@@ -726,11 +730,9 @@ CONTAINS
           best_df=ferr(1)
         endif
       endif
-      write(6,*)
       deallocate(pow,a,da)
     enddo ! npoly
     write(6,*)'Best expansion order: '//trim(i2s(ibest_f-1))
-    write(6,*)'  at which we get ',best_f,' +/- ',best_df
     write(6,*)
 
     ! Clean up.
@@ -773,10 +775,36 @@ CONTAINS
 
     ! Prepare to write plot.
     txrange=maxval(tx)-minval(tx)
+    dtxplot=(txrange*2.d0)/dble(npoint)
     open(unit=io,file='poly_orders.dat',status='replace')
+
+    ! Plot original data.
+    if(have_dx.and.have_dy)then
+      write(io,'(a)')'@type xydxdy'
+      do i=1,nxy
+        write(io,*)tx(i),ty(i),dtx(i),dty(i)
+      enddo ! i
+    elseif(have_dx)then
+      write(io,'(a)')'@type xydx'
+      do i=1,nxy
+        write(io,*)tx(i),ty(i),dtx(i)
+      enddo ! i
+    elseif(have_dy)then
+      write(io,'(a)')'@type xydy'
+      do i=1,nxy
+        write(io,*)tx(i),ty(i),dty(i)
+      enddo ! i
+    else
+      write(io,'(a)')'@type xy'
+      do i=1,nxy
+        write(io,*)tx(i),ty(i)
+      enddo ! i
+    endif
+    write(io,'(a)')'&'
 
     ! Loop over expansion orders.
     do npoly=1,min(nxy-1,9)
+      write(io,'(a)')'@type xy'
       ! Prepare for fit.
       allocate(pow(npoly),a(npoly),da(npoly),stat=ierr)
       if(ierr/=0)call quit('Allocation error.')
@@ -787,7 +815,6 @@ CONTAINS
       call calc_parameters(nxy,npoly,tx,ty,pow,a,weighted,weight,da)
       ! Dump plot.
       txplot=minval(tx)-0.5d0*txrange
-      dtxplot=(txrange*2.d0)/dble(npoint)
       do i=0,npoint
         write(io,*)txplot+x0,eval_poly(npoly,pow,a,txplot)
         txplot=txplot+dtxplot
@@ -1422,7 +1449,8 @@ CONTAINS
 
   SUBROUTINE eval_fit_monte_carlo(nxy,have_dx,have_dy,x,y,dx,dy,&
      &itransfx,itransfy,x0,npoly,pow,nrandom,nderiv,nx,x_target,&
-     &fmean,ferr,fmean_1s,ferr_1s,fmean_2s,ferr_2s,fmed,fskew,fkurt)
+     &fmean,ferr,fmean_1s,ferr_1s,fmean_2s,ferr_2s,fmed,fskew,fkurt,&
+     &amean,aerr)
     !------------------------------------------------------!
     ! Perform Monte Carlo sampling of data space to obtain !
     ! fit values or derivatives at specified points with   !
@@ -1435,14 +1463,15 @@ CONTAINS
        &pow(npoly),x_target(nx)
     DOUBLE PRECISION,INTENT(inout),OPTIONAL :: fmean(nx),ferr(nx),&
        &fmean_1s(nx),ferr_1s(nx),fmean_2s(nx),ferr_2s(nx),fmed(nx),&
-       &fskew(nx),fkurt(nx)
+       &fskew(nx),fkurt(nx),amean(npoly),aerr(npoly)
     ! Transformed data.
     DOUBLE PRECISION tx(nxy),ty(nxy)
     ! Polynomials resulting from operations on fitting polynomial.
     INTEGER op_npoly
     DOUBLE PRECISION op_pow(npoly),op_a(npoly)
     ! Random sampling arrays.
-    DOUBLE PRECISION f_array(nrandom,nx),w_vector(nrandom)
+    DOUBLE PRECISION f_array(nrandom,nx),w_vector(nrandom),&
+       &a_array(nrandom,npoly)
     DOUBLE PRECISION ran_gauss_x(nxy),ran_gauss_y(nxy),ran_x(nxy),ran_y(nxy),&
        &ran_a(npoly)
     ! Distribution analysis.
@@ -1469,6 +1498,7 @@ CONTAINS
       tx=tx-x0
       call scale_transform(nxy,itransfy,ran_y,ty,.false.)
       call calc_parameters(nxy,npoly,tx,ty,pow,ran_a,.false.)
+      a_array(irandom,1:npoly)=ran_a(1:npoly)
       !w_vector(irandom)=1.d0/&
       !   &chi_squared(nxy,npoly,x,ran_y,weight,pow,ran_a,.false.)
       w_vector(irandom)=1.d0
@@ -1483,6 +1513,15 @@ CONTAINS
         f_array(irandom,ix)=t1
       enddo ! ix
     enddo ! irandom
+
+    ! Return coefficients.
+    if(present(amean).or.present(aerr))then
+      do i=1,npoly
+        call characterize_dist(nrandom,a_array(:,i),w_vector,var,skew,kurt)
+        if(present(amean))amean(i)=sum(a_array(:,i)*w_vector)/sum(w_vector)
+        if(present(aerr))aerr(i)=sqrt(var)
+      enddo ! i
+    endif
 
     ! Evaluate statistics.
     do ix=1,nx
