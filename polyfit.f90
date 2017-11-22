@@ -180,8 +180,7 @@ CONTAINS
         call ask_centre(rnxy,rtx,rty,tx0)
       case('f')
         call ask_poly(rnxy,i,pow)
-        if(i<1.or.i>rnxy)cycle
-        npoly=i
+        if(i>0.and.i<=rnxy)npoly=i
         call show_poly(rnxy,have_dx,have_dy,rtx,rty,rdtx,rdty,tx0,npoly,pow)
       case('r')
         call show_statistics(rnxy,have_dx,have_dy,rtx,rty,rdtx,rdty)
@@ -193,7 +192,19 @@ CONTAINS
         call show_poly(rnxy,have_dx,have_dy,rtx,rty,rdtx,rdty,tx0,npoly,pow)
       case('d')
         call show_dual_assessment(nxy,have_dx,have_dy,x,y,dx,dy,itransfx,&
-           &itransfy,tx0)
+           &itransfy,tx0,i,pow,mask)
+        if(i>0)then
+          npoly=i
+          rnxy=count(mask)
+          rx(1:rnxy)=pack(x,mask)
+          ry(1:rnxy)=pack(y,mask)
+          rdx(1:rnxy)=pack(dx,mask)
+          rdy(1:rnxy)=pack(dy,mask)
+          rtx(1:rnxy)=pack(tx,mask)
+          rty(1:rnxy)=pack(ty,mask)
+          rdtx(1:rnxy)=pack(dtx,mask)
+          rdty(1:rnxy)=pack(dty,mask)
+        endif
       case('v')
         call eval_fit_values_derivs(rnxy,have_dx,have_dy,rx,ry,rdx,rdy,&
            &itransfx,itransfy,tx,ty,tx0,npoly,pow)
@@ -589,7 +600,7 @@ CONTAINS
       do i=1,npoly
         pow(i)=dble(i-1)
       enddo ! i
-      call calc_parameters(nxy,npoly,x-x0,y,pow,a,weighted,weight,da)
+      call perform_fit(nxy,npoly,x-x0,y,pow,a,weighted,weight,da)
       ! Evaluate chi^2.
       chi2_vector(npoly)=chi_squared(nxy,npoly,x-x0,y,weight,pow,a,weighted)
       ! Evaluate root mean square curvature of fit as measure of smoothness.
@@ -750,7 +761,7 @@ CONTAINS
         pow(i)=dble(i-1)
       enddo ! i
       ! Perform fit.
-      call calc_parameters(nxy,npoly,x-x0,y,pow,a,weighted,weight,da)
+      call perform_fit(nxy,npoly,x-x0,y,pow,a,weighted,weight,da)
       ! Dump plot.
       txplot=minval(x)-0.5d0*txrange
       do i=0,npoint
@@ -771,7 +782,7 @@ CONTAINS
 
 
   SUBROUTINE show_dual_assessment(nxy,have_dx,have_dy,x,y,dx,dy,itransfx,&
-     &itransfy,tx0)
+     &itransfy,tx0,npoly_out,pow_out,mask_out)
     !-----------------------------------------------------------!
     ! Perform an "extrapolation" assessment in which the number !
     ! of points included in the fit and the expansion order are !
@@ -781,18 +792,26 @@ CONTAINS
     INTEGER,INTENT(in) :: nxy,itransfx,itransfy
     LOGICAL,INTENT(in) :: have_dx,have_dy
     DOUBLE PRECISION,INTENT(in) :: x(nxy),y(nxy),dx(nxy),dy(nxy),tx0
+    INTEGER,INTENT(inout) :: npoly_out
+    DOUBLE PRECISION,INTENT(inout) :: pow_out(nxy)
+    LOGICAL,INTENT(inout) :: mask_out(nxy)
     DOUBLE PRECISION, ALLOCATABLE :: chi2_array(:,:),pow(:),a(:),da(:)
     DOUBLE PRECISION tx(nxy),ty(nxy),dtx(nxy),dty(nxy),weight(nxy),&
        &rtx(nxy),rty(nxy),rweight(nxy),xtarget,min_chi2,t1,&
        &rx(nxy),ry(nxy),rdx(nxy),rdy(nxy)
-    INTEGER i,ntest,npoly,rnxy,nderiv,ierr,indx(nxy),imin_chi2,nrandom,ibest_f
+    INTEGER i,ntest,npoly,rnxy,nderiv,ierr,indx(nxy),rnxy_min_chi2,nrandom,&
+       &npoly_best,rnxy_best
     LOGICAL mask(nxy),weighted
     CHARACTER(20) drop_by,drop_criterion
+    CHARACTER(2048) char2048
     DOUBLE PRECISION fmean(1),ferr(1),best_f,best_df
     ! Parameters.
-    INTEGER,PARAMETER :: DEFAULT_NRANDOM=10000
+    INTEGER,PARAMETER :: DEFAULT_NRANDOM=100000
 
     ! Initialize.
+    npoly_out=0
+
+    ! Initialize internal variables.  FIXME - expose to user.
     nderiv=0
     xtarget=0.d0
     nrandom=DEFAULT_NRANDOM
@@ -830,10 +849,11 @@ CONTAINS
     ! Assess integer expansion orders up to order 8.
     ntest=min(nxy-1,9)
     allocate(chi2_array(nxy,ntest),stat=ierr)
-    if(ierr/=0)call quit('Allocation problem (chi2_array).')
+    if(ierr/=0)call quit('Allocation error (chi2_array).')
 
     ! Loop over expansion orders.
-    ibest_f=0
+    rnxy_best=0
+    npoly_best=0
     best_f=0.d0
     best_df=0.d0
     do npoly=1,ntest
@@ -844,7 +864,7 @@ CONTAINS
         pow(i)=dble(i-1)
       enddo ! i
       ! Loop over number of points in fit.
-      imin_chi2=0
+      rnxy_min_chi2=0
       min_chi2=0.d0
       do rnxy=nxy,npoly+1,-1
         ! Build data mask.
@@ -860,18 +880,18 @@ CONTAINS
         rty(1:rnxy)=pack(ty,mask)
         rweight(1:rnxy)=pack(weight,mask)
         ! Fit to polynomial of order npoly-1.
-        call calc_parameters(rnxy,npoly,rtx-tx0,rty,pow,a,weighted,rweight,da)
+        call perform_fit(rnxy,npoly,rtx-tx0,rty,pow,a,weighted,rweight,da)
         ! Evaluate chi^2.
         t1=chi_squared(rnxy,npoly,rtx-tx0,rty,rweight,pow,a,weighted)/&
            &dble(rnxy-npoly)
         chi2_array(rnxy,npoly)=t1
-        if(imin_chi2==0.or.t1<min_chi2)then
-          imin_chi2=rnxy
+        if(rnxy_min_chi2==0.or.t1<min_chi2)then
+          rnxy_min_chi2=rnxy
           min_chi2=t1
         endif
       enddo ! rnxy
-      if(imin_chi2>npoly+1)then
-        rnxy=imin_chi2
+      if(rnxy_min_chi2>npoly+1)then
+        rnxy=rnxy_min_chi2
         ! Build data mask.
         mask=.false.
         select case(trim(drop_criterion))
@@ -890,7 +910,7 @@ CONTAINS
            &itransfx,itransfy,tx0,npoly,pow,nrandom,nderiv,1,(/xtarget/),&
            &fmean,ferr,amean=a,aerr=da)
         write(6,*)'At expansion order '//trim(i2s(npoly-1))//':'
-        write(6,*)'  '//trim(i2s(imin_chi2))//'-point fit minimizes &
+        write(6,*)'  '//trim(i2s(rnxy_min_chi2))//'-point fit minimizes &
            &chi^2/Ndf = ',min_chi2
         write(6,*)'  Target function: ',fmean(1),' +/- ',ferr(1)
         write(6,*)'  Parameters:'
@@ -898,20 +918,52 @@ CONTAINS
           write(6,*)'    k_'//trim(i2s(i))//' = ',a(i),' +/- ',da(i)
         enddo
         write(6,*)
-        if(ibest_f==0.or.abs(fmean(1)-best_f)>&
+        if(npoly_best==0.or.abs(fmean(1)-best_f)>&
            &2.d0*sqrt(ferr(1)**2+best_df**2))then
-          ibest_f=npoly
+          rnxy_best=rnxy_min_chi2
+          npoly_best=npoly
           best_f=fmean(1)
           best_df=ferr(1)
         endif
       endif
       deallocate(pow,a,da)
     enddo ! npoly
-    write(6,*)'Best expansion order: '//trim(i2s(ibest_f-1))
+    write(6,*)'Best choice: '//trim(i2s(rnxy_best))//' points, order '//&
+       &trim(i2s(npoly_best-1))//' polynomial'
     write(6,*)
 
     ! Clean up.
     deallocate(chi2_array)
+
+    ! Allow user to choose one of the above expansion orders.
+    do
+      write(6,*)'Type ''y'' to choose this fit form and mask, ''plot'' to &
+         &plot, empty to skip:'
+      read(5,'(a)',iostat=ierr)char2048
+      if(ierr/=0)exit
+      write(6,*)
+      select case(trim(char2048))
+      case('')
+        exit
+      case('plot')
+        continue
+      case('y')
+        continue
+        npoly_out=npoly_best
+        pow_out(1:npoly_out)=(/(i,i=0,npoly_out-1)/)
+        rnxy=rnxy_best
+        mask_out=.false.
+        select case(trim(drop_criterion))
+        case('smallest')
+          mask_out(indx(nxy-rnxy+1:nxy))=.true.
+        case('largest')
+          mask_out(indx(1:rnxy))=.true.
+        end select
+        exit
+      case default
+        exit
+      end select
+    enddo
 
   END SUBROUTINE show_dual_assessment
 
@@ -932,7 +984,8 @@ CONTAINS
     ! Ask user for exponents.
     npoly=0
     write(6,*)'Enter exponents in fitting polynomial (space-separated &
-       &list, or i:j, or :j):'
+       &list, or i:j, or :j,'
+    write(6,*)'or empty to skip):'
     read(5,'(a)',iostat=ierr)char2048
     if(ierr/=0)return
     write(6,*)
@@ -1031,7 +1084,7 @@ CONTAINS
     write(6,*)
 
     ! Compute fit.
-    call calc_parameters(nxy,npoly,x-x0,y,pow,a,weighted,weight,da)
+    call perform_fit(nxy,npoly,x-x0,y,pow,a,weighted,weight,da)
 
     ! Print fit coefficients.
     write(6,*)'Fit parameters:'
@@ -1122,6 +1175,7 @@ CONTAINS
       write(6,*)
 
       ! Perform selected action.
+      nx=0
       select case(trim(adjustl(char2048)))
       case('m')
         if(.not.(have_dx.or.have_dy))then
@@ -1165,7 +1219,7 @@ CONTAINS
               elseif(nderiv==1)then
                 set_label='df/dX'
               else
-                set_label='d'//trim(i2s(nderiv))//'f/dX'//trim(i2s(nderiv))
+                set_label='d'//trim(i2s(nderiv))//'f_dX'//trim(i2s(nderiv))
               endif
             endif
           endif
@@ -1179,7 +1233,7 @@ CONTAINS
         if(ierr/=0)cycle
         nx=1
         allocate(tx_target(nx),stat=ierr)
-        if(ierr/=0)call quit('Allocation problem.')
+        if(ierr/=0)call quit('Allocation error.')
         tx_target(1)=t1
       case('p')
         write(6,*)'Enter (transformed) X values to plot at [space-separated &
@@ -1193,7 +1247,7 @@ CONTAINS
         if(len_trim(char2048)==0)then
           nx=nxy
           allocate(tx_target(nx),stat=ierr)
-          if(ierr/=0)call quit('Allocation problem.')
+          if(ierr/=0)call quit('Allocation error.')
           tx_target=tx
         else
           ! Parse input string.
@@ -1204,7 +1258,7 @@ CONTAINS
           enddo
           if(nx>1)then
             allocate(tx_target(nx),stat=ierr)
-            if(ierr/=0)call quit('Allocation problem.')
+            if(ierr/=0)call quit('Allocation error.')
             read(char2048,*,iostat=ierr)tx_target
           else
             ! Try to parse grid.
@@ -1223,7 +1277,7 @@ CONTAINS
             if(i<2)cycle
             nx=i
             allocate(tx_target(nx),stat=ierr)
-            if(ierr/=0)call quit('Allocation problem.')
+            if(ierr/=0)call quit('Allocation error.')
             if(nx==1)then
               tx_target(1)=0.5d0*(grid_tx1+grid_tx2)
             elseif(nx>1)then
@@ -1253,7 +1307,7 @@ CONTAINS
 
           allocate(fmean(nx),ferr(nx),fmean_1s(nx),ferr_1s(nx),fmean_2s(nx),&
              &ferr_2s(nx),fmed(nx),fskew(nx),fkurt(nx),stat=ierr)
-          if(ierr/=0)call quit('Allocation problem (fmean,etc).')
+          if(ierr/=0)call quit('Allocation error (fmean,etc).')
           call eval_fit_monte_carlo(nxy,have_dx,have_dy,x,y,dx,dy,&
              &itransfx,itransfy,tx0,npoly,pow,nrandom,nderiv,nx,tx_target,&
              &fmean,ferr,fmean_1s,ferr_1s,fmean_2s,ferr_2s,fmed,fskew,fkurt)
@@ -1287,7 +1341,7 @@ CONTAINS
         else ! .not.(have_dx.or.have_dy)
 
           ! Perform single fit.
-          call calc_parameters(nxy,npoly,tx-tx0,ty,pow,a,.false.)
+          call perform_fit(nxy,npoly,tx-tx0,ty,pow,a,.false.)
           if(nx==1)then
             ! Single value is printed to stdout.
             op_npoly=npoly
@@ -1322,7 +1376,6 @@ CONTAINS
           write(6,*)
           close(io)
         endif
-        nx=0
         deallocate(tx_target)
       endif
 
@@ -1334,10 +1387,11 @@ CONTAINS
   ! COMPUTATION ROUTINES
 
 
-  SUBROUTINE calc_parameters(nxy,npoly,x,y,pow,a,weighted,weight,da)
-    !-------------------------------------------------------------!
-    ! Evaluate the parameters using the method given in my notes. !
-    !-------------------------------------------------------------!
+  SUBROUTINE perform_fit(nxy,npoly,x,y,pow,a,weighted,weight,da)
+    !----------------------------------------------------!
+    ! Perform least-squares fit of (weighted) xy data to !
+    ! polynomial described by pow(1:npoly).              !
+    !----------------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: nxy,npoly
     DOUBLE PRECISION,INTENT(in) :: x(nxy),y(nxy),pow(npoly)
@@ -1345,59 +1399,59 @@ CONTAINS
     LOGICAL,INTENT(in) :: weighted
     DOUBLE PRECISION,INTENT(in),OPTIONAL :: weight(nxy)
     DOUBLE PRECISION,INTENT(out),OPTIONAL :: da(npoly)
-    INTEGER info,i,j,ipiv(npoly),lwork,ierr
-    DOUBLE PRECISION M(npoly,npoly),Minv(npoly,npoly),c(npoly),tempr(1)
+    INTEGER i,j,ipiv(npoly),lwork,ierr
+    DOUBLE PRECISION M(npoly,npoly),Minv(npoly,npoly),c(npoly)
     DOUBLE PRECISION,ALLOCATABLE :: work(:)
-    INTERFACE
-      SUBROUTINE dsytrf(UPLO,N,A,LDA,IPIV,WORK,LWORK,INFO)
-        CHARACTER(1),INTENT(in) :: UPLO
-        INTEGER,INTENT(in) :: N,LDA,LWORK
-        DOUBLE PRECISION,INTENT(out) :: A(LDA,*),WORK(*)
-        INTEGER,INTENT(out) :: IPIV(*)
-        INTEGER,INTENT(out) :: INFO
-      END SUBROUTINE dsytrf
-      SUBROUTINE dsytri(UPLO,N,A,LDA,IPIV,WORK,INFO)
-        CHARACTER(1),INTENT(in) :: UPLO
-        INTEGER,INTENT(in) :: N,LDA,IPIV(*)
-        DOUBLE PRECISION,INTENT(inout) :: A(LDA,*)
-        DOUBLE PRECISION,INTENT(out) :: WORK(*)
-        INTEGER,INTENT(out) :: INFO
-      END SUBROUTINE dsytri
-    END INTERFACE
 
-    ! Construct vector c.
-    call construct_c(nxy,npoly,x,y,pow,c,weighted,weight)
+    ! Construct c vector and M matrix.
+    if(weighted)then
+      do i=1,npoly
+        c(i)=sum(weight(:)*y(:)*x(:)**pow(i))
+        M(i,i)=sum(weight(:)*x(:)**(pow(i)+pow(i)))
+        do j=i+1,npoly
+          M(j,i)=sum(weight(:)*x(:)**(pow(j)+pow(i)))
+          M(i,j)=M(j,i)
+        enddo ! j
+      enddo ! i
+    else
+      do i=1,npoly
+        c(i)=sum(y(:)*x(:)**pow(i))
+        M(i,i)=sum(x(:)**(pow(i)+pow(i)))
+        do j=i+1,npoly
+          M(j,i)=sum(x(:)**(pow(j)+pow(i)))
+          M(i,j)=M(j,i)
+        enddo ! j
+      enddo ! i
+    endif ! weighted
 
-    ! Construct matrix M.
-    call construct_M(nxy,npoly,x,pow,M,weighted,weight)
-
-    ! Invert matrix M.
+    ! Invert M.
     Minv=M
-    call dsytrf('L',npoly,Minv(1,1),npoly,ipiv(1),tempr(1),-1,info)
-    if(info/=0)call quit('Matrix inversion failed (1).')
-    lwork=nint(tempr(1))
+    allocate(work(1))
+    lwork=-1
+    call dsytrf('L',npoly,Minv,npoly,ipiv,work,lwork,ierr)
+    if(ierr/=0)call quit('DSYTRF error on workspace query call.')
+    lwork=nint(work(1))
+    deallocate(work)
     allocate(work(lwork),stat=ierr)
-    if(ierr/=0)call quit('Allocation error: WORK (1).')
-    call dsytrf('L',npoly,Minv(1,1),npoly,ipiv(1),work(1),lwork,info)
-    if(info/=0)call quit('Matrix inversion failed (2).')
+    if(ierr/=0)call quit('Allocation error (work).')
+    call dsytrf('L',npoly,Minv,npoly,ipiv,work,lwork,ierr)
+    if(ierr/=0)call quit('DSYTRF error.')
     deallocate(work)
     allocate(work(npoly),stat=ierr)
-    if(ierr/=0)call quit('Allocation error: WORK (2).')
-    call dsytri('L',npoly,Minv(1,1),npoly,ipiv(1),work(1),info)
-    if(info/=0)call quit('Matrix inversion failed (3).')
+    if(ierr/=0)call quit('Allocation error (work).')
+    call dsytri('L',npoly,Minv,npoly,ipiv,work,ierr)
+    if(ierr/=0)call quit('DSYTRI error.')
     deallocate(work)
 
-    ! Complete the upper triangle of Minv.
+    ! Complete Minv and evaluate coefficients.
     do i=1,npoly-1
       do j=i+1,npoly
         Minv(i,j)=Minv(j,i)
       enddo ! j
     enddo ! i
-
-    ! Evaluate the coefficients of the terms in the polynomial.
     a=matmul(Minv,c)
 
-    ! Evaluate the standard errors in the coefficients.
+    ! Evaluate standard errors if data are weighted.
     if(weighted)then
       do j=1,npoly
         da(j)=sqrt(Minv(j,j))
@@ -1406,7 +1460,7 @@ CONTAINS
       da=0.d0
     endif ! weighted
 
-  END SUBROUTINE calc_parameters
+  END SUBROUTINE perform_fit
 
 
   DOUBLE PRECISION FUNCTION chi_squared(nxy,npoly,x,y,weight,pow,a,weighted)
@@ -1434,68 +1488,6 @@ CONTAINS
       endif ! weighted
     enddo ! i
   END FUNCTION chi_squared
-
-
-  SUBROUTINE construct_c(nxy,npoly,x,y,pow,c,weighted,weight)
-    !----------------------------------------!
-    ! Construct the vector c (see my notes). !
-    !----------------------------------------!
-    IMPLICIT NONE
-    INTEGER,INTENT(in) :: nxy,npoly
-    DOUBLE PRECISION,INTENT(in) :: x(nxy),y(nxy),pow(npoly)
-    DOUBLE PRECISION,INTENT(out) :: c(npoly)
-    LOGICAL,INTENT(in) :: weighted
-    DOUBLE PRECISION,INTENT(in),OPTIONAL :: weight(nxy)
-    INTEGER i,j
-    if(weighted)then
-      do j=1,npoly
-        c(j)=0.d0
-        do i=1,nxy
-          c(j)=c(j)+y(i)*x(i)**pow(j)*weight(i)
-        enddo ! i
-      enddo ! j
-    else
-      do j=1,npoly
-        c(j)=0.d0
-        do i=1,nxy
-          c(j)=c(j)+y(i)*x(i)**pow(j)
-        enddo ! i
-      enddo ! j
-    endif ! weighted
-  END SUBROUTINE construct_c
-
-
-  SUBROUTINE construct_M(nxy,npoly,x,pow,M,weighted,weight)
-    !----------------------------------------!
-    ! Construct the matrix M (see my notes). !
-    ! Only need lower triangular part.       !
-    !----------------------------------------!
-    IMPLICIT NONE
-    INTEGER,INTENT(in) :: nxy,npoly
-    DOUBLE PRECISION,INTENT(in) :: x(nxy),pow(npoly)
-    DOUBLE PRECISION,INTENT(out) :: M(npoly,npoly)
-    LOGICAL,INTENT(in) :: weighted
-    DOUBLE PRECISION,INTENT(in),OPTIONAL :: weight(nxy)
-    INTEGER i,j,k
-    M=0.d0
-    if(weighted)then
-      do k=1,npoly
-        do j=k,npoly
-          do i=1,nxy
-            M(j,k)=M(j,k)+x(i)**(pow(j)+pow(k))*weight(i)
-          enddo ! i
-        enddo ! j
-      enddo ! k
-    else
-      do k=1,npoly
-        do j=k,npoly
-          do i=1,nxy
-            M(j,k)=M(j,k)+x(i)**(pow(j)+pow(k))
-          enddo ! i
-        enddo ! j
-      enddo ! k
-    endif ! weighted
-  END SUBROUTINE construct_M
 
 
   SUBROUTINE eval_fit_monte_carlo(nxy,have_dx,have_dy,x,y,dx,dy,&
@@ -1540,10 +1532,10 @@ CONTAINS
       if(have_dy)ran_y=y+gaussian_random_number(dy)
       call scale_transform(nxy,itransfx,ran_x,tx,.false.)
       call scale_transform(nxy,itransfy,ran_y,ty,.false.)
-      call calc_parameters(nxy,npoly,tx-tx0,ty,pow,ran_a,.false.)
+      call perform_fit(nxy,npoly,tx-tx0,ty,pow,ran_a,.false.)
       a_array(irandom,1:npoly)=ran_a(1:npoly)
       !w_vector(irandom)=1.d0/&
-      !   &chi_squared(nxy,npoly,tx-tx0,ty,weight,pow,ran_a,.false.)
+      !   &chi_squared(nxy,npoly,tx-tx0,ty,w_vector,pow,ran_a,.false.)
       w_vector(irandom)=1.d0
       op_npoly=npoly
       op_pow=pow
@@ -1594,31 +1586,7 @@ CONTAINS
   END SUBROUTINE eval_fit_monte_carlo
 
 
-  ! UTILITIES.
-
-
-  CHARACTER(12) FUNCTION i2s(n)
-    !-----------------------------------------------------------------------!
-    ! Convert integers to left justified strings that can be printed in the !
-    ! middle of a sentence without introducing large amounts of white space.!
-    !-----------------------------------------------------------------------!
-    IMPLICIT NONE
-    INTEGER,INTENT(in) :: n
-    INTEGER i,j
-    INTEGER,PARAMETER :: ichar0=ichar('0')
-    i2s=''
-    i=abs(n)
-    do j=len(i2s),1,-1
-      i2s(j:j)=achar(ichar0+mod(i,10))
-      i=i/10
-      if(i==0)exit
-    enddo ! j
-    if(n<0)then
-      i2s='-'//adjustl(i2s(2:12))
-    else
-      i2s=adjustl(i2s)
-    endif ! n<0
-  END FUNCTION i2s
+  ! INPUT FILE HANDLING ROUTINES.
 
 
   SUBROUTINE get_file(fname)
@@ -1866,6 +1834,9 @@ CONTAINS
   END SUBROUTINE read_file
 
 
+  ! POLYNOMIAL HANDLING UTILITIES.
+
+
   FUNCTION print_poly_sym(npoly,pow,x0) RESULT(polystr)
   !------------------------------------------------------------------------!
   ! This subroutine returns the fitted polynomial in a suitable format for !
@@ -2101,6 +2072,9 @@ CONTAINS
       endif
     enddo ! ipoly
   END FUNCTION eval_poly
+
+
+  ! GENERIC NUMERICAL UTILITIES.
 
 
   FUNCTION gaussian_random_number(w) RESULT(gauss_vector)
@@ -2342,6 +2316,33 @@ CONTAINS
     i=j
     j=k
   END SUBROUTINE iswap1
+
+
+  ! MISC UTILITIES.
+
+
+  CHARACTER(12) FUNCTION i2s(n)
+    !-----------------------------------------------------------------------!
+    ! Convert integers to left justified strings that can be printed in the !
+    ! middle of a sentence without introducing large amounts of white space.!
+    !-----------------------------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: n
+    INTEGER i,j
+    INTEGER,PARAMETER :: ichar0=ichar('0')
+    i2s=''
+    i=abs(n)
+    do j=len(i2s),1,-1
+      i2s(j:j)=achar(ichar0+mod(i,10))
+      i=i/10
+      if(i==0)exit
+    enddo ! j
+    if(n<0)then
+      i2s='-'//adjustl(i2s(2:12))
+    else
+      i2s=adjustl(i2s)
+    endif ! n<0
+  END FUNCTION i2s
 
 
   SUBROUTINE quit (msg)
