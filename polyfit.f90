@@ -12,6 +12,8 @@ PROGRAM polyfit
   IMPLICIT NONE
 
   ! Global variables.
+  ! Use weights in Monte Carlo?
+  LOGICAL :: MONTE_CARLO_WEIGHTS=.false.
   ! Precision for real-to-integer conversions and exponent comparisons.
   DOUBLE PRECISION,PARAMETER :: tol_zero=1.d-10
   ! Transformations.
@@ -134,6 +136,8 @@ CONTAINS
       write(6,*)'  [m] Set data mask [using '//trim(i2s(count(mask)))//'/'//&
          &trim(i2s(nxy))//' points]'
       write(6,'(1x,a,es11.4,a)')'  [0] Set fit centre [X0=',tx0,']'
+      write(6,*)'  [w] Toggle use of weights in Monte Carlo [',&
+         &MONTE_CARLO_WEIGHTS,']'
       write(6,*)'* Pre-fit analysis:'
       write(6,*)'  [r] Show basic data-range statistics'
       write(6,*)'  [e] Show expansion-order analysis'
@@ -159,6 +163,10 @@ CONTAINS
         call ask_scale(nxy,x,y,itransfx,itransfy)
         call scale_transform(nxy,itransfx,x,tx,have_dx,dx,dtx)
         call scale_transform(nxy,itransfy,y,ty,have_dy,dy,dty)
+        rtx(1:rnxy)=pack(tx,mask)
+        rty(1:rnxy)=pack(ty,mask)
+        rdtx(1:rnxy)=pack(dtx,mask)
+        rdty(1:rnxy)=pack(dty,mask)
       case('m')
         call ask_mask(nxy,x,y,tx,ty,mask)
         rnxy=count(mask)
@@ -182,6 +190,8 @@ CONTAINS
         call ask_poly(rnxy,i,pow)
         if(i>0.and.i<=rnxy)npoly=i
         call show_poly(rnxy,have_dx,have_dy,rtx,rty,rdtx,rdty,tx0,npoly,pow)
+      case('w')
+        MONTE_CARLO_WEIGHTS=.not.MONTE_CARLO_WEIGHTS
       case('r')
         call show_statistics(rnxy,have_dx,have_dy,rtx,rty,rdtx,rdty)
       case('e')
@@ -795,12 +805,13 @@ CONTAINS
     INTEGER,INTENT(inout) :: npoly_out
     DOUBLE PRECISION,INTENT(inout) :: pow_out(nxy)
     LOGICAL,INTENT(inout) :: mask_out(nxy)
-    DOUBLE PRECISION, ALLOCATABLE :: chi2_array(:,:),pow(:),a(:),da(:)
+    DOUBLE PRECISION, ALLOCATABLE :: pow(:),a(:),da(:)
     DOUBLE PRECISION tx(nxy),ty(nxy),dtx(nxy),dty(nxy),weight(nxy),&
        &rtx(nxy),rty(nxy),rweight(nxy),xtarget,min_chi2,t1,&
-       &rx(nxy),ry(nxy),rdx(nxy),rdy(nxy)
+       &rx(nxy),ry(nxy),rdx(nxy),rdy(nxy),list_f(nxy),list_df(nxy),&
+       &list_gof(nxy)
     INTEGER i,ntest,npoly,rnxy,nderiv,ierr,indx(nxy),rnxy_min_chi2,nrandom,&
-       &npoly_best,rnxy_best
+       &npoly_best,rnxy_best,ipoly,jpoly,list_rnxy(nxy)
     LOGICAL mask(nxy),weighted
     CHARACTER(20) drop_by,drop_criterion
     CHARACTER(2048) char2048
@@ -848,15 +859,13 @@ CONTAINS
 
     ! Assess integer expansion orders up to order 8.
     ntest=min(nxy-1,9)
-    allocate(chi2_array(nxy,ntest),stat=ierr)
-    if(ierr/=0)call quit('Allocation error (chi2_array).')
 
     ! Loop over expansion orders.
-    rnxy_best=0
-    npoly_best=0
-    best_f=0.d0
-    best_df=0.d0
-    do npoly=1,ntest
+    write(6,'(1x,a,t8,a,t14,a,t27,a,t44,a)')'Order','  Nxy','  chi^2/Ndf',&
+       &'    Target f','    Target df'
+    write(6,'(1x,59("-"))')
+    list_rnxy=0
+    do npoly=2,ntest
       ! Allocate work arrays.
       allocate(pow(npoly),a(npoly),da(npoly),stat=ierr)
       if(ierr/=0)call quit('Allocation error.')
@@ -884,61 +893,79 @@ CONTAINS
         ! Evaluate chi^2.
         t1=chi_squared(rnxy,npoly,rtx-tx0,rty,rweight,pow,a,weighted)/&
            &dble(rnxy-npoly)
-        chi2_array(rnxy,npoly)=t1
         if(rnxy_min_chi2==0.or.t1<min_chi2)then
           rnxy_min_chi2=rnxy
           min_chi2=t1
         endif
       enddo ! rnxy
-      if(rnxy_min_chi2>npoly+1)then
-        rnxy=rnxy_min_chi2
-        ! Build data mask.
-        mask=.false.
-        select case(trim(drop_criterion))
-        case('smallest')
-          mask(indx(nxy-rnxy+1:nxy))=.true.
-        case('largest')
-          mask(indx(1:rnxy))=.true.
-        end select
-        ! Apply data mask.
-        rx(1:rnxy)=pack(x,mask)
-        ry(1:rnxy)=pack(y,mask)
-        rdx(1:rnxy)=pack(dx,mask)
-        rdy(1:rnxy)=pack(dy,mask)
-        ! Fit to polynomial of order npoly-1.
-        call eval_fit_monte_carlo(rnxy,have_dx,have_dy,rx,ry,rdx,rdy,&
-           &itransfx,itransfy,tx0,npoly,pow,nrandom,nderiv,1,(/xtarget/),&
-           &fmean,ferr,amean=a,aerr=da)
-        write(6,*)'At expansion order '//trim(i2s(npoly-1))//':'
-        write(6,*)'  '//trim(i2s(rnxy_min_chi2))//'-point fit minimizes &
-           &chi^2/Ndf = ',min_chi2
-        write(6,*)'  Target function: ',fmean(1),' +/- ',ferr(1)
-        write(6,*)'  Parameters:'
-        do i=1,npoly
-          write(6,*)'    k_'//trim(i2s(i))//' = ',a(i),' +/- ',da(i)
-        enddo
-        write(6,*)
-        if(npoly_best==0.or.abs(fmean(1)-best_f)>&
-           &2.d0*sqrt(ferr(1)**2+best_df**2))then
-          rnxy_best=rnxy_min_chi2
-          npoly_best=npoly
-          best_f=fmean(1)
-          best_df=ferr(1)
-        endif
-      endif
+      ! Evaluate estimate at number of points that minimizes gof measure.
+      rnxy=rnxy_min_chi2
+      ! Build data mask.
+      mask=.false.
+      select case(trim(drop_criterion))
+      case('smallest')
+        mask(indx(nxy-rnxy+1:nxy))=.true.
+      case('largest')
+        mask(indx(1:rnxy))=.true.
+      end select
+      ! Apply data mask.
+      rx(1:rnxy)=pack(x,mask)
+      ry(1:rnxy)=pack(y,mask)
+      rdx(1:rnxy)=pack(dx,mask)
+      rdy(1:rnxy)=pack(dy,mask)
+      ! Fit to polynomial of order npoly-1.
+      call eval_fit_monte_carlo(rnxy,have_dx,have_dy,rx,ry,rdx,rdy,&
+         &itransfx,itransfy,tx0,npoly,pow,nrandom,nderiv,1,(/xtarget/),&
+         &fmean,ferr,amean=a,aerr=da)
+      write(6,'(1x,i5,1x,i5,1x,es12.4,2(1x,es16.8))')npoly-1,rnxy_min_chi2,&
+         &min_chi2,fmean(1),ferr(1)
+      list_f(npoly)=fmean(1)
+      list_df(npoly)=ferr(1)
+      list_rnxy(npoly)=rnxy_min_chi2
+      list_gof(npoly)=min_chi2
       deallocate(pow,a,da)
     enddo ! npoly
-    write(6,*)'Best choice: '//trim(i2s(rnxy_best))//' points, order '//&
-       &trim(i2s(npoly_best-1))//' polynomial'
+    write(6,'(1x,59("-"))')
     write(6,*)
 
-    ! Clean up.
-    deallocate(chi2_array)
+    ! Find best choice.
+    npoly_best=0
+    best_f=0.d0
+    best_df=0.d0
+    rnxy_best=0
+    do ipoly=1,ntest
+      if(list_rnxy(ipoly)==0)cycle
+      do jpoly=ipoly+1,ntest
+        if(list_rnxy(jpoly)==0)cycle
+        if(list_gof(jpoly)>list_gof(ipoly))cycle
+        if(abs(list_f(ipoly)-list_f(jpoly))>&
+           &1.0d0*sqrt(list_df(ipoly)**2+list_df(jpoly)**2))exit
+      enddo ! jpoly
+      if(jpoly>ntest)then
+        npoly_best=ipoly
+        best_f=list_f(ipoly)
+        best_df=list_df(ipoly)
+        rnxy_best=list_rnxy(ipoly)
+        exit
+      endif
+    enddo ! ipoly
+
+    if(npoly_best==0)then
+      write(6,*)'Test found no good choice.'
+    else
+      write(6,*)'Best ('//trim(i2s(npoly_best-1))//','//&
+         &trim(i2s(rnxy_best))//'):',best_f,'+/-',best_df
+    endif
+    write(6,*)
 
     ! Allow user to choose one of the above expansion orders.
     do
-      write(6,*)'Type ''y'' to choose this fit form and mask, ''plot'' to &
-         &plot, empty to skip:'
+      if(npoly_best==0)then
+        write(6,*)'Type ''plot'' to plot, empty to skip:'
+      else
+        write(6,*)'Type ''y'' to accept fit form and mask, ''plot'' to plot, &
+           &empty to skip:'
+      endif
       read(5,'(a)',iostat=ierr)char2048
       if(ierr/=0)exit
       write(6,*)
@@ -948,17 +975,18 @@ CONTAINS
       case('plot')
         continue
       case('y')
-        continue
-        npoly_out=npoly_best
-        pow_out(1:npoly_out)=(/(i,i=0,npoly_out-1)/)
-        rnxy=rnxy_best
-        mask_out=.false.
-        select case(trim(drop_criterion))
-        case('smallest')
-          mask_out(indx(nxy-rnxy+1:nxy))=.true.
-        case('largest')
-          mask_out(indx(1:rnxy))=.true.
-        end select
+        if(npoly_best>0)then
+          npoly_out=npoly_best
+          pow_out(1:npoly_out)=(/(i,i=0,npoly_out-1)/)
+          rnxy=rnxy_best
+          mask_out=.false.
+          select case(trim(drop_criterion))
+          case('smallest')
+            mask_out(indx(nxy-rnxy+1:nxy))=.true.
+          case('largest')
+            mask_out(indx(1:rnxy))=.true.
+          end select
+        endif
         exit
       case default
         exit
@@ -1521,6 +1549,26 @@ CONTAINS
     ! Misc.
     INTEGER ipoly,ideriv,irandom,ix
     DOUBLE PRECISION t1
+    DOUBLE PRECISION da(npoly),dtx(nxy),dty(nxy),weight(nxy)
+    LOGICAL weighted
+
+    if(MONTE_CARLO_WEIGHTS)then
+      call scale_transform(nxy,itransfx,x,tx,have_dx,dx,dtx)
+      call scale_transform(nxy,itransfy,y,ty,have_dy,dy,dty)
+      if(have_dx.and.have_dy)then
+        weight=1.d0/(dtx*dty)**2
+      elseif(have_dx)then
+        weight=1.d0/dtx**2
+      elseif(have_dy)then
+        weight=1.d0/dty**2
+      else
+        weight=1.d0
+      endif
+      weighted=have_dx.or.have_dy
+    else
+      weight=1.d0
+      weighted=.false.
+    endif
 
     ! Initialize.
     ran_x=x
@@ -1532,8 +1580,9 @@ CONTAINS
       if(have_dy)ran_y=y+gaussian_random_number(dy)
       call scale_transform(nxy,itransfx,ran_x,tx,.false.)
       call scale_transform(nxy,itransfy,ran_y,ty,.false.)
-      call perform_fit(nxy,npoly,tx-tx0,ty,pow,ran_a,.false.)
+      call perform_fit(nxy,npoly,tx-tx0,ty,pow,ran_a,weighted,weight,da)
       a_array(irandom,1:npoly)=ran_a(1:npoly)
+      ! This could be an option..
       !w_vector(irandom)=1.d0/&
       !   &chi_squared(nxy,npoly,tx-tx0,ty,w_vector,pow,ran_a,.false.)
       w_vector(irandom)=1.d0
