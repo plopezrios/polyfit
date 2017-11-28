@@ -1,19 +1,19 @@
 PROGRAM polyfit
-  !-----------------------------------------------------------!
-  ! POLYFIT                                                   !
-  ! =======                                                   !
-  ! This is extrapolate_tau extended to:                      !
-  ! - compute errorbars on parameters using a bootstrap Monte !
-  !   Carlo method.                                           !
-  ! - compute function values and derivatives with errorbars. !
-  !                                                           !
-  ! PLR 09.2015                                               !
-  !-----------------------------------------------------------!
+  !-------------------------------------------------!
+  ! POLYFIT                                         !
+  ! =======                                         !
+  ! Toolbox for performing and manipulating fits to !
+  ! polynomials of data with error bars.            !
+  !                                                 !
+  ! PLR 09.2015                                     !
+  !-------------------------------------------------!
   IMPLICIT NONE
 
   ! Global variables.
-  ! Use weights in Monte Carlo?
-  LOGICAL :: MONTE_CARLO_WEIGHTS=.false.
+  ! Use weights in Monte Carlo fits?
+  LOGICAL :: MONTE_CARLO_FIT_WEIGHTS=.false.
+  ! Use 1/chi^2 weights in Monte Carlo?
+  LOGICAL :: MONTE_CARLO_CHI2_WEIGHTS=.false.
   ! Precision for real-to-integer conversions and exponent comparisons.
   DOUBLE PRECISION,PARAMETER :: tol_zero=1.d-10
   ! Transformations.
@@ -136,8 +136,12 @@ CONTAINS
       write(6,*)'  [m] Set data mask [using '//trim(i2s(count(mask)))//'/'//&
          &trim(i2s(nxy))//' points]'
       write(6,'(1x,a,es11.4,a)')'  [0] Set fit centre [X0=',tx0,']'
-      write(6,*)'  [w] Toggle use of weights in Monte Carlo [',&
-         &MONTE_CARLO_WEIGHTS,']'
+      if(have_dx.or.have_dy)then
+        write(6,*)'  [w] Toggle use of weighted fits in Monte Carlo [',&
+           &MONTE_CARLO_FIT_WEIGHTS,']'
+        write(6,*)'  [x] Toggle use of 1/chi^2 as Monte Carlo weights [',&
+           &MONTE_CARLO_CHI2_WEIGHTS,']'
+      endif
       write(6,*)'* Pre-fit analysis:'
       write(6,*)'  [r] Show basic data-range statistics'
       write(6,*)'  [e] Show expansion-order analysis'
@@ -191,7 +195,9 @@ CONTAINS
         if(i>0.and.i<=rnxy)npoly=i
         call show_poly(rnxy,have_dx,have_dy,rtx,rty,rdtx,rdty,tx0,npoly,pow)
       case('w')
-        MONTE_CARLO_WEIGHTS=.not.MONTE_CARLO_WEIGHTS
+        MONTE_CARLO_FIT_WEIGHTS=.not.MONTE_CARLO_FIT_WEIGHTS
+      case('x')
+        MONTE_CARLO_CHI2_WEIGHTS=.not.MONTE_CARLO_CHI2_WEIGHTS
       case('r')
         call show_statistics(rnxy,have_dx,have_dy,rtx,rty,rdtx,rdty)
       case('e')
@@ -1552,7 +1558,7 @@ CONTAINS
     DOUBLE PRECISION da(npoly),dtx(nxy),dty(nxy),weight(nxy)
     LOGICAL weighted
 
-    if(MONTE_CARLO_WEIGHTS)then
+    if(MONTE_CARLO_FIT_WEIGHTS)then
       call scale_transform(nxy,itransfx,x,tx,have_dx,dx,dtx)
       call scale_transform(nxy,itransfy,y,ty,have_dy,dy,dty)
       if(have_dx.and.have_dy)then
@@ -1582,10 +1588,12 @@ CONTAINS
       call scale_transform(nxy,itransfy,ran_y,ty,.false.)
       call perform_fit(nxy,npoly,tx-tx0,ty,pow,ran_a,weighted,weight,da)
       a_array(irandom,1:npoly)=ran_a(1:npoly)
-      ! This could be an option..
-      !w_vector(irandom)=1.d0/&
-      !   &chi_squared(nxy,npoly,tx-tx0,ty,w_vector,pow,ran_a,.false.)
-      w_vector(irandom)=1.d0
+      if(MONTE_CARLO_CHI2_WEIGHTS)then
+        w_vector(irandom)=1.d0/&
+           &chi_squared(nxy,npoly,tx-tx0,ty,w_vector,pow,ran_a,.false.)
+      else
+        w_vector(irandom)=1.d0
+      endif
       op_npoly=npoly
       op_pow=pow
       op_a=ran_a
