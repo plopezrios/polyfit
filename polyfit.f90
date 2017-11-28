@@ -1215,6 +1215,7 @@ CONTAINS
     CHARACTER(256) fname
     CHARACTER(2048) char2048
     INTEGER i,nderiv,ierr,ix,ipos
+    LOGICAL untransformed
     DOUBLE PRECISION t1
     ! Parameters.
     INTEGER,PARAMETER :: DEFAULT_NRANDOM=100000
@@ -1237,8 +1238,10 @@ CONTAINS
          &samples ['//trim(i2s(nrandom))//']'
       write(6,*)'[d] Set derivative order (0 for value) ['//&
          &trim(i2s(nderiv))//']'
-      write(6,*)'[v] Show fit value at one point'
-      write(6,*)'[p] Plot fit values at a range of points'
+      write(6,*)'[v] Show fit value at one point x'
+      write(6,*)'[V] Show fit value at one point X'
+      write(6,*)'[p] Plot fit values at several x'
+      write(6,*)'[P] Plot fit values at several X'
       write(6,*)'[q] Return to previous menu'
       write(6,*)
 
@@ -1298,8 +1301,13 @@ CONTAINS
             endif
           endif
         endif
-      case('v')
-        write(6,*)'Enter (transformed) X value to evaluate the fit at:'
+      case('v','V')
+        untransformed=trim(char2048)=='v'
+        if(untransformed)then
+          write(6,*)'Enter (untransformed) x value to evaluate the fit at:'
+        else
+          write(6,*)'Enter (transformed) X value to evaluate the fit at:'
+        endif
         read(5,'(a)',iostat=ierr)char2048
         if(ierr/=0)exit
         write(6,*)
@@ -1309,10 +1317,21 @@ CONTAINS
         allocate(tx_target(nx),stat=ierr)
         if(ierr/=0)call quit('Allocation error.')
         tx_target(1)=t1
+        if(untransformed)call scale_transform(1,itransfx,tx_target,tx_target,&
+           &.false.)
       case('p')
-        write(6,*)'Enter (transformed) X values to plot at [space-separated &
-           &list of X values,'
-        write(6,*)'or <x1>:<x2>:<n> for a grid, or blank for X of source data]:'
+        untransformed=trim(char2048)=='v'
+        if(untransformed)then
+          write(6,*)'Enter (untransformed) x values to plot at &
+             &[space-separated list of x values,'
+          write(6,*)'or <x1>:<x2>:<n> for a grid, or blank for x of source &
+             &data]:'
+        else
+          write(6,*)'Enter (transformed) X values to plot at [space-separated &
+             &list of X values,'
+          write(6,*)'or <X1>:<X2>:<n> for a grid, or blank for X of source &
+             &data]:'
+        endif
         nx=0
         read(5,'(a)',iostat=ierr)char2048
         if(ierr/=0)exit
@@ -1361,6 +1380,8 @@ CONTAINS
           endif
         endif
         if(nx<1)cycle
+        if(untransformed)call scale_transform(nx,itransfx,tx_target,tx_target,&
+           &.false.)
       case('q','')
         return
       case default
