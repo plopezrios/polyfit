@@ -1696,7 +1696,7 @@ CONTAINS
     LOGICAL file_exists
     do
       write(6,*)'Enter name of data file:'
-      read(5,*,iostat=ierr)fname
+      read(5,'(a)',iostat=ierr)fname
       if(ierr/=0)call quit()
       fname=adjustl(fname)
       inquire(file=trim(fname),exist=file_exists)
