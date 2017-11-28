@@ -719,7 +719,7 @@ CONTAINS
     LOGICAL,INTENT(in) :: have_dx,have_dy
     DOUBLE PRECISION,INTENT(in) :: x(nxy),y(nxy),dx(nxy),dy(nxy),x0
     DOUBLE PRECISION,ALLOCATABLE :: pow(:),a(:),da(:)
-    DOUBLE PRECISION weight(nxy),txrange,txplot,dtxplot
+    DOUBLE PRECISION weight(nxy),xrange,xplot,dxplot
     INTEGER npoly,i,ierr
     LOGICAL weighted
     ! Parameters.
@@ -739,8 +739,8 @@ CONTAINS
     weighted=have_dx.or.have_dy
 
     ! Prepare to write plot.
-    txrange=maxval(x)-minval(x)
-    dtxplot=(txrange*2.d0)/dble(npoint)
+    xrange=maxval(x)-minval(x)
+    dxplot=(xrange*2.d0)/dble(npoint)
     open(unit=io,file='poly_orders.dat',status='replace')
 
     ! Plot original data.
@@ -779,10 +779,10 @@ CONTAINS
       ! Perform fit.
       call perform_fit(nxy,npoly,x-x0,y,pow,a,weighted,weight,da)
       ! Dump plot.
-      txplot=minval(x)-0.5d0*txrange
+      xplot=minval(x)-0.5d0*xrange
       do i=0,npoint
-        write(io,*)txplot+x0,eval_poly(npoly,pow,a,txplot)
-        txplot=txplot+dtxplot
+        write(io,*)xplot+x0,eval_poly(npoly,pow,a,xplot)
+        xplot=xplot+dxplot
       enddo ! i
       ! Clean up after fit.
       deallocate(pow,a,da)
@@ -811,11 +811,11 @@ CONTAINS
     INTEGER,INTENT(inout) :: npoly_out
     DOUBLE PRECISION,INTENT(inout) :: pow_out(nxy)
     LOGICAL,INTENT(inout) :: mask_out(nxy)
-    DOUBLE PRECISION, ALLOCATABLE :: pow(:),a(:),da(:)
     DOUBLE PRECISION tx(nxy),ty(nxy),dtx(nxy),dty(nxy),weight(nxy),&
        &rtx(nxy),rty(nxy),rweight(nxy),xtarget,min_chi2,t1,&
        &rx(nxy),ry(nxy),rdx(nxy),rdy(nxy),list_f(nxy),list_df(nxy),&
-       &list_gof(nxy)
+       &list_gof(nxy),list_a(nxy,nxy),list_da(nxy,nxy),&
+       &pow(nxy),a(nxy),da(nxy),txrange,txplot,dtxplot
     INTEGER i,ntest,npoly,rnxy,nderiv,ierr,indx(nxy),rnxy_min_chi2,nrandom,&
        &npoly_best,rnxy_best,ipoly,jpoly,list_rnxy(nxy)
     LOGICAL mask(nxy),weighted
@@ -824,6 +824,8 @@ CONTAINS
     DOUBLE PRECISION fmean(1),ferr(1),best_f,best_df
     ! Parameters.
     INTEGER,PARAMETER :: DEFAULT_NRANDOM=100000
+    INTEGER,PARAMETER :: npoint=1000
+    INTEGER,PARAMETER :: io=10
 
     ! Initialize.
     npoly_out=0
@@ -865,6 +867,7 @@ CONTAINS
 
     ! Assess integer expansion orders up to order 8.
     ntest=min(nxy-1,9)
+    pow(1:nxy)=(/(dble(i-1),i=1,nxy)/)
 
     ! Loop over expansion orders.
     write(6,'(1x,a,t8,a,t14,a,t27,a,t44,a)')'Order','  Nxy','  chi^2/Ndf',&
@@ -872,12 +875,6 @@ CONTAINS
     write(6,'(1x,59("-"))')
     list_rnxy=0
     do npoly=2,ntest
-      ! Allocate work arrays.
-      allocate(pow(npoly),a(npoly),da(npoly),stat=ierr)
-      if(ierr/=0)call quit('Allocation error.')
-      do i=1,npoly
-        pow(i)=dble(i-1)
-      enddo ! i
       ! Loop over number of points in fit.
       rnxy_min_chi2=0
       min_chi2=0.d0
@@ -923,13 +920,16 @@ CONTAINS
       call eval_fit_monte_carlo(rnxy,have_dx,have_dy,rx,ry,rdx,rdy,&
          &itransfx,itransfy,tx0,npoly,pow,nrandom,nderiv,1,(/xtarget/),&
          &fmean,ferr,amean=a,aerr=da)
+      ! Report.
       write(6,'(1x,i5,1x,i5,1x,es12.4,2(1x,es16.8))')npoly-1,rnxy_min_chi2,&
          &min_chi2,fmean(1),ferr(1)
+      ! Store.
       list_f(npoly)=fmean(1)
       list_df(npoly)=ferr(1)
       list_rnxy(npoly)=rnxy_min_chi2
       list_gof(npoly)=min_chi2
-      deallocate(pow,a,da)
+      list_a(1:npoly,npoly)=a(1:npoly)
+      list_da(1:npoly,npoly)=da(1:npoly)
     enddo ! npoly
     write(6,'(1x,59("-"))')
     write(6,*)
@@ -979,7 +979,47 @@ CONTAINS
       case('')
         exit
       case('plot')
-        continue
+        ! Prepare to write plot.
+        txrange=maxval(tx)-minval(tx)
+        dtxplot=(txrange*2.d0)/dble(npoint)
+        open(unit=io,file='poly_dual.dat',status='replace')
+        ! Plot original data.
+        if(have_dx.and.have_dy)then
+          write(io,'(a)')'@type xydxdy'
+          do i=1,nxy
+            write(io,*)tx(i),ty(i),dtx(i),dty(i)
+          enddo ! i
+        elseif(have_dx)then
+          write(io,'(a)')'@type xydx'
+          do i=1,nxy
+            write(io,*)tx(i),ty(i),dtx(i)
+          enddo ! i
+        elseif(have_dy)then
+          write(io,'(a)')'@type xydy'
+          do i=1,nxy
+            write(io,*)tx(i),ty(i),dty(i)
+          enddo ! i
+        else
+          write(io,'(a)')'@type xy'
+          do i=1,nxy
+            write(io,*)tx(i),ty(i)
+          enddo ! i
+        endif
+        write(io,'(a)')'&'
+        ! Loop over expansion orders.
+        do npoly=2,ntest
+          write(io,'(a)')'@type xy'
+          ! Dump plot.
+          txplot=minval(tx)-0.5d0*txrange
+          do i=0,npoint
+            write(io,*)txplot+tx0,eval_poly(npoly,pow,list_a(1,npoly),txplot)
+            txplot=txplot+dtxplot
+          enddo ! i
+          write(io,'(a)')'&'
+        enddo ! npoly
+        close(io)
+        write(6,*)'Data written to poly_dual.dat.'
+        write(6,*)
       case('y')
         if(npoly_best>0)then
           npoly_out=npoly_best
