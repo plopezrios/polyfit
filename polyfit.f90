@@ -399,9 +399,9 @@ CONTAINS
     INTEGER i,indx(nxy),ierr
 
     ! Print instructions.
-    write(6,*)'Use a mask string of the form <variable><critetion>, where:'
+    write(6,*)'Use a mask string of the form <variable><criterion>, where:'
     write(6,*)'* <variable> can be x, y (original), X or Y (scale-transformed)'
-    write(6,*)'* <critetion> can be <t, >t, #<n, or #>n, meaning:'
+    write(6,*)'* <criterion> can be <t, >t, #<n, or #>n, meaning:'
     write(6,*)'  <t  : <variable> less than threshold t'
     write(6,*)'  >t  : <variable> greater than threshold t'
     write(6,*)'  #<n : n points with the smallest <variable>'
@@ -918,8 +918,8 @@ CONTAINS
       rdy(1:rnxy)=pack(dy,mask)
       ! Fit to polynomial of order npoly-1.
       call eval_fit_monte_carlo(rnxy,have_dx,have_dy,rx,ry,rdx,rdy,&
-         &itransfx,itransfy,tx0,npoly,pow,nrandom,nderiv,1,(/xtarget/),&
-         &fmean,ferr,amean=a,aerr=da)
+         &itransfx,itransfy,tx0,npoly,pow,nrandom,nderiv,.false.,1,&
+         &(/xtarget/),fmean,ferr,amean=a,aerr=da)
       ! Report.
       write(6,'(1x,i5,1x,i5,1x,es12.4,2(1x,es16.8))')npoly-1,rnxy_min_chi2,&
          &min_chi2,fmean(1),ferr(1)
@@ -1215,7 +1215,7 @@ CONTAINS
     CHARACTER(256) fname
     CHARACTER(2048) char2048
     INTEGER i,nderiv,ierr,ix,ipos
-    LOGICAL untransformed
+    LOGICAL untransformed,eval_relative
     DOUBLE PRECISION t1
     ! Parameters.
     INTEGER,PARAMETER :: DEFAULT_NRANDOM=100000
@@ -1225,6 +1225,7 @@ CONTAINS
     nrandom=DEFAULT_NRANDOM
     nderiv=0
     set_label='f'
+    eval_relative=.false.
 
     ! Loop over user actions.
     do
@@ -1238,6 +1239,8 @@ CONTAINS
          &samples ['//trim(i2s(nrandom))//']'
       write(6,*)'[d] Set derivative order (0 for value) ['//&
          &trim(i2s(nderiv))//']'
+      write(6,*)'[r] Toggle evaluation relative to value at X=0 [',&
+         &eval_relative,']'
       write(6,*)'[v] Show fit value at one point x'
       write(6,*)'[V] Show fit value at one point X'
       write(6,*)'[p] Plot fit values at several x'
@@ -1301,6 +1304,8 @@ CONTAINS
             endif
           endif
         endif
+      case('r')
+        eval_relative=.not.eval_relative
       case('v','V')
         untransformed=trim(char2048)=='v'
         if(untransformed)then
@@ -1404,8 +1409,9 @@ CONTAINS
              &ferr_2s(nx),fmed(nx),fskew(nx),fkurt(nx),stat=ierr)
           if(ierr/=0)call quit('Allocation error (fmean,etc).')
           call eval_fit_monte_carlo(nxy,have_dx,have_dy,x,y,dx,dy,&
-             &itransfx,itransfy,tx0,npoly,pow,nrandom,nderiv,nx,tx_target,&
-             &fmean,ferr,fmean_1s,ferr_1s,fmean_2s,ferr_2s,fmed,fskew,fkurt)
+             &itransfx,itransfy,tx0,npoly,pow,nrandom,nderiv,eval_relative,&
+             &nx,tx_target,fmean,ferr,fmean_1s,ferr_1s,fmean_2s,ferr_2s,&
+             &fmed,fskew,fkurt)
           ! Dump.
           if(nx==1)then
             ! Single value is printed to stdout.
@@ -1586,9 +1592,9 @@ CONTAINS
 
 
   SUBROUTINE eval_fit_monte_carlo(nxy,have_dx,have_dy,x,y,dx,dy,&
-     &itransfx,itransfy,tx0,npoly,pow,nrandom,nderiv,nx,tx_target,&
-     &fmean,ferr,fmean_1s,ferr_1s,fmean_2s,ferr_2s,fmed,fskew,fkurt,&
-     &amean,aerr)
+     &itransfx,itransfy,tx0,npoly,pow,nrandom,nderiv,eval_relative,&
+     &nx,tx_target,fmean,ferr,fmean_1s,ferr_1s,fmean_2s,ferr_2s,fmed,&
+     &fskew,fkurt,amean,aerr)
     !------------------------------------------------------!
     ! Perform Monte Carlo sampling of data space to obtain !
     ! fit values or derivatives at specified points with   !
@@ -1596,7 +1602,7 @@ CONTAINS
     !------------------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: nxy,itransfx,itransfy,npoly,nrandom,nderiv,nx
-    LOGICAL,INTENT(in) :: have_dx,have_dy
+    LOGICAL,INTENT(in) :: have_dx,have_dy,eval_relative
     DOUBLE PRECISION,INTENT(in) :: x(nxy),y(nxy),dx(nxy),dy(nxy),tx0,&
        &pow(npoly),tx_target(nx)
     DOUBLE PRECISION,INTENT(inout),OPTIONAL :: fmean(nx),ferr(nx),&
@@ -1615,8 +1621,7 @@ CONTAINS
     DOUBLE PRECISION var,skew,kurt,f2s_lo,f1s_lo,f1s_hi,f2s_hi
     ! Misc.
     INTEGER ipoly,ideriv,irandom,ix
-    DOUBLE PRECISION t1
-    DOUBLE PRECISION da(npoly),dtx(nxy),dty(nxy),weight(nxy)
+    DOUBLE PRECISION t1,da(npoly),dtx(nxy),dty(nxy),weight(nxy),f0
     LOGICAL weighted
 
     if(MONTE_CARLO_FIT_WEIGHTS)then
@@ -1640,6 +1645,7 @@ CONTAINS
     ! Initialize.
     ran_x=x
     ran_y=y
+    f0=0.d0
 
     ! Loop over random points.
     do irandom=1,nrandom
@@ -1661,9 +1667,10 @@ CONTAINS
       do ideriv=1,nderiv
         call deriv_poly(op_npoly,op_pow,op_a)
       enddo ! ideriv
+      if(eval_relative)f0=eval_poly(op_npoly,op_pow,op_a,-tx0)
       do ix=1,nx
         t1=eval_poly(op_npoly,op_pow,op_a,tx_target(ix)-tx0)
-        f_array(irandom,ix)=t1
+        f_array(irandom,ix)=t1-f0
       enddo ! ix
     enddo ! irandom
 
