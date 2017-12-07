@@ -11,7 +11,7 @@ PROGRAM polyfit
 
   ! Global variables.
   ! Use weights in Monte Carlo fits?
-  LOGICAL :: MONTE_CARLO_FIT_WEIGHTS=.false.
+  LOGICAL :: MONTE_CARLO_FIT_WEIGHTS=.true.
   ! Use 1/chi^2 weights in Monte Carlo?
   LOGICAL :: MONTE_CARLO_CHI2_WEIGHTS=.false.
   ! Precision for real-to-integer conversions and exponent comparisons.
@@ -896,6 +896,8 @@ CONTAINS
         ! Evaluate chi^2.
         t1=chi_squared(rnxy,npoly,rtx-tx0,rty,rweight,pow,a,weighted)/&
            &dble(rnxy-npoly)
+        ! Report.
+        write(6,'(1x,i5,1x,i5,1x,es12.4)')npoly-1,rnxy,t1
         if(rnxy_min_chi2==0.or.t1<min_chi2)then
           rnxy_min_chi2=rnxy
           min_chi2=t1
