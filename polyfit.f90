@@ -9,6 +9,25 @@ PROGRAM polyfit
   !-------------------------------------------------!
   IMPLICIT NONE
 
+  ! Types.
+  TYPE xydata
+    INTEGER nxy
+    LOGICAL have_dx,have_dy
+    DOUBLE PRECISION,ALLOCATABLE :: x(:),y(:),dx(:),dy(:)
+  END TYPE xydata
+  TYPE dataset
+    CHARACTER(80) x0,tx0,y0,ty0
+    INTEGER itransfx,itransfy
+    TYPE(xydata),POINTER :: xy=>null() ! original data
+    TYPE(xydata),POINTER :: txy=>null() ! transformed data
+    TYPE(xydata),POINTER :: rtxy=>null() ! masked transformed data
+  END TYPE dataset
+  TYPE fit_params
+    INTEGER npoly
+    DOUBLE PRECISION :: x0=0.d0
+    DOUBLE PRECISION,ALLOCATABLE :: pow(:)
+  END TYPE fit_params
+
   ! Global variables.
   ! Use weights in Monte Carlo fits?
   LOGICAL :: MONTE_CARLO_FIT_WEIGHTS=.true.
@@ -16,7 +35,7 @@ PROGRAM polyfit
   LOGICAL :: MONTE_CARLO_CHI2_WEIGHTS=.false.
   ! Precision for real-to-integer conversions and exponent comparisons.
   DOUBLE PRECISION,PARAMETER :: tol_zero=1.d-10
-  ! Transformations.
+  ! Scale transformations.
   INTEGER,PARAMETER :: NTRANSF=3
   INTEGER,PARAMETER :: ITRANSF_NONE=0,ITRANSF_REC=1,ITRANSF_LOG=2,ITRANSF_EXP=3
   CHARACTER(32),PARAMETER :: TRANSF_NAME(0:NTRANSF)=&
@@ -37,46 +56,701 @@ CONTAINS
     ! Main driver. !
     !--------------!
     IMPLICIT NONE
-    ! (x,y[,dx][,dy]) data.
-    INTEGER nxy
-    LOGICAL have_dx,have_dy
-    DOUBLE PRECISION,ALLOCATABLE :: x(:),y(:),dx(:),dy(:)
+    ! (x,y[,dx][,dy]) datasets.
+    INTEGER ndataset
+    TYPE(xydata),POINTER :: xy=>null()
+    TYPE(dataset),POINTER :: datasets(:)=>null(),temp_datasets(:)=>null()
+    ! Fit form.
+    TYPE(fit_params),POINTER :: fit=>null()
+    ! All-set settings.
+    INTEGER itransfx_default,itransfy_default
     ! Input file information.
     INTEGER ncolumn,icol_x,icol_y,icol_dx,icol_dy
     CHARACTER(256) fname
     ! Misc variables.
-    INTEGER ierr
+    CHARACTER(8192) command,token
+    INTEGER i,ifield,ierr,ierr1,ierr2,ierr3,ierr4
+    INTEGER nxy,itransf,iset,i1,i2,ipos,npoly
+    DOUBLE PRECISION t1
+
+    ! Initialize.
+    ndataset=0
+    itransfx_default=ITRANSF_NONE
+    itransfy_default=ITRANSF_NONE
+    allocate(fit)
+    fit%npoly=2
+    allocate(fit%pow(fit%npoly))
+    fit%pow(1:2)=(/0.d0,1.d0/)
 
     ! Write header.
-    write(6,*)'======='
-    write(6,*)'POLYFIT'
-    write(6,*)'======='
-    write(6,*)
+    write(6,'(a)')'===================================='
+    write(6,'(a)')'POLYFIT - polynomial fitting toolbox'
+    write(6,'(a)')'===================================='
+    write(6,'()')
+    write(6,'(a)')'Type "help" for a list of commands.'
+    write(6,'()')
 
-    ! Read in (x,y[,dx][,dy]) data from file specified by user.
-    call get_file(fname)
-    call check_file(fname,nxy,ncolumn)
-    if(nxy<1)call quit('No data found in file "'//trim(fname)//'".')
-    if(ncolumn<2)call quit('Not enough data columns found in file "'//&
-       &trim(fname)//'".')
-    write(6,*)'"'//trim(fname)//'" contains '//trim(i2s(nxy))//' lines with '//&
-       &trim(i2s(ncolumn))//' columns.'
-    call get_columns(ncolumn,icol_x,icol_y,icol_dx,icol_dy)
-    have_dx=icol_dx>0
-    have_dy=icol_dy>0
-    allocate(x(nxy),y(nxy),dx(nxy),dy(nxy),stat=ierr)
-    if(ierr/=0)call quit('Allocation error.')
-    call read_file(fname,ncolumn,icol_x,icol_y,icol_dx,icol_dy,nxy,x,y,dx,dy)
+    ! Loop over user actions.
+    user_loop: do
 
-    ! Run main menu.
-    call user_interaction(nxy,have_dx,have_dy,x,y,dx,dy)
+      ! Read user command.
+      write(6,'(a)',advance='no')'polyfit> '
+      read(5,'(a)',iostat=ierr)command
+      if(ierr/=0)then
+        write(6,'()')
+        call quit()
+      endif
 
-    ! Finish off.
-    deallocate(x,y,dx,dy)
-    write(6,*)'Program finished.'
-    write(6,*)
+      ! Execute command.
+      select case(trim(field(1,command)))
+
+      case('inspect')
+        ! Report number of lines and columns in data file.
+        fname=trim(field(2,command))
+        call check_file(fname,nxy,ncolumn)
+        select case(nxy)
+        case(-1)
+          write(6,'(a)')'Could not open file "'//trim(fname)//'".'
+          cycle user_loop
+        case(-2)
+          write(6,'(a)')'Problem reading file "'//trim(fname)//'".'
+          cycle user_loop
+        case(-3)
+          write(6,'(a)')'Column count problem in file "'//trim(fname)//'".'
+          cycle user_loop
+        case(0)
+          write(6,'(a)')'File "'//trim(fname)//'" contains no useful data.'
+          cycle user_loop
+        case default
+          write(6,'(a)')'File "'//trim(fname)//'" contains '//&
+             &trim(i2s(nxy))//' lines with '//trim(i2s(ncolumn))//' columns.'
+        end select
+
+      case('load')
+        ! Load data from specified columns of data file.
+        fname=trim(field(2,command))
+        call check_file(fname,nxy,ncolumn)
+        select case(nxy)
+        case(-1)
+          write(6,'(a)')'Could not open file "'//trim(fname)//'".'
+          cycle user_loop
+        case(-2)
+          write(6,'(a)')'Problem reading file "'//trim(fname)//'".'
+          cycle user_loop
+        case(-3)
+          write(6,'(a)')'Column count problem in file "'//trim(fname)//'".'
+          cycle user_loop
+        case(0)
+          write(6,'(a)')'File "'//trim(fname)//'" contains no useful data.'
+          cycle user_loop
+        end select
+
+        ! Get column selection.
+        ! Initialize to default column indices.
+        icol_x=0
+        icol_y=0
+        icol_dx=0
+        icol_dy=0
+        select case(ncolumn)
+        case(1)
+          icol_y=1
+        case(2)
+          icol_x=1
+          icol_y=2
+        case(3)
+          icol_x=1
+          icol_y=2
+          icol_dy=3
+        case default
+          icol_x=1
+          icol_y=3
+          icol_dx=2
+          icol_dy=4
+        end select
+
+        ! Parse subcommands.
+        ifield=2
+        do
+          ifield=ifield+1
+          select case(trim(field(ifield,command)))
+          case('type')
+            if(trim(field(ifield+2,command))/='using')then
+              write(6,'(a)')'Syntax error in load command: "type" without &
+                 &"using".'
+              cycle user_loop
+            endif
+            icol_x=0
+            icol_y=0
+            icol_dx=0
+            icol_dy=0
+            ierr1=0
+            ierr2=0
+            ierr3=0
+            ierr4=0
+            select case(field(ifield+1,command))
+            case('xy')
+              icol_x=int_field(ifield+3,command,ierr1)
+              icol_y=int_field(ifield+4,command,ierr2)
+              ifield=ifield+4
+            case('xydy')
+              icol_x=int_field(ifield+3,command,ierr1)
+              icol_y=int_field(ifield+4,command,ierr2)
+              icol_dy=int_field(ifield+5,command,ierr3)
+              ifield=ifield+5
+            case('xdxy')
+              icol_x=int_field(ifield+3,command,ierr1)
+              icol_dx=int_field(ifield+4,command,ierr2)
+              icol_y=int_field(ifield+5,command,ierr3)
+              ifield=ifield+5
+            case('xdxydy')
+              icol_x=int_field(ifield+3,command,ierr1)
+              icol_dx=int_field(ifield+4,command,ierr2)
+              icol_y=int_field(ifield+5,command,ierr3)
+              icol_dy=int_field(ifield+6,command,ierr4)
+              ifield=ifield+6
+            case default
+              write(6,'(a)')'Syntax error in load command: unknown type "'//&
+                 &trim(field(ifield+1,command))//'".'
+            end select
+            ifield=ifield+3
+          case('')
+            exit
+          case default
+            write(6,'(a)')'Syntax error in load command: unknown subcommand "'&
+               &//trim(field(ifield,command))//'".'
+            cycle user_loop
+          end select
+        enddo ! ifield
+
+        ! Check.
+        if(ierr1/=0.or.ierr2/=0.or.ierr3/=0.or.ierr4/=0)then
+          write(6,'(a)')'Problem parsing column indices.'
+          cycle user_loop
+        endif
+        if(icol_x>ncolumn.or.icol_x<0.or.icol_y>ncolumn.or.icol_y<0.or.&
+           &icol_dx>ncolumn.or.icol_dx<0.or.icol_dy>ncolumn.or.icol_dy<0)then
+          write(6,'(a)')'Column indices out of range.'
+          cycle user_loop
+        endif
+
+        ! Read data.
+        allocate(xy)
+        xy%nxy=nxy
+        xy%have_dx=icol_dx>0
+        xy%have_dy=icol_dy>0
+        allocate(xy%x(nxy),xy%y(nxy),xy%dx(nxy),xy%dy(nxy),stat=ierr)
+        if(ierr/=0)call quit('Allocation error.')
+        call read_file(fname,ncolumn,icol_x,icol_y,icol_dx,icol_dy,xy,ierr)
+
+        ! Check data ar compatible with current transformations.
+        if(ierr==0)then
+          if(TRANSF_REQ_NONZERO(itransfx_default))then
+            if(any(are_equal(xy%x,0.d0)))ierr=-7
+          endif
+          if(TRANSF_REQ_NONZERO(itransfy_default))then
+            if(any(are_equal(xy%y,0.d0)))ierr=-8
+          endif
+          if(TRANSF_REQ_POSITIVE(itransfx_default))then
+            if(any(xy%x<0.d0))ierr=-9
+          endif
+          if(TRANSF_REQ_POSITIVE(itransfy_default))then
+            if(any(xy%y<0.d0))ierr=-10
+          endif
+        endif
+
+        ! Bail out if there has been an error.
+        if(ierr/=0)then
+          select case(ierr)
+          case(-1)
+            write(6,'(a)')'Problem opening "'//trim(fname)//'".'
+          case(-2)
+            write(6,'(a)')'Unexpected enf of file reading "'//trim(fname)//'".'
+          case(-3)
+            write(6,'(a)')'Problem reading line in "'//trim(fname)//'".'
+          case(-4)
+            write(6,'(a)')'Problem parsing data in "'//trim(fname)//'".'
+          case(-5)
+            write(6,'(a)')'"'//trim(fname)//'" contains non-positive dx.'
+          case(-6)
+            write(6,'(a)')'"'//trim(fname)//'" contains non-positive dy.'
+          case(-7)
+            write(6,'(a)')'"'//trim(fname)//'" contains x=0, incompatible &
+               &with current xscale.'
+          case(-8)
+            write(6,'(a)')'"'//trim(fname)//'" contains y=0, incompatible &
+               &with current yscale.'
+          case(-9)
+            write(6,'(a)')'"'//trim(fname)//'" contains x<0, incompatible &
+               &with current xscale.'
+          case(-10)
+            write(6,'(a)')'"'//trim(fname)//'" contains y<0, incompatible &
+               &with current yscale.'
+          end select
+          deallocate(xy%x,xy%y,xy%dx,xy%dy)
+          deallocate(xy)
+          nullify(xy)
+          cycle user_loop
+        endif
+
+        if(ndataset>0)then
+          ! Copy of vector of pointers to datasets and destroy original.
+          allocate(temp_datasets(ndataset+1))
+          do i=1,ndataset
+            temp_datasets(i)=datasets(i)
+          enddo
+          deallocate(datasets)
+        endif
+
+        ! Create new vector of pointers to datasets.
+        ndataset=ndataset+1
+        allocate(datasets(ndataset))
+
+        if(ndataset>1)then
+          ! Copy vector of pointers to datasets from backup and destroy backup.
+          do i=1,ndataset-1
+            datasets(i)=temp_datasets(i)
+          enddo
+          deallocate(temp_datasets)
+          nullify(temp_datasets)
+        endif
+
+        ! Point last element in vector of pointers to the new dataset.
+        datasets(ndataset)%xy=>xy
+        nullify(xy)
+
+        ! Set other properties.
+        datasets(ndataset)%itransfx=itransfx_default
+        datasets(ndataset)%itransfy=itransfy_default
+
+        ! Populate transformed dataset.
+        call refresh_dataset(datasets(ndataset))
+
+        ! Report success.
+        write(6,'(a)',advance='no')'Loaded data from "'//trim(fname)//&
+           &'" as dataset #'//trim(i2s(ndataset))//', type '
+        if(datasets(ndataset)%xy%have_dx.and.datasets(ndataset)%xy%have_dy)then
+          write(6,'(a)',advance='no')'xdxydy'
+        elseif(datasets(ndataset)%xy%have_dx)then
+          write(6,'(a)',advance='no')'xdxy'
+        elseif(datasets(ndataset)%xy%have_dy)then
+          write(6,'(a)',advance='no')'xydy'
+        else
+          write(6,'(a)',advance='no')'xy'
+        endif
+        write(6,'(a)')', '//trim(i2s(datasets(ndataset)%xy%nxy))//' data.'
+
+      case('fit')
+        if(ndataset<1)then
+          write(6,'(a)')'No datasets loaded.'
+          cycle user_loop
+        endif
+        do iset=1,ndataset
+          write(6,'(a)')'Set #'//trim(i2s(iset))//':'
+          if(datasets(iset)%xy%nxy<fit%npoly)then
+            write(6,'(a)')'  Cannot fit: '//&
+               &trim(i2s(datasets(iset)%xy%nxy))//' data points for '//&
+               &trim(i2s(fit%npoly))//' fit parameters.'
+            cycle
+          endif
+          call show_poly(datasets(iset)%xy,fit)
+        enddo ! iset
+
+      case('multifit')
+        if(ndataset<2)then
+          write(6,'(a)')'Less than two datasets loaded.'
+          cycle user_loop
+        endif
+
+      case('set')
+
+        ! Set variables.
+        select case(trim(field(2,command)))
+
+        case('xscale','yscale')
+          ! Set scale transformation.
+          do itransf=0,NTRANSF
+            if(trim(field(3,command))==trim(TRANSF_NAME(itransf)))exit
+          enddo ! itransf
+          if(itransf>NTRANSF)then
+            write(6,'(a)')'Unknown value "'//trim(field(3,command))//'" for &
+               &variable "'//trim(field(2,command))//'".'
+            cycle user_loop
+          endif
+          if(nfield(command)>3)then
+            ! Set-by-set setting.  Check syntax.
+            if(trim(field(4,command))/='for')then
+              write(6,'(a)')'Syntax error in set command: unkwown subcommand &
+                 &"'//trim(field(4,command))//'".'
+              cycle user_loop
+            endif
+            if(nfield(command)<5)then
+              write(6,'(a)')'Syntax error in set command: "for" subcommand &
+                 &requires arguments.'
+              cycle user_loop
+            endif
+            ! Check transformation is applicable.
+            do ifield=5,nfield(command)
+              iset=int_field(ifield,command,ierr)
+              if(ierr/=0)then
+                write(6,'(a)')'Syntax error in set command: could not parse &
+                   &set values.'
+                cycle user_loop
+              endif
+              if(iset<1.or.iset>ndataset)then
+                write(6,'(a)')'Set index out of range.'
+                cycle user_loop
+              endif
+              if(TRANSF_REQ_NONZERO(itransf))then
+                select case(trim(field(2,command)))
+                case('xscale')
+                  if(any(are_equal(datasets(iset)%xy%x,0.d0)))then
+                    write(6,*)'Cannot apply axis transformation: set #'//&
+                       &trim(i2s(iset))//' contains x=0.'
+                    cycle user_loop
+                  endif
+                case('yscale')
+                  if(any(are_equal(datasets(iset)%xy%y,0.d0)))then
+                    write(6,*)'Cannot apply axis transformation: set #'//&
+                       &trim(i2s(iset))//' contains y=0.'
+                    cycle user_loop
+                  endif
+                end select
+              endif
+              if(TRANSF_REQ_POSITIVE(itransf))then
+                select case(trim(field(2,command)))
+                case('xscale')
+                  if(any(datasets(iset)%xy%x<0.d0))then
+                    write(6,*)'Cannot apply axis transformation: set #'//&
+                       &trim(i2s(iset))//' contains x<0.'
+                    cycle user_loop
+                  endif
+                case('yscale')
+                  if(any(datasets(iset)%xy%y<0.d0))then
+                    write(6,*)'Cannot apply axis transformation: set #'//&
+                       &trim(i2s(iset))//' contains y<0.'
+                    cycle user_loop
+                  endif
+                end select
+              endif
+            enddo ! ifield
+            ! Set transformation.
+            do ifield=5,nfield(command)
+              iset=int_field(ifield,command,ierr)
+              select case(trim(field(2,command)))
+              case('xscale')
+                datasets(iset)%itransfx=itransf
+              case('yscale')
+                datasets(iset)%itransfy=itransf
+              end select
+            enddo ! ifield
+          else
+            ! Check transformation is applicable.
+            do iset=1,ndataset
+              if(TRANSF_REQ_NONZERO(itransf))then
+                select case(trim(field(2,command)))
+                case('xscale')
+                  if(any(are_equal(datasets(iset)%xy%x,0.d0)))then
+                    write(6,*)'Cannot apply axis transformation: set #'//&
+                       &trim(i2s(iset))//' contains x=0.'
+                    cycle user_loop
+                  endif
+                case('yscale')
+                  if(any(are_equal(datasets(iset)%xy%y,0.d0)))then
+                    write(6,*)'Cannot apply axis transformation: set #'//&
+                       &trim(i2s(iset))//' contains y=0.'
+                    cycle user_loop
+                  endif
+                end select
+              endif
+              if(TRANSF_REQ_POSITIVE(itransf))then
+                select case(trim(field(2,command)))
+                case('xscale')
+                  if(any(datasets(iset)%xy%x<0.d0))then
+                    write(6,*)'Cannot apply axis transformation: set #'//&
+                       &trim(i2s(iset))//' contains x<0.'
+                    cycle user_loop
+                  endif
+                case('yscale')
+                  if(any(datasets(iset)%xy%y<0.d0))then
+                    write(6,*)'Cannot apply axis transformation: set #'//&
+                       &trim(i2s(iset))//' contains y<0.'
+                    cycle user_loop
+                  endif
+                end select
+              endif
+            enddo ! iset
+            ! Store transformation.
+            do iset=1,ndataset
+              select case(trim(field(2,command)))
+              case('xscale')
+                datasets(iset)%itransfx=itransf
+              case('yscale')
+                datasets(iset)%itransfy=itransf
+              end select
+            enddo ! ifield
+            ! Store default transformation.
+            select case(trim(field(2,command)))
+            case('xscale')
+              itransfx_default=itransf
+            case('yscale')
+              itransfy_default=itransf
+            end select
+          endif
+
+        case('exponents')
+          ! Set fit exponents.
+          ! Figure out syntax used.
+          ierr=0
+          select case(nfield(command))
+          case(2)
+            write(6,'(a)')'Syntax error: no value given for "exponents".'
+            cycle user_loop
+          case(3)
+            t1=dble_field(3,command,ierr)
+          end select
+          if(ierr==0)then
+            ! Exponents given as list.
+            ! Check exponents.
+            do ifield=3,nfield(command)
+              t1=dble_field(ifield,command,ierr)
+              if(ierr/=0)then
+                write(6,'(a)')'Syntax error: could not parse exponents.'
+                cycle user_loop
+              endif
+            enddo ! ifield
+            npoly=nfield(command)-2
+            i1=0
+            i2=-1
+          else
+            ! Exponents given as range.
+            token=field(3,command)
+            ipos=scan(token,':')
+            if(ipos<1)return
+            read(token(1:ipos-1),*,iostat=ierr)i1
+            if(ierr/=0)i1=0
+            read(token(ipos+1:),*,iostat=ierr)i2
+            if(ierr/=0)then
+              write(6,'(a)')'Syntax error: could not parse range.'
+              cycle user_loop
+            endif
+            npoly=i2-i1+1
+            if(npoly<1)then
+              write(6,'(a)')'Exponent range runs backwards.'
+              cycle user_loop
+            endif
+          endif
+          ! Reallocate and set exponents.
+          deallocate(fit%pow)
+          fit%npoly=npoly
+          allocate(fit%pow(npoly))
+          if(i2<i1)then
+            do ifield=3,nfield(command)
+              fit%pow(ifield-2)=dble_field(ifield,command,ierr)
+            enddo ! ifield
+          else
+            fit%pow(1:npoly)=(/(dble(i),i=i1,i2)/)
+          endif
+          ! Report.
+          write(6,'(a)')trim(print_poly_sym(fit%npoly,fit%pow,fit%x0))
+
+        case default
+          write(6,'(a)')'Unknown variable "'//trim(field(2,command))//'".'
+          cycle user_loop
+        end select ! variable to set
+
+      case('plot')
+        if(ndataset<1)then
+          write(6,'(a)')'No datasets loaded.'
+          cycle user_loop
+        endif
+
+      case('evaluate')
+        if(ndataset<1)then
+          write(6,'(a)')'No datasets loaded.'
+          cycle user_loop
+        endif
+
+      case('status')
+        select case(ndataset)
+        case(0)
+          write(6,'(a)')'No datasets loaded.'
+        case(1)
+          write(6,'(a)')'1 dataset loaded:'
+        case default
+          write(6,'(a)')trim(i2s(ndataset))//' datasets loaded:'
+        end select
+        do iset=1,ndataset
+          write(6,'(a)',advance='no')'* Set #'//trim(i2s(iset))//': type '
+          if(datasets(iset)%xy%have_dx.and.datasets(iset)%xy%have_dy)then
+            write(6,'(a)',advance='no')'xdxydy'
+          elseif(datasets(iset)%xy%have_dx)then
+            write(6,'(a)',advance='no')'xdxy'
+          elseif(datasets(iset)%xy%have_dy)then
+            write(6,'(a)',advance='no')'xydy'
+          else
+            write(6,'(a)',advance='no')'xy'
+          endif
+          write(6,'(a)',advance='no')', '//trim(i2s(datasets(iset)%xy%nxy))//&
+             &' data, '
+          write(6,'(a)',advance='no')&
+             &trim(TRANSF_NAME(datasets(iset)%itransfx))//'-'//&
+             &trim(TRANSF_NAME(datasets(iset)%itransfy))//' scale'
+          write(6,'(a)')'.'
+        enddo ! i
+        write(6,'(a)')trim(print_poly_sym(fit%npoly,fit%pow,fit%x0))
+
+      case('help')
+        select case(trim(field(2,command)))
+        case('')
+          write(6,'()')
+          write(6,'(a)')'POLYFIT is a toolbox for performing polynomial fits &
+             &on one or more sets of'
+          write(6,'(a)')'data.  It handles non-integer exponents, a few common &
+             &data transformations and'
+          write(6,'(a)')'data with statistical errorbars.  Its most useful &
+             &feature is the ability to'
+          write(6,'(a)')'provide confidence intervals for values and &
+             &derivatives of a fit.'
+          write(6,'()')
+          write(6,'(a)')'POLYFIT uses a rudimentary command-line interface.  &
+             &The list of available'
+          write(6,'(a)')'commands is:'
+          write(6,'()')
+          write(6,'(a)')'* inspect <file>'
+          write(6,'(a)')'* load <file> [type <type> using <columns>]'
+          write(6,'(a)')'* set <variable> <value> [for <set-list>]'
+          write(6,'(a)')'* help [<command> | <variable>]'
+          write(6,'()')
+        case('inspect')
+          write(6,'()')
+          write(6,'(a)')'Command: inspect <file>'
+          write(6,'()')
+          write(6,'(a)')'  Reports the number of data lines and columns &
+             &detected in <file>.'
+          write(6,'()')
+        case('load')
+          write(6,'()')
+          write(6,'(a)')'Command: load <file> [type <type> using <columns>]'
+          write(6,'()')
+          write(6,'(a)')'  Loads data from <file> into a new dataset.  By &
+             &default:'
+          write(6,'(a)')'  * 1-column files are of type xy, with &
+             &(x,y)=(index,1)'
+          write(6,'(a)')'  * 2-column files are of type xy, with &
+             &(x,y)=(1,2)'
+          write(6,'(a)')'  * 3-column files are of type xydy, with &
+             &(x,y,dy)=(1,2,3)'
+          write(6,'(a)')'  * 4- or more-column files are of type xdxydy, with &
+             &(x,dx,y,dy)=(1,2,3,4)'
+          write(6,'(a)')'  Other column selections can be specified with an &
+             &explicity type/using clause,'
+          write(6,'(a)')'  e.g., "type xydy using 3 5 7".  A column index of &
+             &zero refers to the line'
+          write(6,'(a)')'  index.'
+          write(6,'()')
+        case('set')
+          write(6,'()')
+          write(6,'(a)')'Command: set <variable> <value> [for <set-list>]'
+          write(6,'()')
+          write(6,'(a)')'  Sets <variable> to <value>, either globally or for &
+             &selected sets (for'
+          write(6,'(a)')'  certain variables).  The list of available &
+             &variables is:'
+          write(6,'()')
+          write(6,'(a)')'  * xscale'
+          write(6,'(a)')'  * yscale'
+          write(6,'(a)')'  * exponents'
+          write(6,'()')
+          write(6,'(a)')'Type help <variable> for detailed information.'
+          write(6,'()')
+        case('xscale','yscale')
+          write(6,'()')
+          write(6,'(a)')'Variable: xscale, yscale'
+          write(6,'()')
+          write(6,'(a)')'  These set scale transformations for the &
+             &independent x variable and for the'
+          write(6,'(a)')'  dependent y variable, respectively.  In POLYFIT &
+             &notation, the original'
+          write(6,'(a)')'  variables are called x and y, and the transformed &
+             &variables are called X and'
+          write(6,'(a)')'  Y.'
+          write(6,'()')
+          write(6,'(a)')'  Possible values are:'
+          write(6,'(a)')'  * "linear"      : X = x       [default]'
+          write(6,'(a)')'  * "reciprocal"  : X = 1/x     [x=0 forbidden]'
+          write(6,'(a)')'  * "logarithmic" : X = log(x)  [x<=0 forbidden]'
+          write(6,'(a)')'  * "exponential" : X = exp(x)'
+          write(6,'()')
+          write(6,'(a)')'  These variables can be set in a per-set manner &
+             &or globally.  Note that the'
+          write(6,'(a)')'  global value applies to all loaded datasets and &
+             &becomes the default for new'
+          write(6,'(a)')'  datasets.'
+          write(6,'()')
+        case('exponents')
+          write(6,'()')
+          write(6,'(a)')'Variable: exponents'
+          write(6,'()')
+          write(6,'(a)')'  This sets the exponents to be used in the fitting &
+             &function.  The value can be'
+          write(6,'(a)')'  specified as a list, e.g., "set exponents 0 1.5 3", &
+             &or as an integer range,'
+          write(6,'(a)')'  e.g., "set exponents 0:2".  Note that the form of &
+             &the fitting function is'
+          write(6,'(a)')'  global, so there is no "for <set-list>" syntax for &
+             &this variable.'
+          write(6,'()')
+        case default
+          write(6,'(a)')'No help for "'//trim(field(2,command))//'".'
+        end select
+
+      case('quit','exit')
+        call quit()
+
+      case('')
+        continue
+
+      case default
+        write(6,'(a)')'Command "'//trim(field(1,command))//'" not recognized.'
+      end select
+
+    enddo user_loop
 
   END SUBROUTINE main
+
+
+  SUBROUTINE refresh_dataset(dset)
+    !-------------------------------------------------------!
+    ! Re-apply transformation and mask to dataset following !
+    ! change in choice of transformation or mask.           !
+    !-------------------------------------------------------!
+    IMPLICIT NONE
+    TYPE(dataset),POINTER :: dset
+    TYPE(xydata),POINTER :: xy
+
+    ! Delete pre-existing data.
+    if(associated(dset%txy))then
+      deallocate(dset%txy%x,dset%txy%y,dset%txy%dx,dset%txy%dy)
+      deallocate(dset%txy)
+    endif
+    if(associated(dset%rtxy))then
+      deallocate(dset%rtxy%x,dset%rtxy%y,dset%rtxy%dx,dset%rtxy%dy)
+      deallocate(dset%rtxy)
+    endif
+    
+    ! Transform.
+    allocate(xy)
+    xy%nxy=dset%xy%nxy
+    xy%have_dx=dset%xy%have_dx
+    xy%have_dy=dset%xy%have_dy
+    allocate(xy%x(xy%nxy),xy%y(xy%nxy),xy%dx(xy%nxy),xy%dy(xy%nxy))
+    call scale_transform(xy%nxy,dset%itransfx,dset%xy%x,xy%x,dset%xy%have_dx,&
+       &dset%xy%dx,xy%dx)
+    call scale_transform(xy%nxy,dset%itransfy,dset%xy%y,xy%y,dset%xy%have_dy,&
+       &dset%xy%dy,xy%dy)
+    dset%txy=>xy
+
+  END SUBROUTINE refresh_dataset
 
 
   SUBROUTINE user_interaction(nxy,have_dx,have_dy,x,y,dx,dy)
@@ -193,7 +867,7 @@ CONTAINS
       case('f')
         call ask_poly(rnxy,i,pow)
         if(i>0.and.i<=rnxy)npoly=i
-        call show_poly(rnxy,have_dx,have_dy,rtx,rty,rdtx,rdty,tx0,npoly,pow)
+        !call show_poly(rnxy,have_dx,have_dy,rtx,rty,rdtx,rdty,tx0,npoly,pow)
       case('w')
         MONTE_CARLO_FIT_WEIGHTS=.not.MONTE_CARLO_FIT_WEIGHTS
       case('x')
@@ -205,7 +879,7 @@ CONTAINS
            &tx0,i,pow)
         if(i<1)cycle
         npoly=i
-        call show_poly(rnxy,have_dx,have_dy,rtx,rty,rdtx,rdty,tx0,npoly,pow)
+        !call show_poly(rnxy,have_dx,have_dy,rtx,rty,rdtx,rdty,tx0,npoly,pow)
       case('d')
         call show_dual_assessment(nxy,have_dx,have_dy,x,y,dx,dy,itransfx,&
            &itransfy,tx0,i,pow,mask)
@@ -1093,7 +1767,7 @@ CONTAINS
     ! Make near-{,half,third,quarter}-integers exactly {*}-integers.
     do idiv=2,4
       do i=1,npoly
-        if(abs(anint(pow(i)*idiv)-pow(i)*idiv)<tol_zero)&
+        if(abs(anint(pow(i)*idiv)-pow(i)*idiv)<1.d-2)&
            &pow(i)=anint(pow(i)*idiv)/dble(idiv)
       enddo ! i
     enddo ! idiv
@@ -1130,62 +1804,56 @@ CONTAINS
   END SUBROUTINE ask_poly
 
 
-  SUBROUTINE show_poly(nxy,have_dx,have_dy,x,y,dx,dy,x0,npoly,pow)
+  SUBROUTINE show_poly(xy,fit)
     !--------------------------------!
     ! Perform chosen fit and report. !
     !--------------------------------!
     IMPLICIT NONE
-    INTEGER,INTENT(in) :: nxy,npoly
-    LOGICAL,INTENT(in) :: have_dx,have_dy
-    DOUBLE PRECISION,INTENT(in) :: x(nxy),y(nxy),dx(nxy),dy(nxy),x0,pow(npoly)
-    DOUBLE PRECISION weight(nxy),a(npoly),da(npoly),t1
+    TYPE(xydata),POINTER :: xy
+    TYPE(fit_params),POINTER :: fit
+    DOUBLE PRECISION weight(xy%nxy),a(fit%npoly),da(fit%npoly),t1
     LOGICAL weighted
     INTEGER i
 
     ! Evaluate fit weights.
-    if(have_dx.and.have_dy)then
-      weight=1.d0/(dx*dy)**2
-    elseif(have_dx)then
-      weight=1.d0/dx**2
-    elseif(have_dy)then
-      weight=1.d0/dy**2
+    weighted=.true.
+    if(xy%have_dx.and.xy%have_dy)then
+      weight=1.d0/(xy%dx*xy%dy)**2
+    elseif(xy%have_dx)then
+      weight=1.d0/xy%dx**2
+    elseif(xy%have_dy)then
+      weight=1.d0/xy%dy**2
     else
       weight=1.d0
+      weighted=.false.
     endif
-    weighted=have_dx.or.have_dy
-
-    ! Print polynomial form.
-    write(6,*)'Form of fitting polynomial:'
-    write(6,*)'  '//trim(print_poly_sym(npoly,pow,x0))
-    write(6,*)
 
     ! Compute fit.
-    call perform_fit(nxy,npoly,x-x0,y,pow,a,weighted,weight,da)
+    call perform_fit(xy%nxy,fit%npoly,xy%x-fit%x0,xy%y,fit%pow,a,weighted,&
+       &weight,da)
 
     ! Print fit coefficients.
-    write(6,*)'Fit parameters:'
+    write(6,'(a)')'  Fit parameters:'
     if(weighted)then
-      do i=1,npoly
-        write(6,'("   ",a," = ",es24.16," +/- ",es24.16)')'k'//trim(i2s(i)),&
+      do i=1,fit%npoly
+        write(6,'(4x,a," = ",es24.16," +/- ",es24.16)')'k'//trim(i2s(i)),&
            &a(i),da(i)
       enddo ! i
     else
-      do i=1,npoly
-        write(6,'("   ",a," = ",es24.16)')'k'//trim(i2s(i)),a(i)
+      do i=1,fit%npoly
+        write(6,'(4x,a," = ",es24.16)')'k'//trim(i2s(i)),a(i)
       enddo ! i
     endif ! weighted
     ! Evaluate chi-squared.
-    t1=chi_squared(nxy,npoly,x-x0,y,weight,pow,a,weighted)
-    write(6,*)'chi^2     = ',t1
-    if(nxy>npoly)write(6,*)'chi^2/Ndf = ',t1/dble(nxy-npoly)
-    write(6,*)
+    t1=chi_squared(xy%nxy,fit%npoly,xy%x-fit%x0,xy%y,weight,fit%pow,a,weighted)
+    write(6,*)' chi^2     = ',t1
+    if(xy%nxy>fit%npoly)write(6,*)' chi^2/Ndf = ',t1/dble(xy%nxy-fit%npoly)
 
     ! Write out fitted polynomial.
     ! NB, this is good for pasting into xmgrace, but xmgrace has a string
     ! length limit of 256 characters.
-    write(6,*)'Fitted polynomial:'
-    write(6,*)'  '//trim(print_poly_num(npoly,pow,a,x0))
-    write(6,*)
+    write(6,'(a)')'  Fitted polynomial:'
+    write(6,'(a)')'    '//trim(print_poly_num(fit%npoly,fit%pow,a,fit%x0))
 
   END SUBROUTINE show_poly
 
@@ -1716,27 +2384,6 @@ CONTAINS
   ! INPUT FILE HANDLING ROUTINES.
 
 
-  SUBROUTINE get_file(fname)
-    !------------------------!
-    ! Find out the filename. !
-    !------------------------!
-    IMPLICIT NONE
-    CHARACTER(*),INTENT(out) :: fname
-    INTEGER ierr
-    LOGICAL file_exists
-    do
-      write(6,*)'Enter name of data file:'
-      read(5,'(a)',iostat=ierr)fname
-      if(ierr/=0)call quit()
-      fname=adjustl(fname)
-      inquire(file=trim(fname),exist=file_exists)
-      if(.not.file_exists)call quit('File does not exist.')
-      exit
-    enddo
-    write(6,*)
-  END SUBROUTINE get_file
-
-
   SUBROUTINE check_file(fname,nline,ncolumn)
     !----------------------------------------------------!
     ! Check file contains data, and return the number of !
@@ -1746,27 +2393,28 @@ CONTAINS
     CHARACTER(*),INTENT(in) :: fname
     INTEGER,INTENT(out) :: nline,ncolumn
     CHARACTER(1024) char1024
-    INTEGER i,ipos,pline,ierr
+    INTEGER i,ipos,ierr
     DOUBLE PRECISION t1
     ! Constants.
     INTEGER, PARAMETER :: io=10
 
+    ! Initialize.
+    nline=-1 ! flag non-existing file
+    ncolumn=0
+
     ! Open file.
     open(unit=io,file=trim(fname),status='old',iostat=ierr)
-    if(ierr/=0)call quit('Error opening "'//trim(fname)//'".')
-
-    ! Initialize.
+    if(ierr/=0)return
     nline=0
-    ncolumn=0
-    pline=0
 
     ! Look for first line containing data.
     do
       read(io,'(a)',iostat=ierr)char1024
       if(ierr<0)exit
-      pline=pline+1
-      if(ierr>0)call quit('Error reading '//trim(fname)//' at line '//&
-         &trim(i2s(pline))//'.')
+      if(ierr>0)then
+        nline=-2 ! flag reading error
+        exit
+      endif
       char1024=adjustl(char1024)
       ! Skip comments.
       ipos=scan(char1024,'#!')
@@ -1789,8 +2437,10 @@ CONTAINS
           ncolumn=ncolumn-1
         enddo
       endif
-      if(ncolumn<2)call quit('Too few columns found at line '//&
-         &trim(i2s(pline))//' of file "'//trim(fname)//'".')
+      if(ncolumn<1)then
+        nline=-3 ! flag column count problem
+        exit
+      endif
       nline=nline+1
     enddo
 
@@ -1800,133 +2450,49 @@ CONTAINS
   END SUBROUTINE check_file
 
 
-  SUBROUTINE get_columns(ncolumn,icol_x,icol_y,icol_dx,icol_dy)
-    !----------------------------------------!
-    ! Ask the user for which columns to use. !
-    !----------------------------------------!
-    IMPLICIT NONE
-    INTEGER, INTENT(in) :: ncolumn
-    INTEGER, INTENT(inout) :: icol_x, icol_y, icol_dx, icol_dy
-    CHARACTER(1024) char1024,cdata,ccol
-    INTEGER ierr
-
-    ! Promt and read use input.
-    write(6,*)'Enter the column indices for x, y, dx, dy:'
-    read(5,'(a)',iostat=ierr)char1024
-    if(ierr/=0)call quit()
-    write(6,*)
-
-    ! Parse input.
-    if(len_trim(char1024)==0)then
-      ! Use default if empty input.
-      select case(ncolumn)
-      case(1)
-        icol_x=0
-        icol_y=1
-        icol_dx=0
-        icol_dy=1
-      case(2)
-        icol_x=1
-        icol_y=2
-        icol_dx=0
-        icol_dy=0
-      case(3)
-        icol_x=1
-        icol_y=2
-        icol_dx=0
-        icol_dy=3
-      case default
-        icol_x=1
-        icol_y=3
-        icol_dx=2
-        icol_dy=4
-      end select
-    else
-      ! Adapt parsing to number of fields in input string.
-      read(char1024,*,iostat=ierr)icol_x,icol_y,icol_dx,icol_dy
-      if(ierr/=0)then
-        icol_dx=0
-        read(char1024,*,iostat=ierr)icol_x,icol_y,icol_dy
-        if(ierr/=0)then
-          icol_dy=0
-          read(char1024,*,iostat=ierr)icol_x,icol_y
-          if(ierr/=0)then
-            icol_x=0
-            read(char1024,*,iostat=ierr)icol_y
-            if(ierr/=0)call quit('Could not parse column indices.')
-          endif
-        endif
-      endif
-      if(icol_x>ncolumn.or.icol_y>ncolumn.or.icol_dx>ncolumn.or.&
-         &icol_dy>ncolumn)call quit('Column indices out of range.')
-    endif
-
-    ! Report.
-    cdata='(x,y'
-    ccol='('
-    if(icol_x==0)then
-      ccol=trim(ccol)//'INDEX'
-    else
-      ccol=trim(ccol)//trim(i2s(icol_x))
-    endif
-    ccol=trim(ccol)//','
-    if(icol_y==0)then
-      ccol=trim(ccol)//'INDEX'
-    else
-      ccol=trim(ccol)//trim(i2s(icol_y))
-    endif
-    if(icol_dx>0)then
-      cdata=trim(cdata)//',dx'
-      ccol=trim(ccol)//','//trim(i2s(icol_dx))
-    endif
-    if(icol_dy>0)then
-      cdata=trim(cdata)//',dy'
-      ccol=trim(ccol)//','//trim(i2s(icol_dy))
-    endif
-    cdata=trim(cdata)//')'
-    ccol=trim(ccol)//')'
-    write(6,*)'Parsing '//trim(cdata)//' from columns '//trim(ccol)//'.'
-    write(6,*)
-
-  END SUBROUTINE get_columns
-
-
-  SUBROUTINE read_file(fname,ncolumn,icol_x,icol_y,icol_dx,icol_dy,nxy,&
-     &x,y,dx,dy)
+  SUBROUTINE read_file(fname,ncolumn,icol_x,icol_y,icol_dx,icol_dy,xy,ierr)
     !-------------------------------------!
     ! Read in the data in the input file. !
     !-------------------------------------!
     IMPLICIT NONE
-    INTEGER,INTENT(in) :: ncolumn,icol_x,icol_y,icol_dx,icol_dy,nxy
+    INTEGER,INTENT(in) :: ncolumn,icol_x,icol_y,icol_dx,icol_dy
+    TYPE(xydata),POINTER :: xy
     CHARACTER(*),INTENT(in) :: fname
-    DOUBLE PRECISION,INTENT(out) :: x(nxy),y(nxy),dx(nxy),dy(nxy)
+    INTEGER,INTENT(inout) :: ierr
     DOUBLE PRECISION tvec(ncolumn)
-    INTEGER i,ierr,ipos,pline
+    INTEGER i,ipos,pline
     CHARACTER(1024) line
     ! Constants.
     INTEGER, PARAMETER :: io=10
 
     ! Open file.
     open(unit=io,file=trim(fname),status='old',iostat=ierr)
-    if(ierr/=0)call quit('Error opening "'//trim(fname)//'".')
+    if(ierr/=0)then
+      ierr=-1 ! flag problem opening file
+      return
+    endif
 
     ! Initialize.
     pline=0
-    x=(/(dble(i),i=1,nxy)/)
-    y=(/(dble(i),i=1,nxy)/)
-    dx=0.d0
-    dy=0.d0
+    xy%x=(/(dble(i),i=1,xy%nxy)/)
+    xy%y=(/(dble(i),i=1,xy%nxy)/)
+    xy%dx=0.d0
+    xy%dy=0.d0
 
     ! Loop over data lines.
-    do i=1,nxy
+    do i=1,xy%nxy
       ! Load next line containing data.
       do
         read(io,'(a)',iostat=ierr)line
-        if(ierr<0)call quit('Error reading '//trim(fname)//' at line '//&
-           &trim(i2s(pline))//': unexpected end of file.')
+        if(ierr<0)then
+          ierr=-2 ! flag unexpected EOF
+          exit
+        endif
         pline=pline+1
-        if(ierr>0)call quit('Error reading '//trim(fname)//' at line '//&
-           &trim(i2s(pline))//'.')
+        if(ierr>0)then
+          ierr=-3 ! flag reading error
+          exit
+        endif
         line=adjustl(line)
         ! Skip comments.
         ipos=scan(line,'#!')
@@ -1938,20 +2504,26 @@ CONTAINS
       enddo
       ! Read data point from string.
       read(line,*,iostat=ierr)tvec(1:ncolumn)
-      if(ierr/=0)call quit('Error reading '//trim(fname)//' at line '//&
-         &trim(i2s(pline))//'.')
+      if(ierr/=0)then
+        ierr=-4 ! flag data parsing error
+        exit
+      endif
       ! Set data and check that error bars are positive.
-      if(icol_x>0)x(i)=tvec(icol_x)
-      if(icol_y>0)y(i)=tvec(icol_y)
+      if(icol_x>0)xy%x(i)=tvec(icol_x)
+      if(icol_y>0)xy%y(i)=tvec(icol_y)
       if(icol_dx>0)then
-        dx(i)=tvec(icol_dx)
-        if(dx(i)<=0.d0)call quit('Error reading '//trim(fname)//' at line '//&
-           &trim(i2s(pline))//': non-positive dx.')
+        xy%dx(i)=tvec(icol_dx)
+        if(xy%dx(i)<=0.d0)then
+          ierr=-5 ! flag non-positive dx
+          exit
+        endif
       endif ! have_dx
       if(icol_dy>0)then
-        dy(i)=tvec(icol_dy)
-        if(dy(i)<=0.d0)call quit('Error reading '//trim(fname)//' at line '//&
-           &trim(i2s(pline))//': non-positive dy.')
+        xy%dy(i)=tvec(icol_dy)
+        if(xy%dy(i)<=0.d0)then
+          ierr=-6 ! flag non-poistive dy
+          exit
+        endif
       endif ! have_dy
     enddo ! i
 
@@ -2445,7 +3017,117 @@ CONTAINS
   END SUBROUTINE iswap1
 
 
+  LOGICAL ELEMENTAL FUNCTION are_equal(x,y,tol)
+    !------------------------------------------------------!
+    ! Check if two floating-point numbers are equal within !
+    ! a reasonable tolerance.                              !
+    !------------------------------------------------------!
+    IMPLICIT NONE
+    DOUBLE PRECISION,INTENT(in) :: x,y
+    DOUBLE PRECISION,OPTIONAL,INTENT(in) :: tol
+    DOUBLE PRECISION abs_x,abs_y,big,small
+    ! Parameters.
+    DOUBLE PRECISION,PARAMETER :: tol_zero=1.d-12
+    DOUBLE PRECISION,PARAMETER :: tol_rel=1.d-9
+    if(present(tol))then
+      are_equal=abs(x-y)<=tol
+    else
+      abs_x=abs(x)
+      abs_y=abs(y)
+      if(abs_x<=tol_zero.and.abs_y<=tol_zero)then
+        are_equal=.true.
+      elseif(x>0.d0.eqv.y>0.d0)then
+        big=max(abs_x,abs_y)
+        small=min(abs_x,abs_y)
+        are_equal=big-small<=big*tol_rel
+      else
+        are_equal=.false.
+      endif
+    endif
+  END FUNCTION are_equal
+
+
   ! MISC UTILITIES.
+
+
+  FUNCTION field(n,line)
+    !---------------------------------------------------------!
+    ! Return the N-th field in string LINE, where the fields  !
+    ! are separated by one or more spaces.  If N is negative, !
+    ! return the |N|-th-to-last field in LINE.                !
+    !---------------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: n
+    CHARACTER(*),INTENT(in) :: line
+    CHARACTER(len(line)) :: field
+    CHARACTER(len(line)) tline
+    INTEGER i,k,absn
+    LOGICAL back
+    ! FIXME - should honour and strip quotes.
+    ! Initialize.
+    field=''
+    if(n==0)return
+    absn=abs(n)
+    tline=adjustl(line)
+    back=(n<0)
+    ! Loop over fields.
+    do i=1,absn-1
+      k=scan(trim(tline),' ',back)
+      if(k==0)return
+      if(back)then
+        tline=adjustl(tline(1:k-1))
+      else
+        tline=adjustl(tline(k+1:))
+      endif
+    enddo
+    ! Return nth field.
+    k=scan(trim(tline),' ',back)
+    if(k==0)then
+      field=adjustl(tline)
+    elseif(back)then
+      field=adjustl(tline(k+1:))
+    else
+      field=adjustl(tline(1:k-1))
+    endif
+  END FUNCTION field
+
+
+  INTEGER FUNCTION nfield(line)
+    !--------------------------------------!
+    ! Return the number of fields in LINE. !
+    !--------------------------------------!
+    IMPLICIT NONE
+    CHARACTER(*),INTENT(in) :: line
+    nfield=0
+    do
+      if(len_trim(field(nfield+1,line))==0)exit
+      nfield=nfield+1
+    enddo
+  END FUNCTION nfield
+
+
+  INTEGER FUNCTION int_field(ifield,command,ierr)
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: ifield
+    CHARACTER(*),INTENT(in) :: command
+    INTEGER,INTENT(inout) :: ierr
+    CHARACTER(len(command)) f
+    ierr=0
+    f=field(ifield,command)
+    read(f,*,iostat=ierr)int_field
+  END FUNCTION int_field
+
+
+  DOUBLE PRECISION FUNCTION dble_field(ifield,command,ierr)
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: ifield
+    CHARACTER(*),INTENT(in) :: command
+    INTEGER,INTENT(inout) :: ierr
+    CHARACTER(len(command)) f
+    ierr=0
+    f=field(ifield,command)
+    read(f,*,iostat=ierr)dble_field
+  END FUNCTION dble_field
 
 
   CHARACTER(12) FUNCTION i2s(n)
@@ -2479,9 +3161,9 @@ CONTAINS
     IMPLICIT NONE
     CHARACTER(*), INTENT(in), OPTIONAL :: msg
     if (present(msg)) then
-      write(6,*)'ERROR : '//msg
+      write(6,'(a)')'ERROR : '//msg
     else
-      write(6,*)'Quitting.'
+      write(6,'(a)')'Quitting.'
     endif
     stop
   END SUBROUTINE quit
