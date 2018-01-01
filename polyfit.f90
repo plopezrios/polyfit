@@ -352,7 +352,8 @@ CONTAINS
                &trim(i2s(fit%npoly))//' fit parameters.'
             cycle
           endif
-          call show_poly(datasets(iset)%xy,fit)
+          ! FIXME - make this rtxy
+          call show_poly(datasets(iset)%txy,fit)
         enddo ! iset
 
       case('multifit')
@@ -496,6 +497,10 @@ CONTAINS
               itransfy_default=itransf
             end select
           endif
+          ! Apply transformations.
+          do iset=1,ndataset
+            call refresh_dataset(datasets(iset))
+          enddo ! iset
 
         case('exponents')
           ! Set fit exponents.
@@ -619,6 +624,7 @@ CONTAINS
           write(6,'(a)')'* inspect <file>'
           write(6,'(a)')'* load <file> [type <type> using <columns>]'
           write(6,'(a)')'* set <variable> <value> [for <set-list>]'
+          write(6,'(a)')'* status'
           write(6,'(a)')'* help [<command> | <variable>]'
           write(6,'()')
         case('inspect')
@@ -662,6 +668,13 @@ CONTAINS
           write(6,'(a)')'  * exponents'
           write(6,'()')
           write(6,'(a)')'Type help <variable> for detailed information.'
+          write(6,'()')
+        case('status')
+          write(6,'()')
+          write(6,'(a)')'Command: status'
+          write(6,'()')
+          write(6,'(a)')'  Report currently loaded datasets and values of &
+             &internal variables'
           write(6,'()')
         case('xscale','yscale')
           write(6,'()')
@@ -725,7 +738,7 @@ CONTAINS
     ! change in choice of transformation or mask.           !
     !-------------------------------------------------------!
     IMPLICIT NONE
-    TYPE(dataset),POINTER :: dset
+    TYPE(dataset),INTENT(inout) :: dset
     TYPE(xydata),POINTER :: xy
 
     ! Delete pre-existing data.
@@ -749,6 +762,9 @@ CONTAINS
     call scale_transform(xy%nxy,dset%itransfy,dset%xy%y,xy%y,dset%xy%have_dy,&
        &dset%xy%dy,xy%dy)
     dset%txy=>xy
+
+    ! Mask.
+    ! FIXME - write
 
   END SUBROUTINE refresh_dataset
 
