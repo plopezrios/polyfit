@@ -23,9 +23,10 @@ PROGRAM polyfit
   END TYPE dataset
   TYPE fit_params
     INTEGER npoly
-    DOUBLE PRECISION :: x0=0.d0
+    DOUBLE PRECISION :: X0=0.d0
     DOUBLE PRECISION,ALLOCATABLE :: pow(:)
     LOGICAL,ALLOCATABLE :: share(:)
+    CHARACTER(64) :: X0_string='0'
   END TYPE fit_params
   TYPE range_def
     CHARACTER :: var='X'
@@ -39,10 +40,12 @@ PROGRAM polyfit
     INTEGER :: nderiv=0,n=0
     DOUBLE PRECISION,ALLOCATABLE :: x(:)
   END TYPE eval_def
+  TYPE monte_carlo_params
+    LOGICAL :: weighted=.true.
+    INTEGER :: nsample=10000
+  END TYPE monte_carlo_params
 
   ! Global variables.
-  ! Use weights in Monte Carlo fits?
-  LOGICAL :: MONTE_CARLO_FIT_WEIGHTS=.true.
   ! Precision for real-to-integer conversions and exponent comparisons.
   DOUBLE PRECISION,PARAMETER :: tol_zero=1.d-10
   ! Scale transformations.
@@ -78,6 +81,8 @@ CONTAINS
     ! Function evaluation.
     INTEGER eval_iset
     TYPE(eval_def) deval
+    ! Monte Carlo parameters.
+    TYPE(monte_carlo_params) mcparams
     ! Input file information.
     INTEGER ncolumn,icol_x,icol_y,icol_dx,icol_dy
     CHARACTER(256) fname
@@ -96,6 +101,8 @@ CONTAINS
     allocate(fit%pow(fit%npoly),fit%share(fit%npoly))
     fit%pow(1:2)=(/0.d0,1.d0/)
     fit%share=.false.
+    mcparams%weighted=.false.
+    mcparams%nsample=10000
 
     ! Write header.
     write(6,'(a)')'===================================='
@@ -269,8 +276,7 @@ CONTAINS
         xy%nxy=nxy
         xy%have_dx=icol_dx>0
         xy%have_dy=icol_dy>0
-        allocate(xy%x(nxy),xy%y(nxy),xy%dx(nxy),xy%dy(nxy),stat=ierr)
-        if(ierr/=0)call quit('Allocation error.')
+        allocate(xy%x(nxy),xy%y(nxy),xy%dx(nxy),xy%dy(nxy))
         call read_file(fname,ncolumn,icol_x,icol_y,icol_dx,icol_dy,xy,ierr)
 
         ! Check data ar compatible with current transformations.
@@ -356,6 +362,8 @@ CONTAINS
 
         ! Populate transformed dataset.
         call refresh_dataset(datasets(ndataset),drange)
+        ! Update X0.
+        call refresh_fit(ndataset,datasets,fit)
 
         ! Report success.
         write(6,'(a)',advance='no')'Loaded data from "'//trim(fname)//&
@@ -385,16 +393,7 @@ CONTAINS
           write(6,'()')
           cycle user_loop
         endif ! nfield>1
-        do iset=2,ndataset
-          if((datasets(iset)%rtxy%have_dx.or.datasets(iset)%rtxy%have_dy)&
-             &.neqv.(datasets(1)%rtxy%have_dx.or.datasets(1)%rtxy%have_dy))then
-            write(6,'(a)')'Don''t know how to deal with mixed datasets with &
-             &and without errorbars.'
-            write(6,'()')
-            cycle user_loop
-          endif
-        enddo ! iset
-        call show_multipoly(ndataset,datasets,fit)
+        call show_multipoly(ndataset,datasets,drange,fit,mcparams)
 
       case('assess')
         if(ndataset<1)then
@@ -413,11 +412,12 @@ CONTAINS
         deval%x(1)=0.d0
         select case(trim(field(2,command)))
         case('fit')
-          call assess_fit(ndataset,datasets,drange,fit,deval,eval_iset)
+          call assess_fit(ndataset,datasets,drange,fit,mcparams,deval,&
+             &eval_iset)
         case('range')
-          call assess_range(ndataset,datasets,fit,deval,eval_iset)
+          call assess_range(ndataset,datasets,fit,mcparams,deval,eval_iset)
         case('range,fit','fit,range')
-          call assess_fit_range(ndataset,datasets,fit,deval,eval_iset)
+          call assess_fit_range(ndataset,datasets,fit,mcparams,deval,eval_iset)
         case default
           write(6,'()')
           write(6,'(a)')'Unknown variable to assess "'//&
@@ -601,6 +601,8 @@ CONTAINS
           do iset=1,ndataset
             call refresh_dataset(datasets(iset),drange)
           enddo ! iset
+          ! Update X0.
+          call refresh_fit(ndataset,datasets,fit)
 
         case('fit')
           ! Set fit exponents.
@@ -672,7 +674,7 @@ CONTAINS
           endif
           fit%share(1:npoly)=.false.
           ! Report.
-          write(6,'(2x,a)')trim(print_poly_sym(fit%npoly,fit%pow,fit%x0))
+          write(6,'(2x,a)')trim(print_poly_sym(fit%npoly,fit%pow,fit%X0))
           write(6,'()')
 
         case('range')
@@ -733,6 +735,8 @@ CONTAINS
           do iset=1,ndataset
             call refresh_dataset(datasets(iset),drange)
           enddo ! iset
+          ! Update X0.
+          call refresh_fit(ndataset,datasets,fit)
 
         case('shared')
           ! Set shared coefficients.
@@ -818,11 +822,60 @@ CONTAINS
           write(6,'(a)')'Set shared coefficients.'
           write(6,'()')
 
-        ! FIXME - reimplement:
-        !case('w')
-        !  MONTE_CARLO_FIT_WEIGHTS=.not.MONTE_CARLO_FIT_WEIGHTS
-        !case('0')
-        !  call ask_centre(rnxy,rtx,rty,tx0)
+        case('weights')
+          select case(trim(field(3,command)))
+          case('yes','YES','y','Y','true','TRUE','t','T')
+            mcparams%weighted=.true.
+          case('no','NO','n','N','false','FALSE','f','F')
+            mcparams%weighted=.false.
+          case default
+            write(6,'(a)')'Invalid value "'//trim(field(3,command))//'" for &
+               &variable "'//trim(field(2,command))//'".'
+            write(6,'()')
+            cycle user_loop
+          end select
+          write(6,'(a)',advance='no')'Set weights = '
+          if(mcparams%weighted)then
+            write(6,'(a)')'yes'
+          else
+            write(6,'(a)')'no'
+          endif
+          write(6,'()')
+
+        case('centre')
+          ! Check value.
+          select case(field(3,command))
+          case('left','right','max','min','centre','mean','median')
+            continue
+          case default
+            t1=dble_field(3,command,ierr)
+            if(ierr/=0)then
+              write(6,'(a)')'Invalid value "'//trim(field(3,command))//'" for &
+                 &variable "'//trim(field(2,command))//'".'
+              write(6,'()')
+              cycle user_loop
+            endif
+          end select
+          ! Set value.
+          fit%x0_string=field(3,command)
+          ! Update X0.
+          call refresh_fit(ndataset,datasets,fit)
+
+        case('nsample')
+          ! Check value.
+          i=int_field(3,command,ierr)
+          if(ierr/=0)then
+            write(6,'(a)')'Invalid value "'//trim(field(3,command))//'" for &
+               &variable nsample.'
+            write(6,'()')
+            cycle user_loop
+          endif
+          if(i<10)then
+            write(6,'(a)')'nsample value too small.'
+            write(6,'()')
+            cycle user_loop
+          endif
+          mcparams%nsample=i
 
         case default
           write(6,'()')
@@ -852,7 +905,7 @@ CONTAINS
         deval%n=1
         allocate(deval%x(deval%n))
         deval%x(1)=0.d0
-        call evaluate_fit(ndataset,datasets,fit,drange,deval)
+        call evaluate_fit(ndataset,datasets,fit,mcparams,drange,deval)
         deallocate(deval%x)
 
       case('status')
@@ -871,6 +924,14 @@ CONTAINS
           write(6,'(a,es11.4)')'  Data range: '//trim(drange%var)//' '//&
              &trim(drange%op)//' ',drange%thres
         end select
+        write(6,'(a)',advance='no')'  Use 1/dy^2 weights in Monte Carlo: '
+        if(mcparams%weighted)then
+          write(6,'(a)')'yes'
+        else
+          write(6,'(a)')'no'
+        endif
+        write(6,'(a)')'  Number of Monte Carlo samples: '//&
+           &trim(i2s(mcparams%nsample))
         write(6,'()')
         select case(ndataset)
         case(0)
@@ -906,7 +967,7 @@ CONTAINS
         enddo ! i
         write(6,'()')
         write(6,'(a)')'Fit function:'
-        write(6,'(2x,a)')trim(print_poly_sym(fit%npoly,fit%pow,fit%x0))
+        write(6,'(2x,a)')trim(print_poly_sym(fit%npoly,fit%pow,fit%X0))
         write(6,'(a)',advance='no')'  Shared coefficients:'
         if(.not.any(fit%share))then
           write(6,'(a)')' none'
@@ -916,6 +977,7 @@ CONTAINS
           enddo ! i
           write(6,'()')
         endif
+        write(6,'("  X0 = ",a," =",es12.4)')trim(fit%x0_string),fit%X0
         write(6,'()')
 
       case('help')
@@ -1211,7 +1273,7 @@ CONTAINS
       endif
     end select
 
-    ! Create masked dataset.
+    ! Create masked transformed dataset.
     allocate(xy)
     xy%nxy=count(mask)
     xy%have_dx=dset%txy%have_dx
@@ -1229,20 +1291,99 @@ CONTAINS
   END SUBROUTINE refresh_dataset
 
 
-  SUBROUTINE show_multipoly(ndataset,datasets,fit)
+  SUBROUTINE refresh_fit(ndataset,datasets,fit)
+    !------------------------------------------------!
+    ! Refresh value of X0 in fit following change to !
+    ! X0_string, range or loaded data.               !
+    !------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: ndataset
+    TYPE(dataset),INTENT(in) :: datasets(ndataset)
+    TYPE(fit_params),POINTER :: fit
+    INTEGER iset,tot_nxy,ixy
+    DOUBLE PRECISION t1,tx0
+    DOUBLE PRECISION,ALLOCATABLE :: x(:),y(:)
+
+    select case(trim(fit%X0_string))
+
+    case('left','right','max','min','centre','mean','median')
+      ! Build combined dataset.
+      tot_nxy=0
+      do iset=1,ndataset
+        tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
+      enddo ! iset
+      allocate(x(tot_nxy),y(tot_nxy))
+      tot_nxy=0
+      do iset=1,ndataset
+        if(datasets(iset)%rtxy%nxy==0)cycle
+        x(tot_nxy+1:tot_nxy+datasets(iset)%rtxy%nxy)=&
+           &datasets(iset)%rtxy%x(1:datasets(iset)%rtxy%nxy)
+        y(tot_nxy+1:tot_nxy+datasets(iset)%rtxy%nxy)=&
+           &datasets(iset)%rtxy%y(1:datasets(iset)%rtxy%nxy)
+        tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
+      enddo ! iset
+
+      ! Locate X0.
+      select case(trim(fit%X0_string))
+      case('left')
+        tx0=minval(x)
+      case('right')
+        tx0=maxval(x)
+      case('min')
+        t1=0.d0
+        tx0=0.d0
+        do ixy=1,tot_nxy
+          if(ixy==1.or.y(ixy)<t1)then
+            t1=y(ixy)
+            tx0=x(ixy)
+          endif
+        enddo ! ixy
+      case('max')
+        t1=0.d0
+        tx0=0.d0
+        do ixy=1,tot_nxy
+          if(ixy==1.or.y(ixy)>t1)then
+            t1=y(ixy)
+            tx0=x(ixy)
+          endif
+        enddo ! ixy
+      case('centre')
+        tx0=.5d0*(minval(x)+maxval(x))
+      case('mean')
+        tx0=sum(x)/dble(tot_nxy)
+      case('median')
+        tx0=median(tot_nxy,x)
+      end select
+
+      ! Clean up.
+      deallocate(x,y)
+
+    case default
+      ! Parse real number.
+      read(fit%x0_string,*)t1
+      tx0=t1
+    end select
+
+    ! Update X0.
+    fit%X0=tx0
+
+  END SUBROUTINE refresh_fit
+
+
+  SUBROUTINE show_multipoly(ndataset,datasets,drange,fit,mcparams)
     !--------------------------------!
     ! Perform chosen fit and report. !
     !--------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: ndataset
-    TYPE(dataset),POINTER :: datasets(:)
-    TYPE(fit_params),POINTER :: fit
-    LOGICAL weighted
+    TYPE(dataset),INTENT(in) :: datasets(ndataset)
+    TYPE(range_def),INTENT(in) :: drange
+    TYPE(fit_params),INTENT(in) :: fit
+    TYPE(monte_carlo_params),INTENT(in) :: mcparams
+    TYPE(eval_def) deval
     INTEGER tot_nparam,tot_nxy,iset,i
-    DOUBLE PRECISION chi2
+    DOUBLE PRECISION chi2,chi2err
     DOUBLE PRECISION,ALLOCATABLE :: a(:,:),da(:,:)
-
-    ! FIXME - print user-selected function of fit.
 
     ! Initialize.
     tot_nparam=count(fit%share)+ndataset*count(.not.fit%share)
@@ -1250,42 +1391,41 @@ CONTAINS
     do iset=1,ndataset
       tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
     enddo ! iset
-    weighted=datasets(1)%rtxy%have_dx.or.datasets(1)%rtxy%have_dy
 
     ! Allocate space for fit parameters.
     allocate(a(fit%npoly,ndataset),da(fit%npoly,ndataset))
 
     ! Perform fit.
-    call perform_multifit(ndataset,datasets,fit,weighted,chi2,a,da)
+    deval%nderiv=0
+    deval%rel=.false.
+    deval%var='X'
+    deval%n=0
+    call eval_multifit_monte_carlo(ndataset,datasets,drange,fit,mcparams,&
+       &deval,chi2=chi2,chi2err=chi2err,amean=a,aerr=da)
 
     ! Print fit coefficients.
     do iset=1,ndataset
       write(6,'(a)')'Set #'//trim(i2s(iset))//':'
       write(6,'(a)')'  Fit parameters:'
-      if(weighted)then
-        do i=1,fit%npoly
-          write(6,'(4x,a," = ",es24.16," +/- ",es24.16)')'k'//trim(i2s(i)),&
-             &a(i,iset),da(i,iset)
-        enddo ! i
-      else
-        do i=1,fit%npoly
-          write(6,'(4x,a," = ",es24.16)')'k'//trim(i2s(i)),a(i,iset)
-        enddo ! i
-      endif ! weighted
+      do i=1,fit%npoly
+        write(6,'(4x,a," = ",es24.16," +/- ",es24.16)')'k'//trim(i2s(i)),&
+           &a(i,iset),da(i,iset)
+      enddo ! i
       ! Write out fitted polynomial.
       ! NB, this is good for pasting into xmgrace, but xmgrace has a string
       ! length limit of 256 characters.
       write(6,'(a)')'  Fitted polynomial:'
       write(6,'(a)')'    '//trim(print_poly_num(fit%npoly,fit%pow,a(:,iset),&
-         &fit%x0))
+         &fit%X0))
       write(6,'()')
     enddo ! iset
 
     ! Report chi-squared.
     write(6,'(a)')'Fit assessment:'
-    write(6,'(a,es12.4)')'  chi^2     = ',chi2
-    if(tot_nxy>tot_nparam)write(6,'(a,es12.4)')'  chi^2/Ndf = ',&
-       &chi2/dble(tot_nxy-tot_nparam)
+    write(6,'(a,es20.12," +/- ",es20.12)')'  chi^2     = ',chi2,chi2err
+    if(tot_nxy>tot_nparam)write(6,'(a,es20.12," +/- ",es20.12)')&
+       &'  chi^2/Ndf = ',chi2/dble(tot_nxy-tot_nparam),&
+       &chi2err/dble(tot_nxy-tot_nparam)
     write(6,'()')
 
     ! Clean up.
@@ -1294,7 +1434,7 @@ CONTAINS
   END SUBROUTINE show_multipoly
 
 
-  SUBROUTINE assess_fit(ndataset,datasets,drange,fit,deval,eval_iset)
+  SUBROUTINE assess_fit(ndataset,datasets,drange,fit,mcparams,deval,eval_iset)
     !------------------------------------------------!
     ! Test convergence of chi^2/Ndf as a function of !
     ! expansion order.                               !
@@ -1304,22 +1444,18 @@ CONTAINS
     TYPE(dataset),POINTER :: datasets(:)
     TYPE(range_def),INTENT(in) :: drange
     TYPE(fit_params),INTENT(in) :: fit
+    TYPE(monte_carlo_params),INTENT(in) :: mcparams
     TYPE(eval_def),INTENT(in) :: deval
     INTEGER,INTENT(in) :: eval_iset
     TYPE(fit_params),POINTER :: tfit=>null()
-    LOGICAL weighted
-    INTEGER tot_nxy,tot_nparam,iset,npoly,nrandom,ix
-    DOUBLE PRECISION chi2
-    DOUBLE PRECISION,ALLOCATABLE :: a(:,:),da(:,:),fmean(:,:),ferr(:,:)
-
-    ! FIXME - expose these parameters.
-    nrandom=10000
+    INTEGER tot_nxy,tot_nparam,iset,npoly,ix
+    DOUBLE PRECISION chi2,chi2err
+    DOUBLE PRECISION,ALLOCATABLE :: fmean(:,:),ferr(:,:)
 
     ! Initialize.
     allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset))
 
     ! Prepare combined dataset arrays.
-    weighted=datasets(1)%rtxy%have_dx.or.datasets(1)%rtxy%have_dy
     tot_nxy=0
     do iset=1,ndataset
       tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
@@ -1327,7 +1463,8 @@ CONTAINS
 
     ! Loop over expansion orders.
     write(6,'()')
-    write(6,'(2x,a5,1x,1(1x,a12))',advance='no')'Order','chi^2/Ndf'
+    write(6,'(2x,a5,1x,2(1x,a12))',advance='no')'Order','chi^2/Ndf',&
+       &'dchi^2/Ndf'
     do ix=1,deval%n
       do iset=1,ndataset
         if(eval_iset==0.or.eval_iset==iset)write(6,'(2(1x,a12))',advance='no')&
@@ -1337,11 +1474,11 @@ CONTAINS
     enddo ! ix
     write(6,'()')
     if(eval_iset==0)then
-      write(6,'(2x,'//trim(i2s(19+26*deval%n*ndataset))//'("-"))')
+      write(6,'(2x,'//trim(i2s(32+26*deval%n*ndataset))//'("-"))')
     elseif(eval_iset>0.and.eval_iset<ndataset)then
-      write(6,'(2x,'//trim(i2s(19+26*deval%n))//'("-"))')
+      write(6,'(2x,'//trim(i2s(32+26*deval%n))//'("-"))')
     else
-      write(6,'(2x,'//trim(i2s(19))//'("-"))')
+      write(6,'(2x,'//trim(i2s(32))//'("-"))')
     endif
     do npoly=1,fit%npoly
       ! Allocate work arrays.
@@ -1350,16 +1487,16 @@ CONTAINS
       allocate(tfit%pow(npoly),tfit%share(npoly))
       tfit%pow=fit%pow(1:npoly)
       tfit%share=fit%share(1:npoly)
-      allocate(a(npoly,ndataset),da(npoly,ndataset))
+      tfit%X0_string=fit%X0_string
+      call refresh_fit(ndataset,datasets,tfit)
       ! Adjust counters.
       tot_nparam=count(tfit%share)+ndataset*count(.not.tfit%share)
       if(tot_nparam<tot_nxy)then
         ! Perform fit and report.
-        call perform_multifit(ndataset,datasets,tfit,weighted,chi2,a,da)
-        call eval_multifit_monte_carlo(ndataset,datasets,drange,tfit,nrandom,&
-           &deval,fmean,ferr)
-        write(6,'(2x,i5,2x,es12.4)',advance='no')npoly-1,&
-           &chi2/dble(tot_nxy-tot_nparam)
+        call eval_multifit_monte_carlo(ndataset,datasets,drange,tfit,mcparams,&
+           &deval,fmean,ferr,chi2,chi2err)
+        write(6,'(2x,i5,1x,2(1x,es12.4))',advance='no')npoly-1,&
+           &chi2/dble(tot_nxy-tot_nparam),chi2err/dble(tot_nxy-tot_nparam)
         do ix=1,deval%n
           do iset=1,ndataset
             if(eval_iset==0.or.eval_iset==iset)write(6,'(2(1x,es12.4))',&
@@ -1369,24 +1506,23 @@ CONTAINS
         write(6,'()')
       endif
       ! Destroy work arrays.
-      deallocate(a,da)
       deallocate(tfit%pow,tfit%share)
       deallocate(tfit)
       nullify(tfit)
     enddo ! npoly
     if(eval_iset==0)then
-      write(6,'(2x,'//trim(i2s(19+26*deval%n*ndataset))//'("-"))')
+      write(6,'(2x,'//trim(i2s(32+26*deval%n*ndataset))//'("-"))')
     elseif(eval_iset>0.and.eval_iset<ndataset)then
-      write(6,'(2x,'//trim(i2s(19+26*deval%n))//'("-"))')
+      write(6,'(2x,'//trim(i2s(32+26*deval%n))//'("-"))')
     else
-      write(6,'(2x,'//trim(i2s(19))//'("-"))')
+      write(6,'(2x,'//trim(i2s(32))//'("-"))')
     endif
     write(6,'()')
 
   END SUBROUTINE assess_fit
 
 
-  SUBROUTINE assess_range(ndataset,datasets,fit,deval,eval_iset)
+  SUBROUTINE assess_range(ndataset,datasets,fit,mcparams,deval,eval_iset)
     !------------------------------------------------!
     ! Test convergence of chi^2/Ndf as a function of !
     ! number of data points.                         !
@@ -1395,27 +1531,24 @@ CONTAINS
     INTEGER,INTENT(in) :: ndataset
     TYPE(dataset),INTENT(in) :: datasets(:)
     TYPE(fit_params),POINTER :: fit
+    TYPE(monte_carlo_params),INTENT(in) :: mcparams
     TYPE(eval_def),INTENT(in) :: deval
     INTEGER,INTENT(in) :: eval_iset
     TYPE(dataset),POINTER :: tdatasets(:)
     TYPE(xydata),POINTER :: xy=>null()
     TYPE(range_def) drange
-    LOGICAL weighted
-    INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,nrandom,ix
+    INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,ix
     INTEGER,ALLOCATABLE :: indx(:)
-    DOUBLE PRECISION chi2
-    DOUBLE PRECISION,ALLOCATABLE :: txall(:),txgrid(:),a(:,:),da(:,:),&
-       &fmean(:,:),ferr(:,:)
+    DOUBLE PRECISION chi2,chi2err
+    DOUBLE PRECISION,ALLOCATABLE :: txall(:),txgrid(:),fmean(:,:),ferr(:,:)
 
     ! FIXME - expose these parameters.
     drange%var='X'
     drange%op='<='
     drange%size=0
-    nrandom=10000
 
     ! Initialize.
     allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset))
-    weighted=datasets(1)%rtxy%have_dx.or.datasets(1)%rtxy%have_dy
     tot_nparam=count(fit%share)+ndataset*count(.not.fit%share)
 
     ! Compute grid.
@@ -1460,12 +1593,10 @@ CONTAINS
       nullify(xy)
     enddo ! iset
 
-    ! Allocate work arrays.
-    allocate(a(fit%npoly,ndataset),da(fit%npoly,ndataset))
-
     ! Loop over data to remove.
     write(6,'()')
-    write(6,'(2x,a5,1x,1(1x,a12))',advance='no')'Ndata','chi^2/Ndf'
+    write(6,'(2x,a5,1x,2(1x,a12))',advance='no')'Ndata','chi^2/Ndf',&
+       &'dchi^2/Ndf'
     do ix=1,deval%n
       do iset=1,ndataset
         if(eval_iset==0.or.eval_iset==iset)write(6,'(2(1x,a12))',advance='no')&
@@ -1475,11 +1606,11 @@ CONTAINS
     enddo ! ix
     write(6,'()')
     if(eval_iset==0)then
-      write(6,'(2x,'//trim(i2s(19+26*deval%n*ndataset))//'("-"))')
+      write(6,'(2x,'//trim(i2s(32+26*deval%n*ndataset))//'("-"))')
     elseif(eval_iset>0.and.eval_iset<ndataset)then
-      write(6,'(2x,'//trim(i2s(19+26*deval%n))//'("-"))')
+      write(6,'(2x,'//trim(i2s(32+26*deval%n))//'("-"))')
     else
-      write(6,'(2x,'//trim(i2s(19))//'("-"))')
+      write(6,'(2x,'//trim(i2s(32))//'("-"))')
     endif
     do igrid=ngrid,1,-1
       ! Apply range.
@@ -1491,11 +1622,10 @@ CONTAINS
       enddo ! iset
       if(tot_nparam<tot_nxy)then
         ! Perform fit and report.
-        call perform_multifit(ndataset,tdatasets,fit,weighted,chi2,a,da)
-        call eval_multifit_monte_carlo(ndataset,tdatasets,drange,fit,nrandom,&
-           &deval,fmean,ferr)
-        write(6,'(2x,i5,2x,es12.4)',advance='no')tot_nxy,&
-           &chi2/dble(tot_nxy-tot_nparam)
+        call eval_multifit_monte_carlo(ndataset,tdatasets,drange,fit,mcparams,&
+           &deval,fmean,ferr,chi2,chi2err)
+        write(6,'(2x,i5,1x,2(1x,es12.4))',advance='no')tot_nxy,&
+           &chi2/dble(tot_nxy-tot_nparam),chi2err/dble(tot_nxy-tot_nparam)
         do ix=1,deval%n
           do iset=1,ndataset
             if(eval_iset==0.or.eval_iset==iset)write(6,'(2(1x,es12.4))',&
@@ -1506,16 +1636,15 @@ CONTAINS
       endif
     enddo ! igrid
     if(eval_iset==0)then
-      write(6,'(2x,'//trim(i2s(19+26*deval%n*ndataset))//'("-"))')
+      write(6,'(2x,'//trim(i2s(32+26*deval%n*ndataset))//'("-"))')
     elseif(eval_iset>0.and.eval_iset<ndataset)then
-      write(6,'(2x,'//trim(i2s(19+26*deval%n))//'("-"))')
+      write(6,'(2x,'//trim(i2s(32+26*deval%n))//'("-"))')
     else
-      write(6,'(2x,'//trim(i2s(19))//'("-"))')
+      write(6,'(2x,'//trim(i2s(32))//'("-"))')
     endif
     write(6,'()')
 
     ! Clean up.
-    deallocate(a,da)
     do iset=1,ndataset
       deallocate(tdatasets(iset)%xy%x,tdatasets(iset)%xy%dx,&
          &tdatasets(iset)%xy%y,tdatasets(iset)%xy%dy)
@@ -1533,7 +1662,7 @@ CONTAINS
   END SUBROUTINE assess_range
 
 
-  SUBROUTINE assess_fit_range(ndataset,datasets,fit,deval,eval_iset)
+  SUBROUTINE assess_fit_range(ndataset,datasets,fit,mcparams,deval,eval_iset)
     !------------------------------------------------!
     ! Test convergence of chi^2/Ndf as a function of !
     ! expansion order and number of data points.     !
@@ -1542,29 +1671,25 @@ CONTAINS
     INTEGER,INTENT(in) :: ndataset
     TYPE(dataset),POINTER :: datasets(:)
     TYPE(fit_params),POINTER :: fit
+    TYPE(monte_carlo_params),INTENT(in) :: mcparams
     TYPE(eval_def),INTENT(in) :: deval
     INTEGER,INTENT(in) :: eval_iset
     TYPE(dataset),POINTER :: tdatasets(:)
     TYPE(xydata),POINTER :: xy=>null()
     TYPE(range_def) drange
     TYPE(fit_params),POINTER :: tfit=>null()
-    LOGICAL weighted
-    INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,npoly,nrandom,ix
+    INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,npoly,ix
     INTEGER,ALLOCATABLE :: indx(:)
-    DOUBLE PRECISION chi2
-    DOUBLE PRECISION,ALLOCATABLE :: txall(:),txgrid(:),a(:,:),da(:,:),&
-       &fmean(:,:),ferr(:,:)
-
+    DOUBLE PRECISION chi2,chi2err
+    DOUBLE PRECISION,ALLOCATABLE :: txall(:),txgrid(:),fmean(:,:),ferr(:,:)
 
     ! FIXME - expose these parameters.
     drange%var='X'
     drange%op='<='
     drange%size=0
-    nrandom=10000
 
     ! Initialize.
     allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset))
-    weighted=datasets(1)%rtxy%have_dx.or.datasets(1)%rtxy%have_dy
 
     ! Compute grid.
     tot_nxy=0
@@ -1610,8 +1735,8 @@ CONTAINS
 
     ! Loop over data to remove.
     write(6,'()')
-    write(6,'(2x,a5,2x,a5,1x,1(1x,a12))',advance='no')'Ndata','Order',&
-       &'chi^2/Ndf'
+    write(6,'(2x,a5,2x,a5,1x,2(1x,a12))',advance='no')'Ndata','Order',&
+       &'chi^2/Ndf','dchi^2/Ndf'
     do ix=1,deval%n
       do iset=1,ndataset
         if(eval_iset==0.or.eval_iset==iset)write(6,'(2(1x,a12))',advance='no')&
@@ -1621,11 +1746,11 @@ CONTAINS
     enddo ! ix
     write(6,'()')
     if(eval_iset==0)then
-      write(6,'(2x,'//trim(i2s(26+26*deval%n*ndataset))//'("-"))')
+      write(6,'(2x,'//trim(i2s(39+26*deval%n*ndataset))//'("-"))')
     elseif(eval_iset>0.and.eval_iset<ndataset)then
-      write(6,'(2x,'//trim(i2s(26+26*deval%n))//'("-"))')
+      write(6,'(2x,'//trim(i2s(39+26*deval%n))//'("-"))')
     else
-      write(6,'(2x,'//trim(i2s(26))//'("-"))')
+      write(6,'(2x,'//trim(i2s(39))//'("-"))')
     endif
     do igrid=ngrid,1,-1
       ! Apply range.
@@ -1646,16 +1771,17 @@ CONTAINS
         allocate(tfit%pow(npoly),tfit%share(npoly))
         tfit%pow=fit%pow(1:npoly)
         tfit%share=fit%share(1:npoly)
-        allocate(a(npoly,ndataset),da(npoly,ndataset))
+        tfit%X0_string=fit%X0_string
+        call refresh_fit(ndataset,tdatasets,tfit)
         ! Adjust counters.
         tot_nparam=count(tfit%share)+ndataset*count(.not.tfit%share)
         if(tot_nparam<tot_nxy)then
           ! Perform fit and report.
-          call perform_multifit(ndataset,tdatasets,tfit,weighted,chi2,a,da)
           call eval_multifit_monte_carlo(ndataset,tdatasets,drange,tfit,&
-             &nrandom,deval,fmean,ferr)
-          write(6,'(2x,i5,2x,i5,2x,es12.4)',advance='no')tot_nxy,npoly-1,&
-             &chi2/dble(tot_nxy-tot_nparam)
+             &mcparams,deval,fmean,ferr,chi2,chi2err)
+          write(6,'(2x,i5,2x,i5,1x,2(1x,es12.4))',advance='no')&
+             &tot_nxy,npoly-1,&
+             &chi2/dble(tot_nxy-tot_nparam),chi2err/dble(tot_nxy-tot_nparam)
           do ix=1,deval%n
             do iset=1,ndataset
               if(eval_iset==0.or.eval_iset==iset)write(6,'(2(1x,es12.4))',&
@@ -1665,18 +1791,17 @@ CONTAINS
           write(6,'()')
         endif
         ! Destroy work arrays.
-        deallocate(a,da)
         deallocate(tfit%pow,tfit%share)
         deallocate(tfit)
         nullify(tfit)
       enddo ! npoly
     enddo ! nxy
     if(eval_iset==0)then
-      write(6,'(2x,'//trim(i2s(26+26*deval%n*ndataset))//'("-"))')
+      write(6,'(2x,'//trim(i2s(39+26*deval%n*ndataset))//'("-"))')
     elseif(eval_iset>0.and.eval_iset<ndataset)then
-      write(6,'(2x,'//trim(i2s(26+26*deval%n))//'("-"))')
+      write(6,'(2x,'//trim(i2s(39+26*deval%n))//'("-"))')
     else
-      write(6,'(2x,'//trim(i2s(26))//'("-"))')
+      write(6,'(2x,'//trim(i2s(39))//'("-"))')
     endif
     write(6,'()')
 
@@ -1710,7 +1835,7 @@ CONTAINS
 
     ! Print stats.
     write(6,'()')
-    write(6,'(a)')'Data-range statistics (ignoring user provided range):'
+    write(6,'(a)')'Data-range statistics (ignoring user-provided range):'
     write(6,'()')
     write(6,'(2x,a3,1x,a4,5(1x,a12))')'var','set','min','mean','median',&
        &'centre','max'
@@ -1763,7 +1888,7 @@ CONTAINS
   END SUBROUTINE report_statistics
 
 
-  SUBROUTINE evaluate_fit(ndataset,datasets,fit,drange,deval)
+  SUBROUTINE evaluate_fit(ndataset,datasets,fit,mcparams,drange,deval)
     !-------------------------------------------------!
     ! Evaluate value or derivative of fit at provided !
     ! points.                                         !
@@ -1772,19 +1897,16 @@ CONTAINS
     INTEGER,INTENT(in) :: ndataset
     TYPE(dataset),INTENT(in) :: datasets(ndataset)
     TYPE(fit_params),INTENT(in) :: fit
+    TYPE(monte_carlo_params),INTENT(in) :: mcparams
     TYPE(range_def),INTENT(in) :: drange
     TYPE(eval_def),INTENT(in) :: deval
-    INTEGER nrandom,iset,ix
+    INTEGER iset,ix
     DOUBLE PRECISION,ALLOCATABLE :: fmean(:,:),ferr(:,:)
 
-    ! FIXME - expose these parameters.
-    nrandom=10000
-
-    allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset))
-
     ! Evaluate.
-    call eval_multifit_monte_carlo(ndataset,datasets,drange,fit,&
-       &nrandom,deval,fmean,ferr)
+    allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset))
+    call eval_multifit_monte_carlo(ndataset,datasets,drange,fit,mcparams,&
+       &deval,fmean,ferr)
 
     ! Report.
     write(6,'()')
@@ -1798,74 +1920,9 @@ CONTAINS
     enddo ! iset
     write(6,'(2x,56("-"))')
     write(6,'()')
+    deallocate(fmean,ferr)
 
   END SUBROUTINE evaluate_fit
-
-
-  !SUBROUTINE ask_centre(nxy,tx,ty,tx0)
-  !  !------------------------------------------!
-  !  ! Ask the user to set offsets for the fit. !
-  !  !------------------------------------------!
-  !  IMPLICIT NONE
-  !  INTEGER,INTENT(in) :: nxy
-  !  DOUBLE PRECISION,INTENT(in) :: tx(nxy),ty(nxy)
-  !  DOUBLE PRECISION,INTENT(inout) :: tx0
-  !  CHARACTER(2048) char2048
-  !  DOUBLE PRECISION t1
-  !  INTEGER i,ierr
-
-  !  ! Get fit centre X0.
-  !  write(6,*)'Current fit centre X0 = ',tx0
-  !  write(6,*)'Enter new centre or left/mean/median/centre/right or min/max:'
-  !  read(5,'(a)',iostat=ierr)char2048
-  !  write(6,*)
-  !  if(ierr==0)then
-  !    char2048=adjustl(char2048)
-  !    select case(trim(char2048))
-  !    case('left')
-  !      tx0=minval(tx)
-  !    case('right')
-  !      tx0=maxval(tx)
-  !    case('min')
-  !      do i=1,nxy
-  !        if(abs(ty(i)-minval(ty))<tol_zero)then
-  !          tx0=tx(i)
-  !          exit
-  !        endif
-  !      enddo
-  !    case('max')
-  !      do i=1,nxy
-  !        if(abs(ty(i)-maxval(ty))<tol_zero)then
-  !          tx0=tx(i)
-  !          exit
-  !        endif
-  !      enddo
-  !    case('centre')
-  !      tx0=.5d0*(minval(tx)+maxval(tx))
-  !    case('mean')
-  !      tx0=sum(tx)/dble(nxy)
-  !    case('median')
-  !      tx0=median(nxy,tx)
-  !    case('')
-  !      ierr=1
-  !    case default
-  !      read(char2048,*,iostat=ierr)t1
-  !      if(ierr==0)then
-  !        tx0=t1
-  !      else
-  !      endif
-  !    end select
-  !  endif
-
-  !  ! Report.
-  !  if(ierr==0)then
-  !    write(6,*)'Set X0 = ',tx0
-  !  else
-  !    write(6,*)'Keeping X0 = ',tx0
-  !  endif
-  !  write(6,*)
-
-  !END SUBROUTINE ask_centre
 
 
   SUBROUTINE scale_transform(nxy,itransfx,x,tx,have_dx,dx,dtx)
@@ -1895,93 +1952,6 @@ CONTAINS
       if(have_dx.and.present(dx).and.present(dtx))dtx=dx*tx
     end select
   END SUBROUTINE scale_transform
-
-
-  !SUBROUTINE plot_exporder(nxy,have_dx,have_dy,x,y,dx,dy,x0)
-  !  !-----------------------------------------------------!
-  !  ! Plot polynomial fits of different expansion orders. !
-  !  !-----------------------------------------------------!
-  !  IMPLICIT NONE
-  !  INTEGER,INTENT(in) :: nxy
-  !  LOGICAL,INTENT(in) :: have_dx,have_dy
-  !  DOUBLE PRECISION,INTENT(in) :: x(nxy),y(nxy),dx(nxy),dy(nxy),x0
-  !  DOUBLE PRECISION,ALLOCATABLE :: pow(:),a(:),da(:)
-  !  DOUBLE PRECISION weight(nxy),xrange,xplot,dxplot
-  !  INTEGER npoly,i,ierr
-  !  LOGICAL weighted
-  !  ! Parameters.
-  !  INTEGER,PARAMETER :: npoint=1000
-  !  INTEGER,PARAMETER :: io=10
-
-  !  ! Evaluate transformed variables and fit weights.
-  !  if(have_dx.and.have_dy)then
-  !    weight=1.d0/(dx*dy)**2
-  !  elseif(have_dx)then
-  !    weight=1.d0/dx**2
-  !  elseif(have_dy)then
-  !    weight=1.d0/dy**2
-  !  else
-  !    weight=1.d0
-  !  endif
-  !  weighted=have_dx.or.have_dy
-
-  !  ! Prepare to write plot.
-  !  xrange=maxval(x)-minval(x)
-  !  dxplot=(xrange*2.d0)/dble(npoint)
-  !  open(unit=io,file='poly_orders.dat',status='replace')
-
-  !  ! Plot original data.
-  !  if(have_dx.and.have_dy)then
-  !    write(io,'(a)')'@type xydxdy'
-  !    do i=1,nxy
-  !      write(io,*)x(i),y(i),dx(i),dy(i)
-  !    enddo ! i
-  !  elseif(have_dx)then
-  !    write(io,'(a)')'@type xydx'
-  !    do i=1,nxy
-  !      write(io,*)x(i),y(i),dx(i)
-  !    enddo ! i
-  !  elseif(have_dy)then
-  !    write(io,'(a)')'@type xydy'
-  !    do i=1,nxy
-  !      write(io,*)x(i),y(i),dy(i)
-  !    enddo ! i
-  !  else
-  !    write(io,'(a)')'@type xy'
-  !    do i=1,nxy
-  !      write(io,*)x(i),y(i)
-  !    enddo ! i
-  !  endif
-  !  write(io,'(a)')'&'
-
-  !  ! Loop over expansion orders.
-  !  do npoly=1,min(nxy-1,9)
-  !    write(io,'(a)')'@type xy'
-  !    ! Prepare for fit.
-  !    allocate(pow(npoly),a(npoly),da(npoly),stat=ierr)
-  !    if(ierr/=0)call quit('Allocation error.')
-  !    do i=1,npoly
-  !      pow(i)=dble(i-1)
-  !    enddo ! i
-  !    ! Perform fit.
-  !    call perform_fit(nxy,npoly,x-x0,y,pow,a,weighted,weight,da)
-  !    ! Dump plot.
-  !    xplot=minval(x)-0.5d0*xrange
-  !    do i=0,npoint
-  !      write(io,*)xplot+x0,eval_poly(npoly,pow,a,xplot)
-  !      xplot=xplot+dxplot
-  !    enddo ! i
-  !    ! Clean up after fit.
-  !    deallocate(pow,a,da)
-  !    write(io,'(a)')'&'
-  !  enddo ! npoly
-
-  !  ! Close file and report.
-  !  close(io)
-  !  write(6,*)'Data written to poly_orders.dat.'
-  !  write(6,*)
-
-  !END SUBROUTINE plot_exporder
 
 
   !SUBROUTINE show_dual_assessment(nxy,have_dx,have_dy,x,y,dx,dy,itransfx,&
@@ -2231,380 +2201,7 @@ CONTAINS
   !END SUBROUTINE show_dual_assessment
 
 
-  SUBROUTINE eval_fit_values_derivs(nxy,have_dx,have_dy,x,y,dx,dy,&
-     &itransfx,itransfy,tx,ty,tx0,npoly,pow)
-    !--------------------------------------------------!
-    ! Evaluate values, first and second derivatives of !
-    ! fit at user-requested points.                    !
-    !--------------------------------------------------!
-    IMPLICIT NONE
-    INTEGER,INTENT(in) :: nxy,itransfx,itransfy,npoly
-    LOGICAL,INTENT(in) :: have_dx,have_dy
-    DOUBLE PRECISION,INTENT(in) :: x(nxy),y(nxy),dx(nxy),dy(nxy),&
-       &tx(nxy),ty(nxy),tx0,pow(npoly)
-    ! Fit parameters.
-    DOUBLE PRECISION a(npoly)
-    ! Polynomials resulting from operations on fitting polynomial.
-    INTEGER op_npoly
-    DOUBLE PRECISION op_pow(npoly),op_a(npoly)
-    ! Random sampling variables.
-    INTEGER nrandom,nx
-    DOUBLE PRECISION grid_tx1,grid_tx2
-    DOUBLE PRECISION, ALLOCATABLE :: fmean(:),ferr(:),fmean_1s(:),ferr_1s(:),&
-       &fmean_2s(:),ferr_2s(:),fmed(:),fskew(:),fkurt(:)
-    DOUBLE PRECISION,ALLOCATABLE :: tx_target(:)
-    ! Misc local variables.
-    CHARACTER(40) set_label,xprint
-    CHARACTER(256) fname
-    CHARACTER(2048) char2048
-    INTEGER i,nderiv,ierr,ix,ipos
-    LOGICAL untransformed,eval_relative
-    DOUBLE PRECISION t1
-    ! Parameters.
-    INTEGER,PARAMETER :: DEFAULT_NRANDOM=100000
-    INTEGER,PARAMETER :: io=10
-
-    ! Initialize.
-    nrandom=DEFAULT_NRANDOM
-    nderiv=0
-    set_label='f'
-    eval_relative=.false.
-
-    ! Loop over user actions.
-    do
-
-      ! Print list of actions.
-      write(6,*)'-------------'
-      write(6,*)'Post-fit menu'
-      write(6,*)'-------------'
-      write(6,*)'Available actions:'
-      if(have_dx.or.have_dy)write(6,*)'[m] Set number of Monte Carlo &
-         &samples ['//trim(i2s(nrandom))//']'
-      write(6,*)'[d] Set derivative order (0 for value) ['//&
-         &trim(i2s(nderiv))//']'
-      write(6,*)'[r] Toggle evaluation relative to value at X=0 [',&
-         &eval_relative,']'
-      write(6,*)'[v] Show fit value at one point x'
-      write(6,*)'[V] Show fit value at one point X'
-      write(6,*)'[p] Plot fit values at several x'
-      write(6,*)'[P] Plot fit values at several X'
-      write(6,*)'[q] Return to previous menu'
-      write(6,*)
-
-      ! Read user choice.
-      write(6,*)'Enter one of the above options:'
-      read(5,'(a)',iostat=ierr)char2048
-      if(ierr/=0)char2048='q'
-      write(6,*)
-
-      ! Perform selected action.
-      nx=0
-      select case(trim(adjustl(char2048)))
-      case('m')
-        if(.not.(have_dx.or.have_dy))then
-          write(6,*)'Action not available for data without error bars.'
-          write(6,*)
-          cycle
-        endif
-        write(6,*)'Enter number of Monte Carlo samples ['//&
-           &trim(i2s(nrandom))//']:'
-        read(5,'(a)',iostat=ierr)char2048
-        if(ierr/=0)return
-        write(6,*)
-        char2048=adjustl(char2048)
-        if(trim(char2048)/='')then
-          read(char2048,*,iostat=ierr)i
-          if(ierr==0)then
-            if(i<10)then
-              write(6,*)'Number of random points must be => 10.'
-              write(6,*)
-            else
-              nrandom=i
-            endif
-          endif
-        endif
-      case('d')
-        write(6,*)'Enter derivative order ['//trim(i2s(nderiv))//']:'
-        read(5,'(a)',iostat=ierr)char2048
-        if(ierr/=0)return
-        write(6,*)
-        char2048=adjustl(char2048)
-        if(trim(char2048)/='')then
-          read(char2048,*,iostat=ierr)i
-          if(ierr==0)then
-            if(i<0)then
-              write(6,*)'Derivative order must be non-negative.'
-              write(6,*)
-            else
-              nderiv=i
-              if(nderiv==0)then
-                set_label='f'
-              elseif(nderiv==1)then
-                set_label='df/dX'
-              else
-                set_label='d'//trim(i2s(nderiv))//'f_dX'//trim(i2s(nderiv))
-              endif
-            endif
-          endif
-        endif
-      case('r')
-        eval_relative=.not.eval_relative
-      case('v','V')
-        untransformed=trim(char2048)=='v'
-        if(untransformed)then
-          write(6,*)'Enter (untransformed) x value to evaluate the fit at:'
-        else
-          write(6,*)'Enter (transformed) X value to evaluate the fit at:'
-        endif
-        read(5,'(a)',iostat=ierr)char2048
-        if(ierr/=0)exit
-        write(6,*)
-        read(char2048,*,iostat=ierr)t1
-        if(ierr/=0)cycle
-        nx=1
-        allocate(tx_target(nx),stat=ierr)
-        if(ierr/=0)call quit('Allocation error.')
-        tx_target(1)=t1
-        if(untransformed)call scale_transform(1,itransfx,tx_target,tx_target,&
-           &.false.)
-      case('p')
-        untransformed=trim(char2048)=='v'
-        if(untransformed)then
-          write(6,*)'Enter (untransformed) x values to plot at &
-             &[space-separated list of x values,'
-          write(6,*)'or <x1>:<x2>:<n> for a grid, or blank for x of source &
-             &data]:'
-        else
-          write(6,*)'Enter (transformed) X values to plot at [space-separated &
-             &list of X values,'
-          write(6,*)'or <X1>:<X2>:<n> for a grid, or blank for X of source &
-             &data]:'
-        endif
-        nx=0
-        read(5,'(a)',iostat=ierr)char2048
-        if(ierr/=0)exit
-        write(6,*)
-        char2048=adjustl(char2048)
-        if(len_trim(char2048)==0)then
-          nx=nxy
-          allocate(tx_target(nx),stat=ierr)
-          if(ierr/=0)call quit('Allocation error.')
-          tx_target=tx
-        else
-          ! Parse input string.
-          do
-            read(char2048,*,iostat=ierr)(t1,i=1,nx+1)
-            if(ierr/=0)exit
-            nx=nx+1
-          enddo
-          if(nx>1)then
-            allocate(tx_target(nx),stat=ierr)
-            if(ierr/=0)call quit('Allocation error.')
-            read(char2048,*,iostat=ierr)tx_target
-          else
-            ! Try to parse grid.
-            ipos=scan(char2048,':')
-            if(ipos<1)cycle
-            read(char2048(1:ipos-1),*,iostat=ierr)grid_tx1
-            if(ierr/=0)cycle
-            char2048=adjustl(char2048(ipos+1:))
-            ipos=scan(char2048,':')
-            if(ipos<1)cycle
-            read(char2048(1:ipos-1),*,iostat=ierr)grid_tx2
-            if(ierr/=0)cycle
-            char2048=adjustl(char2048(ipos+1:))
-            read(char2048,*,iostat=ierr)i
-            if(ierr/=0)cycle
-            if(i<2)cycle
-            nx=i
-            allocate(tx_target(nx),stat=ierr)
-            if(ierr/=0)call quit('Allocation error.')
-            if(nx==1)then
-              tx_target(1)=0.5d0*(grid_tx1+grid_tx2)
-            elseif(nx>1)then
-              tx_target=(/(grid_tx1+(grid_tx2-grid_tx1)*dble(i-1)/dble(nx-1),&
-                 &i=1,nx)/)
-            endif
-          endif
-        endif
-        if(nx<1)cycle
-        if(untransformed)call scale_transform(nx,itransfx,tx_target,tx_target,&
-           &.false.)
-      case('q','')
-        return
-      case default
-        return
-      end select
-
-      ! Evaluate function at selected points.
-      if(nx>0)then
-
-        ! Prepare dump file if needed.
-        if(nx>1)then
-          fname='polyfit_'//trim(set_label)//'.dat'
-          open(unit=io,file=trim(fname),status='replace')
-        endif
-
-        ! Choose random sampling or deterministic fit.
-        if(have_dx.or.have_dy)then
-
-          allocate(fmean(nx),ferr(nx),fmean_1s(nx),ferr_1s(nx),fmean_2s(nx),&
-             &ferr_2s(nx),fmed(nx),fskew(nx),fkurt(nx),stat=ierr)
-          if(ierr/=0)call quit('Allocation error (fmean,etc).')
-          call eval_fit_monte_carlo(nxy,have_dx,have_dy,x,y,dx,dy,&
-             &itransfx,itransfy,tx0,npoly,pow,nrandom,nderiv,eval_relative,&
-             &nx,tx_target,fmean,ferr,fmean_1s,ferr_1s,fmean_2s,ferr_2s,&
-             &fmed,fskew,fkurt)
-          ! Dump.
-          if(nx==1)then
-            ! Single value is printed to stdout.
-            write(xprint,*)tx_target(1)
-            write(6,*)'Value of '//trim(set_label)//' at X='//&
-               &trim(adjustl(xprint))//':'
-            write(6,*)'  Mean            : ',fmean(1),' +/- ',ferr(1)
-            write(6,*)'  From 1-sigma CI : ',fmean_1s(1),' +/- ',ferr_1s(1)
-            write(6,*)'  From 2-sigma CI : ',fmean_2s(1),' +/- ',ferr_2s(1)
-            write(6,*)'  Median          : ',fmed(1)
-            write(6,*)'  Skewness        : ',fskew(1)
-            write(6,*)'  Kurtosis        : ',fkurt(1)
-            write(6,*)
-          else
-            ! Multiple values are dumped to file.
-            write(io,'(a)')'# X  '//trim(set_label)//'  stderr  &
-               &1sigma-centre  1sigma-width  2sigma-centre  2sigma-width  &
-               &median  skew  kurt'
-            do ix=1,nx
-              write(io,*)tx_target(ix),fmean(ix),ferr(ix),&
-                 &fmean_1s(ix),ferr_1s(ix),fmean_2s(ix),ferr_2s(ix),&
-                 &fmed(ix),fskew(ix),fkurt(ix)
-            enddo ! ix
-          endif
-          deallocate(fmean,ferr,fmean_1s,ferr_1s,fmean_2s,ferr_2s,fmed,fskew,&
-             &fkurt)
-
-        else ! .not.(have_dx.or.have_dy)
-
-          ! Perform single fit.
-          call perform_fit(nxy,npoly,tx-tx0,ty,pow,a,.false.)
-          if(nx==1)then
-            ! Single value is printed to stdout.
-            op_npoly=npoly
-            op_pow=pow
-            op_a=a
-            do i=1,nderiv
-              call deriv_poly(op_npoly,op_pow,op_a)
-            enddo ! i
-            t1=eval_poly(op_npoly,op_pow,op_a,tx_target(1)-tx0)
-            write(6,*)trim(set_label)//' = ',t1
-            write(6,*)
-          else
-            ! Multiple values are dumped to file.
-            write(io,'(a)')'# x  '//trim(set_label)
-            op_npoly=npoly
-            op_pow=pow
-            op_a=a
-            do i=1,nderiv
-              call deriv_poly(op_npoly,op_pow,op_a)
-            enddo ! i
-            do ix=1,nx
-              t1=eval_poly(op_npoly,op_pow,op_a,tx_target(ix)-tx0)
-              write(io,*)tx_target(ix),t1
-            enddo ! ix
-          endif
-
-        endif ! have_dx.or.have_dy
-
-        ! Clean up.
-        if(nx>1)then
-          write(6,*)'Data written to "'//trim(fname)//'".'
-          write(6,*)
-          close(io)
-        endif
-        deallocate(tx_target)
-      endif
-
-    enddo
-
-  END SUBROUTINE eval_fit_values_derivs
-
-
   ! COMPUTATION ROUTINES
-
-
-  SUBROUTINE perform_fit(nxy,npoly,x,y,pow,a,weighted,weight,da)
-    !----------------------------------------------------!
-    ! Perform least-squares fit of (weighted) xy data to !
-    ! polynomial described by pow(1:npoly).              !
-    !----------------------------------------------------!
-    IMPLICIT NONE
-    INTEGER,INTENT(in) :: nxy,npoly
-    DOUBLE PRECISION,INTENT(in) :: x(nxy),y(nxy),pow(npoly)
-    DOUBLE PRECISION,INTENT(out) :: a(npoly)
-    LOGICAL,INTENT(in) :: weighted
-    DOUBLE PRECISION,INTENT(in),OPTIONAL :: weight(nxy)
-    DOUBLE PRECISION,INTENT(out),OPTIONAL :: da(npoly)
-    INTEGER i,j,ipiv(npoly),lwork,ierr
-    DOUBLE PRECISION M(npoly,npoly),Minv(npoly,npoly),c(npoly)
-    DOUBLE PRECISION,ALLOCATABLE :: work(:)
-
-    ! Construct c vector and M matrix.
-    if(weighted)then
-      do i=1,npoly
-        c(i)=sum(weight(:)*y(:)*x(:)**pow(i))
-        M(i,i)=sum(weight(:)*x(:)**(pow(i)+pow(i)))
-        do j=i+1,npoly
-          M(j,i)=sum(weight(:)*x(:)**(pow(j)+pow(i)))
-          M(i,j)=M(j,i)
-        enddo ! j
-      enddo ! i
-    else
-      do i=1,npoly
-        c(i)=sum(y(:)*x(:)**pow(i))
-        M(i,i)=sum(x(:)**(pow(i)+pow(i)))
-        do j=i+1,npoly
-          M(j,i)=sum(x(:)**(pow(j)+pow(i)))
-          M(i,j)=M(j,i)
-        enddo ! j
-      enddo ! i
-    endif ! weighted
-
-    ! Invert M.
-    Minv=M
-    allocate(work(1))
-    lwork=-1
-    call dsytrf('L',npoly,Minv,npoly,ipiv,work,lwork,ierr)
-    if(ierr/=0)call quit('DSYTRF error on workspace query call.')
-    lwork=nint(work(1))
-    deallocate(work)
-    allocate(work(lwork),stat=ierr)
-    if(ierr/=0)call quit('Allocation error (work).')
-    call dsytrf('L',npoly,Minv,npoly,ipiv,work,lwork,ierr)
-    if(ierr/=0)call quit('DSYTRF error.')
-    deallocate(work)
-    allocate(work(npoly),stat=ierr)
-    if(ierr/=0)call quit('Allocation error (work).')
-    call dsytri('L',npoly,Minv,npoly,ipiv,work,ierr)
-    if(ierr/=0)call quit('DSYTRI error.')
-    deallocate(work)
-
-    ! Complete Minv and evaluate coefficients.
-    do i=1,npoly-1
-      do j=i+1,npoly
-        Minv(i,j)=Minv(j,i)
-      enddo ! j
-    enddo ! i
-    a=matmul(Minv,c)
-
-    ! Evaluate standard errors if data are weighted.
-    if(weighted)then
-      do j=1,npoly
-        da(j)=sqrt(Minv(j,j))
-      enddo ! j
-    elseif(present(da))then
-      da=0.d0
-    endif ! weighted
-
-  END SUBROUTINE perform_fit
 
 
   SUBROUTINE perform_multifit(ndataset,datasets,fit,weighted,chi2,a,da)
@@ -2639,8 +2236,6 @@ CONTAINS
       max_nxy=max(max_nxy,datasets(iset)%rtxy%nxy)
       tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
     enddo ! iset
-!(DEBUG)
-!write(6,*)'tot_nparam,tot_nxy='
     allocate(x(max_nxy,ndataset),y(max_nxy,ndataset),weight(max_nxy,ndataset))
     x=1.d0
     y=0.d0
@@ -2648,7 +2243,7 @@ CONTAINS
     do iset=1,ndataset
       xy=>datasets(iset)%rtxy
       if(xy%nxy==0)cycle
-      x(1:xy%nxy,iset)=xy%x(1:xy%nxy)-fit%x0
+      x(1:xy%nxy,iset)=xy%x(1:xy%nxy)-fit%X0
       y(1:xy%nxy,iset)=xy%y(1:xy%nxy)
       if(.not.weighted)then
         weight(1:xy%nxy,iset)=1.d0
@@ -2808,9 +2403,9 @@ CONTAINS
   END SUBROUTINE perform_multifit
 
 
-  SUBROUTINE eval_multifit_monte_carlo(ndataset,datasets,drange,fit,nrandom,&
-     &deval,fmean,ferr,fmean_1s,ferr_1s,fmean_2s,ferr_2s,fmed,fskew,fkurt,&
-     &amean,aerr)
+  SUBROUTINE eval_multifit_monte_carlo(ndataset,datasets,drange,fit,mcparams,&
+     &deval,fmean,ferr,chi2,chi2err,amean,aerr,fmean_1s,ferr_1s,fmean_2s,&
+     &ferr_2s,fmed,fskew,fkurt)
     !------------------------------------------------------!
     ! Perform Monte Carlo sampling of data space to obtain !
     ! fit values or derivatives at specified points with   !
@@ -2822,14 +2417,15 @@ CONTAINS
     TYPE(range_def),INTENT(in) :: drange
     TYPE(fit_params),INTENT(in) :: fit
     TYPE(eval_def),INTENT(in) :: deval
-    INTEGER,INTENT(in) :: nrandom
+    TYPE(monte_carlo_params),INTENT(in) :: mcparams
     DOUBLE PRECISION,INTENT(inout),OPTIONAL :: &
        &fmean(deval%n,ndataset),ferr(deval%n,ndataset),&
+       &chi2,chi2err,&
+       &amean(fit%npoly,ndataset),aerr(fit%npoly,ndataset),&
        &fmean_1s(deval%n,ndataset),ferr_1s(deval%n,ndataset),&
        &fmean_2s(deval%n,ndataset),ferr_2s(deval%n,ndataset),&
        &fmed(deval%n,ndataset),fskew(deval%n,ndataset),&
-       &fkurt(deval%n,ndataset),&
-       &amean(fit%npoly,ndataset),aerr(fit%npoly,ndataset)
+       &fkurt(deval%n,ndataset)
     ! Pointers.
     TYPE(dataset),POINTER :: tdatasets(:)=>null()
     TYPE(xydata),POINTER :: xy=>null()
@@ -2837,15 +2433,16 @@ CONTAINS
     INTEGER op_npoly
     DOUBLE PRECISION op_pow(fit%npoly),op_a(fit%npoly)
     ! Random sampling arrays.
-    DOUBLE PRECISION f_array(nrandom,deval%n,ndataset),w_vector(nrandom),&
-       &a_array(nrandom,fit%npoly,ndataset)
-    DOUBLE PRECISION ran_a(fit%npoly,ndataset)
+    DOUBLE PRECISION f_array(mcparams%nsample,deval%n,ndataset),&
+       &w_vector(mcparams%nsample),&
+       &a_array(mcparams%nsample,fit%npoly,ndataset),&
+       &chi2_array(mcparams%nsample)
     ! Distribution analysis.
     DOUBLE PRECISION var,skew,kurt,f2s_lo,f1s_lo,f1s_hi,f2s_hi
     ! Misc.
-    INTEGER ipoly,ideriv,irandom,ix,iset
-    DOUBLE PRECISION t1,a(fit%npoly,ndataset),da(fit%npoly,ndataset),f0,chi2
     LOGICAL weighted
+    INTEGER nsample,ipoly,ideriv,irandom,ix,iset
+    DOUBLE PRECISION t1,a(fit%npoly,ndataset),da(fit%npoly,ndataset),f0
 
     ! Make copy of datasets.
     allocate(tdatasets(ndataset))
@@ -2867,11 +2464,19 @@ CONTAINS
       nullify(xy)
     enddo ! iset
 
+    ! Override weights if not all sets have stderrs.
+    weighted=mcparams%weighted
+    do iset=1,ndataset
+      weighted=weighted.and.(tdatasets(iset)%xy%have_dx.or.&
+         &tdatasets(iset)%xy%have_dy)
+    enddo ! iset
+
     ! Initialize.
     f0=0.d0
+    nsample=mcparams%nsample
 
     ! Loop over random points.
-    do irandom=1,nrandom
+    do irandom=1,nsample
       do iset=1,ndataset
         if(datasets(iset)%xy%have_dx)tdatasets(iset)%xy%x=&
            &datasets(iset)%xy%x+gaussian_random_number(datasets(iset)%xy%dx)
@@ -2879,8 +2484,9 @@ CONTAINS
            &datasets(iset)%xy%y+gaussian_random_number(datasets(iset)%xy%dy)
         call refresh_dataset(tdatasets(iset),drange)
       enddo ! iset
-      call perform_multifit(ndataset,tdatasets,fit,weighted,chi2,a,da)
-      a_array(irandom,1:fit%npoly,1:ndataset)=ran_a(1:fit%npoly,1:ndataset)
+      call perform_multifit(ndataset,tdatasets,fit,weighted,&
+         &chi2_array(irandom),a,da)
+      a_array(irandom,1:fit%npoly,1:ndataset)=a(1:fit%npoly,1:ndataset)
       w_vector(irandom)=1.d0
       do iset=1,ndataset
         op_npoly=fit%npoly
@@ -2889,9 +2495,9 @@ CONTAINS
         do ideriv=1,deval%nderiv
           call deriv_poly(op_npoly,op_pow,op_a)
         enddo ! ideriv
-        if(deval%rel)f0=eval_poly(op_npoly,op_pow,op_a,-fit%x0)
+        if(deval%rel)f0=eval_poly(op_npoly,op_pow,op_a,-fit%X0)
         do ix=1,deval%n
-          t1=eval_poly(op_npoly,op_pow,op_a,deval%x(ix)-fit%x0)
+          t1=eval_poly(op_npoly,op_pow,op_a,deval%x(ix)-fit%X0)
           f_array(irandom,ix,iset)=t1-f0
         enddo ! ix
       enddo ! iset
@@ -2899,34 +2505,39 @@ CONTAINS
 
     ! Return coefficients and statistical properties of requested function
     ! of fit.
+    if(present(chi2).or.present(chi2err))then
+      call characterize_dist(nsample,chi2_array,w_vector,mean=t1,var=var)
+      if(present(chi2))chi2=t1
+      if(present(chi2err))chi2err=sqrt(var)
+    endif
     do iset=1,ndataset
       do ipoly=1,fit%npoly
-        call characterize_dist(nrandom,a_array(:,ipoly,iset),w_vector,mean=t1,&
+        call characterize_dist(nsample,a_array(:,ipoly,iset),w_vector,mean=t1,&
            &var=var)
         if(present(amean))amean(ipoly,iset)=t1
         if(present(aerr))aerr(ipoly,iset)=sqrt(var)
       enddo ! ipoly
       do ix=1,deval%n
-        call characterize_dist(nrandom,f_array(:,ix,iset),w_vector,mean=t1,&
+        call characterize_dist(nsample,f_array(:,ix,iset),w_vector,mean=t1,&
            &var=var,skew=skew,kurt=kurt)
         if(present(fmean))fmean(ix,iset)=t1
         if(present(ferr))ferr(ix,iset)=sqrt(var)
         if(present(fskew))fskew(ix,iset)=skew
         if(present(fkurt))fkurt(ix,iset)=kurt
-        if(present(fmed))fmed(ix,iset)=median(nrandom,f_array(:,ix,iset))
+        if(present(fmed))fmed(ix,iset)=median(nsample,f_array(:,ix,iset))
         if(present(fmean_1s).or.present(ferr_1s))then
-          f1s_lo=find_pth_smallest(nint(dble(nrandom)*0.158655254d0),&
-             &nrandom,f_array(:,ix,iset))
-          f1s_hi=find_pth_smallest(nint(dble(nrandom)*0.841344746d0),&
-             &nrandom,f_array(:,ix,iset))
+          f1s_lo=find_pth_smallest(nint(dble(nsample)*0.158655254d0),&
+             &nsample,f_array(:,ix,iset))
+          f1s_hi=find_pth_smallest(nint(dble(nsample)*0.841344746d0),&
+             &nsample,f_array(:,ix,iset))
           if(present(fmean_1s))fmean_1s(ix,iset)=0.5d0*(f1s_lo+f1s_hi)
           if(present(ferr_1s))ferr_1s(ix,iset)=0.5d0*(f1s_hi-f1s_lo)
         endif
         if(present(fmean_2s).or.present(ferr_2s))then
-          f2s_lo=find_pth_smallest(nint(dble(nrandom)*0.022750131948d0),&
-             &nrandom,f_array(:,ix,iset))
-          f2s_hi=find_pth_smallest(nint(dble(nrandom)*0.977249868052d0),&
-             &nrandom,f_array(:,ix,iset))
+          f2s_lo=find_pth_smallest(nint(dble(nsample)*0.022750131948d0),&
+             &nsample,f_array(:,ix,iset))
+          f2s_hi=find_pth_smallest(nint(dble(nsample)*0.977249868052d0),&
+             &nsample,f_array(:,ix,iset))
           if(present(fmean_2s))fmean_2s(ix,iset)=0.5d0*(f2s_lo+f2s_hi)
           if(present(ferr_2s))ferr_2s(ix,iset)=0.25d0*(f2s_hi-f2s_lo)
         endif
@@ -2948,121 +2559,6 @@ CONTAINS
     nullify(tdatasets)
 
   END SUBROUTINE eval_multifit_monte_carlo
-
-
-  SUBROUTINE eval_fit_monte_carlo(nxy,have_dx,have_dy,x,y,dx,dy,&
-     &itransfx,itransfy,tx0,npoly,pow,nrandom,nderiv,eval_relative,&
-     &nx,tx_target,fmean,ferr,fmean_1s,ferr_1s,fmean_2s,ferr_2s,fmed,&
-     &fskew,fkurt,amean,aerr)
-    !------------------------------------------------------!
-    ! Perform Monte Carlo sampling of data space to obtain !
-    ! fit values or derivatives at specified points with   !
-    ! error bars.                                          !
-    !------------------------------------------------------!
-    IMPLICIT NONE
-    INTEGER,INTENT(in) :: nxy,itransfx,itransfy,npoly,nrandom,nderiv,nx
-    LOGICAL,INTENT(in) :: have_dx,have_dy,eval_relative
-    DOUBLE PRECISION,INTENT(in) :: x(nxy),y(nxy),dx(nxy),dy(nxy),tx0,&
-       &pow(npoly),tx_target(nx)
-    DOUBLE PRECISION,INTENT(inout),OPTIONAL :: fmean(nx),ferr(nx),&
-       &fmean_1s(nx),ferr_1s(nx),fmean_2s(nx),ferr_2s(nx),fmed(nx),&
-       &fskew(nx),fkurt(nx),amean(npoly),aerr(npoly)
-    ! Transformed data.
-    DOUBLE PRECISION tx(nxy),ty(nxy)
-    ! Polynomials resulting from operations on fitting polynomial.
-    INTEGER op_npoly
-    DOUBLE PRECISION op_pow(npoly),op_a(npoly)
-    ! Random sampling arrays.
-    DOUBLE PRECISION f_array(nrandom,nx),w_vector(nrandom),&
-       &a_array(nrandom,npoly)
-    DOUBLE PRECISION ran_x(nxy),ran_y(nxy),ran_a(npoly)
-    ! Distribution analysis.
-    DOUBLE PRECISION var,skew,kurt,f2s_lo,f1s_lo,f1s_hi,f2s_hi
-    ! Misc.
-    INTEGER ipoly,ideriv,irandom,ix
-    DOUBLE PRECISION t1,da(npoly),dtx(nxy),dty(nxy),weight(nxy),f0
-    LOGICAL weighted
-
-    if(MONTE_CARLO_FIT_WEIGHTS)then
-      call scale_transform(nxy,itransfx,x,tx,have_dx,dx,dtx)
-      call scale_transform(nxy,itransfy,y,ty,have_dy,dy,dty)
-      if(have_dx.and.have_dy)then
-        weight=1.d0/(dtx*dty)**2
-      elseif(have_dx)then
-        weight=1.d0/dtx**2
-      elseif(have_dy)then
-        weight=1.d0/dty**2
-      else
-        weight=1.d0
-      endif
-      weighted=have_dx.or.have_dy
-    else
-      weight=1.d0
-      weighted=.false.
-    endif
-
-    ! Initialize.
-    ran_x=x
-    ran_y=y
-    f0=0.d0
-
-    ! Loop over random points.
-    do irandom=1,nrandom
-      if(have_dx)ran_x=x+gaussian_random_number(dx)
-      if(have_dy)ran_y=y+gaussian_random_number(dy)
-      call scale_transform(nxy,itransfx,ran_x,tx,.false.)
-      call scale_transform(nxy,itransfy,ran_y,ty,.false.)
-      call perform_fit(nxy,npoly,tx-tx0,ty,pow,ran_a,weighted,weight,da)
-      a_array(irandom,1:npoly)=ran_a(1:npoly)
-      w_vector(irandom)=1.d0
-      op_npoly=npoly
-      op_pow=pow
-      op_a=ran_a
-      do ideriv=1,nderiv
-        call deriv_poly(op_npoly,op_pow,op_a)
-      enddo ! ideriv
-      if(eval_relative)f0=eval_poly(op_npoly,op_pow,op_a,-tx0)
-      do ix=1,nx
-        t1=eval_poly(op_npoly,op_pow,op_a,tx_target(ix)-tx0)
-        f_array(irandom,ix)=t1-f0
-      enddo ! ix
-    enddo ! irandom
-
-    ! Return coefficients.
-    do ipoly=1,npoly
-      call characterize_dist(nrandom,a_array(:,ipoly),w_vector,mean=t1,var=var)
-      if(present(amean))amean(ipoly)=t1
-      if(present(aerr))aerr(ipoly)=sqrt(var)
-    enddo ! ipoly
-
-    ! Evaluate statistics.
-    do ix=1,nx
-      call characterize_dist(nrandom,f_array(:,ix),w_vector,mean=t1,var=var,&
-         &skew=skew,kurt=kurt)
-      if(present(fmean))fmean(ix)=t1
-      if(present(ferr))ferr(ix)=sqrt(var)
-      if(present(fskew))fskew(ix)=skew
-      if(present(fkurt))fkurt(ix)=kurt
-      if(present(fmed))fmed(ix)=median(nrandom,f_array(:,ix))
-      if(present(fmean_1s).or.present(ferr_1s))then
-        f1s_lo=find_pth_smallest(nint(dble(nrandom)*0.158655254d0),&
-           &nrandom,f_array(:,ix))
-        f1s_hi=find_pth_smallest(nint(dble(nrandom)*0.841344746d0),&
-           &nrandom,f_array(:,ix))
-        if(present(fmean_1s))fmean_1s(ix)=0.5d0*(f1s_lo+f1s_hi)
-        if(present(ferr_1s))ferr_1s(ix)=0.5d0*(f1s_hi-f1s_lo)
-      endif
-      if(present(fmean_2s).or.present(ferr_2s))then
-        f2s_lo=find_pth_smallest(nint(dble(nrandom)*0.022750131948d0),&
-           &nrandom,f_array(:,ix))
-        f2s_hi=find_pth_smallest(nint(dble(nrandom)*0.977249868052d0),&
-           &nrandom,f_array(:,ix))
-        if(present(fmean_2s))fmean_2s(ix)=0.5d0*(f2s_lo+f2s_hi)
-        if(present(ferr_2s))ferr_2s(ix)=0.25d0*(f2s_hi-f2s_lo)
-      endif
-    enddo ! ix
-
-  END SUBROUTINE eval_fit_monte_carlo
 
 
   ! INPUT FILE HANDLING ROUTINES.
@@ -3220,19 +2716,19 @@ CONTAINS
   ! POLYNOMIAL HANDLING UTILITIES.
 
 
-  FUNCTION print_poly_sym(npoly,pow,x0) RESULT(polystr)
+  FUNCTION print_poly_sym(npoly,pow,X0) RESULT(polystr)
     !---------------------------------------------------!
     ! Returns a string with the symbolic version of the !
     ! fitted polynomial.                                !
     !---------------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: npoly
-    DOUBLE PRECISION,INTENT(in) :: pow(npoly),x0
+    DOUBLE PRECISION,INTENT(in) :: pow(npoly),X0
     CHARACTER(3+npoly*54) :: polystr
     INTEGER j,ipow
     CHARACTER(40) pwstr
     CHARACTER(6) xstr
-    if(abs(x0)<tol_zero)then
+    if(abs(X0)<tol_zero)then
       xstr='X'
     else
       xstr='(X-X0)'
@@ -3265,7 +2761,7 @@ CONTAINS
   END FUNCTION print_poly_sym
 
 
-  FUNCTION print_poly_num(npoly,pow,a,x0) RESULT(polystr)
+  FUNCTION print_poly_num(npoly,pow,a,X0) RESULT(polystr)
     !----------------------------------------------------!
     ! Returns a string with the numerical version of the !
     ! fitted polynomial in a suitable format for pasting !
@@ -3273,17 +2769,17 @@ CONTAINS
     !----------------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: npoly
-    DOUBLE PRECISION,INTENT(in) :: pow(npoly),a(npoly),x0
+    DOUBLE PRECISION,INTENT(in) :: pow(npoly),a(npoly),X0
     CHARACTER(2+npoly*105) :: polystr
     INTEGER j,ipow
     CHARACTER(1) plusstr
     CHARACTER(32) coeffstr
     CHARACTER(72) pwstr
     CHARACTER(36) xstr
-    if(abs(x0)<tol_zero)then
+    if(abs(X0)<tol_zero)then
       xstr='x'
     else
-      write(xstr,*)x0
+      write(xstr,*)X0
       xstr='(x-'//trim(adjustl(xstr))//')'
     endif
     polystr='y='
@@ -3448,10 +2944,10 @@ CONTAINS
         ! Skip evaluation if x is zero (avoids issues with negative powers).
         cycle
       elseif(abs(anint(pow(ipoly))-pow(ipoly))<tol_zero)then
-        ! Natural powers force to use integer exponents to avoid issues.
+        ! For natural powers, force integer exponents to avoid issues.
         eval_poly=eval_poly+a(ipoly)*x_target**nint(pow(ipoly))
-      elseif(x_target>0.d0)then
-        ! Fractional powers only evaluated for positive arguments.
+      elseif(.not.are_equal(x_target,0.d0))then
+        ! Fractional powers only evaluated for non-zero arguments.
         eval_poly=eval_poly+a(ipoly)*x_target**pow(ipoly)
       endif
     enddo ! ipoly
