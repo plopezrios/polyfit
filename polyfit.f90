@@ -33,6 +33,12 @@ PROGRAM polyfit
     DOUBLE PRECISION :: thres=0.d0
     INTEGER :: size=0
   END TYPE range_def
+  TYPE eval_def
+    CHARACTER :: var='X'
+    LOGICAL :: rel=.false.
+    INTEGER :: nderiv=0,n=0
+    DOUBLE PRECISION,ALLOCATABLE :: x(:)
+  END TYPE eval_def
 
   ! Global variables.
   ! Use weights in Monte Carlo fits?
@@ -69,7 +75,10 @@ CONTAINS
     ! All-set settings.
     INTEGER itransfx_default,itransfy_default
     TYPE(range_def) drange
-   ! Input file information.
+    ! Function evaluation.
+    INTEGER eval_iset
+    TYPE(eval_def) deval
+    ! Input file information.
     INTEGER ncolumn,icol_x,icol_y,icol_dx,icol_dy
     CHARACTER(256) fname
     ! Misc variables.
@@ -387,6 +396,36 @@ CONTAINS
         enddo ! iset
         call show_multipoly(ndataset,datasets,fit)
 
+      case('assess')
+        if(ndataset<1)then
+          write(6,'()')
+          write(6,'(a)')'No datasets loaded.'
+          write(6,'()')
+          cycle user_loop
+        endif
+        ! FIXME - expose this
+        deval%nderiv=0
+        deval%rel=.false.
+        deval%var='X'
+        deval%n=1
+        eval_iset=0
+        allocate(deval%x(deval%n))
+        deval%x(1)=0.d0
+        select case(trim(field(2,command)))
+        case('fit')
+          call assess_fit(ndataset,datasets,drange,fit,deval,eval_iset)
+        case('range')
+          call assess_range(ndataset,datasets,fit,deval,eval_iset)
+        case('range,fit','fit,range')
+          call assess_fit_range(ndataset,datasets,fit,deval,eval_iset)
+        case default
+          write(6,'()')
+          write(6,'(a)')'Unknown variable to assess "'//&
+             &trim(field(2,command))//'".'
+          write(6,'()')
+        end select
+        deallocate(deval%x)
+
       case('report')
         if(ndataset<1)then
           write(6,'()')
@@ -395,12 +434,6 @@ CONTAINS
           cycle user_loop
         endif
         select case(trim(field(2,command)))
-        case('order')
-          call report_order(ndataset,datasets,drange,fit)
-        case('size')
-          call report_size(ndataset,datasets,fit)
-        case('dual')
-          call report_dual(ndataset,datasets,fit)
         case('range')
           call report_statistics(ndataset,datasets)
         case default
@@ -569,13 +602,13 @@ CONTAINS
             call refresh_dataset(datasets(iset),drange)
           enddo ! iset
 
-        case('exponents')
+        case('fit')
           ! Set fit exponents.
           ! Figure out syntax used.
           ierr=0
           select case(nfield(command))
           case(2)
-            write(6,'(a)')'Syntax error: no value given for "exponents".'
+            write(6,'(a)')'Syntax error: no value given for "fit".'
             write(6,'()')
             cycle user_loop
           case(3)
@@ -599,9 +632,20 @@ CONTAINS
             ! Exponents given as range.
             token=field(3,command)
             ipos=scan(token,':')
-            if(ipos<1)return
-            read(token(1:ipos-1),*,iostat=ierr)i1
-            if(ierr/=0)i1=0
+            if(ipos<1)then
+              write(6,'(a)')'Syntax error: could not parse range.'
+              write(6,'()')
+              cycle user_loop
+            endif
+            i1=0
+            if(ipos>1)then
+              read(token(1:ipos-1),*,iostat=ierr)i1
+              if(ierr/=0)then
+                write(6,'(a)')'Syntax error: could not parse range.'
+                write(6,'()')
+                cycle user_loop
+              endif
+            endif
             read(token(ipos+1:),*,iostat=ierr)i2
             if(ierr/=0)then
               write(6,'(a)')'Syntax error: could not parse range.'
@@ -691,30 +735,85 @@ CONTAINS
           enddo ! iset
 
         case('shared')
-          ! Set shared exponents.
+          ! Set shared coefficients.
           if(trim(field(3,command))=='all')then
             fit%share=.true.
-          else
-            ! Check syntax.
-            do ifield=3,nfield(command)
-              i=int_field(ifield,command,ierr)
-              if(ierr/=0)then
-                write(6,'(a)')'Problem parsing coefficient index.'
-                write(6,'()')
-                cycle user_loop
-              endif
-              if(i<1.or.i>fit%npoly)then
-                write(6,'(a)')'Coefficient index out of range.'
-                write(6,'()')
-                cycle user_loop
-              endif
-            enddo ! ifield
-            ! Set share mask.
+          elseif(trim(field(3,command))=='none')then
             fit%share=.false.
-            do ifield=3,nfield(command)
-              i=int_field(ifield,command,ierr)
-              fit%share(i)=.true.
-            enddo ! ifield
+          else
+            select case(nfield(command))
+            case(2)
+              write(6,'(a)')'Syntax error: no value given for "shared".'
+              write(6,'()')
+              cycle user_loop
+            case(3)
+              t1=int_field(3,command,ierr)
+            end select
+            if(ierr==0)then
+              ! Indices given as list.
+              ! Check indices.
+              do ifield=3,nfield(command)
+                i1=int_field(ifield,command,ierr)
+                if(ierr/=0)then
+                  write(6,'(a)')'Syntax error: could not parse indices.'
+                  write(6,'()')
+                  cycle user_loop
+                endif
+                if(i1<1.or.i1>fit%npoly)then
+                  write(6,'(a)')'Indices out of range.'
+                  write(6,'()')
+                  cycle user_loop
+                endif
+              enddo ! ifield
+              ! Apply.
+              fit%share=.false.
+              do ifield=3,nfield(command)
+                fit%share(int_field(ifield,command,ierr))=.true.
+              enddo ! ifield
+            else
+              ! Exponents given as range.
+              ! Get range and check syntax.
+              token=field(3,command)
+              ipos=scan(token,':')
+              if(ipos<1)then
+                write(6,'(a)')'Syntax error: could not parse range.'
+                write(6,'()')
+                cycle user_loop
+              endif
+              i1=1
+              if(ipos>1)then
+                read(token(1:ipos-1),*,iostat=ierr)i1
+                if(ierr/=0)then
+                  write(6,'(a)')'Syntax error: could not parse range.'
+                  write(6,'()')
+                  cycle user_loop
+                endif
+              endif
+              i2=npoly
+              if(ipos<len_trim(token))then
+                read(token(ipos+1:),*,iostat=ierr)i2
+                if(ierr/=0)then
+                  write(6,'(a)')'Syntax error: could not parse range.'
+                  write(6,'()')
+                  cycle user_loop
+                endif
+              endif
+              if(i2<i1)then
+                write(6,'(a)')'Index range runs backwards.'
+                write(6,'()')
+                cycle user_loop
+              endif
+              if(i1<1.or.i2>fit%npoly)then
+                write(6,'(a)')'Indices out of range.'
+                write(6,'()')
+                cycle user_loop
+              endif
+              ! Apply.
+              fit%share=.false.
+              do i=i1,i2
+                fit%share(i)=.true.
+              enddo
+            endif
           endif
           write(6,'(a)')'Set shared coefficients.'
           write(6,'()')
@@ -747,7 +846,14 @@ CONTAINS
           write(6,'()')
           cycle user_loop
         endif
-        call evaluate_fit(ndataset,datasets,fit,drange)
+        deval%nderiv=0
+        deval%rel=.false.
+        deval%var='X'
+        deval%n=1
+        allocate(deval%x(deval%n))
+        deval%x(1)=0.d0
+        call evaluate_fit(ndataset,datasets,fit,drange,deval)
+        deallocate(deval%x)
 
       case('status')
         write(6,'()')
@@ -834,7 +940,9 @@ CONTAINS
           write(6,'(a)')'* set <variable> <value> [for <set-list>]'
           write(6,'(a)')'* status'
           write(6,'(a)')'* fit'
-          write(6,'(a)')'* help [<command> | <variable>]'
+          write(6,'(a)')'* assess <variable> [using <function> at <X> [for &
+             &<set-list>]]'
+          write(6,'(a)')'* help [<command> | set <variable>]'
           write(6,'()')
           write(6,'(a)')'Type help <command> for detailed information.'
           write(6,'()')
@@ -866,22 +974,99 @@ CONTAINS
           write(6,'(a)')'  index.'
           write(6,'()')
         case('set')
-          write(6,'()')
-          write(6,'(a)')'Command: set <variable> <value> [for <set-list>]'
-          write(6,'()')
-          write(6,'(a)')'  Sets <variable> to <value>, either globally or for &
-             &selected sets (for'
-          write(6,'(a)')'  certain variables).  The list of available &
-             &variables is:'
-          write(6,'()')
-          write(6,'(a)')'  * xscale'
-          write(6,'(a)')'  * yscale'
-          write(6,'(a)')'  * exponents'
-          write(6,'(a)')'  * range'
-          write(6,'(a)')'  * shared'
-          write(6,'()')
-          write(6,'(a)')'Type help <variable> for detailed information.'
-          write(6,'()')
+          if(nfield(command)==2)then
+            write(6,'()')
+            write(6,'(a)')'Command: set <variable> <value> [for <set-list>]'
+            write(6,'()')
+            write(6,'(a)')'  Sets <variable> to <value>, either globally or for &
+               &selected sets (for'
+            write(6,'(a)')'  certain variables).  The list of available &
+               &variables is:'
+            write(6,'()')
+            write(6,'(a)')'  * xscale'
+            write(6,'(a)')'  * yscale'
+            write(6,'(a)')'  * fit'
+            write(6,'(a)')'  * range'
+            write(6,'(a)')'  * shared'
+            write(6,'()')
+            write(6,'(a)')'Type help set <variable> for detailed information.'
+            write(6,'()')
+          else
+            select case(field(3,command))
+            case('xscale','yscale')
+              write(6,'()')
+              write(6,'(a)')'Variable: xscale, yscale'
+              write(6,'()')
+              write(6,'(a)')'  These set scale transformations for the &
+                 &independent x variable and for the'
+              write(6,'(a)')'  dependent y variable, respectively.  In &
+                 &POLYFIT notation, the original'
+              write(6,'(a)')'  variables are called x and y, and the &
+                 &transformed variables are called X and'
+              write(6,'(a)')'  Y.'
+              write(6,'()')
+              write(6,'(a)')'  Possible values are:'
+              write(6,'(a)')'  * "linear"      : X = x       [default]'
+              write(6,'(a)')'  * "reciprocal"  : X = 1/x     [x=0 forbidden]'
+              write(6,'(a)')'  * "logarithmic" : X = log(x)  [x<=0 forbidden]'
+              write(6,'(a)')'  * "exponential" : X = exp(x)'
+              write(6,'()')
+              write(6,'(a)')'  These variables can be set in a per-set manner &
+                 &or globally.  Note that the'
+              write(6,'(a)')'  global value applies to all loaded datasets &
+                 &and becomes the default for new'
+              write(6,'(a)')'  datasets.'
+              write(6,'()')
+            case('fit')
+              write(6,'()')
+              write(6,'(a)')'Variable: fit'
+              write(6,'()')
+              write(6,'(a)')'  This sets the exponents to be used in the &
+                 &fitting function.  The value can be'
+              write(6,'(a)')'  specified as a list, e.g., "set fit 0 &
+                 &1.5 3", or as an integer range,'
+              write(6,'(a)')'  e.g., "set fit 0:2".  Note that the form &
+                 &of the fitting function is'
+              write(6,'(a)')'  global, so the "for <set-list>" syntax does &
+                 &not apply to this variable.'
+              write(6,'()')
+            case('range')
+              write(6,'()')
+              write(6,'(a)')'Variable: range'
+              write(6,'()')
+              write(6,'(a)')'  This sets the data mask to apply to all &
+                 &datasets.  The value can be specified'
+              write(6,'(a)')'  as <variable> <selector> where:'
+              write(6,'(a)')'  * <variable> is one of x, y, X, or Y &
+                 &(lowercase for original and uppercase'
+              write(6,'(a)')'    for transformed values).'
+              write(6,'(a)')'  * <selector> is one of:'
+              write(6,'(a)')'    - <  <threshold>'
+              write(6,'(a)')'    - <= <threshold>'
+              write(6,'(a)')'    - >= <threshold>'
+              write(6,'(a)')'    - >  <threshold>'
+              write(6,'(a)')'    - first <number>'
+              write(6,'(a)')'    - last <number>'
+              write(6,'(a)')'  Note that "range" is a global variable, so the &
+                 &"for <set-list>" syntax'
+              write(6,'(a)')'  does not apply to this variable.'
+              write(6,'()')
+            case('shared')
+              write(6,'()')
+              write(6,'(a)')'Variable: shared'
+              write(6,'()')
+              write(6,'(a)')'  This specifies which coefficients are to be &
+                 &shared among datasets.  The value'
+              write(6,'(a)')'  is a list of coefficient indices, or "all".  &
+                 &Coefficients not flagged'
+              write(6,'(a)')'  as shared take different values for each &
+                 &dataset.'
+              write(6,'()')
+            case default
+              write(6,'(a)')'No help for variable "'//&
+                 &trim(field(2,command))//'".'
+            end select
+          endif
         case('status')
           write(6,'()')
           write(6,'(a)')'Command: status'
@@ -894,6 +1079,25 @@ CONTAINS
           write(6,'(a)')'Command: fit'
           write(6,'()')
           write(6,'(a)')'  Perform fit of currently loaded datasets.'
+          write(6,'()')
+        case('assess')
+          write(6,'()')
+          write(6,'(a)')'Command: assess <variables> [using <function> at <X> &
+             &[for <sets>]]'
+          write(6,'()')
+          write(6,'(a)')'  Assess the convergence of the fit with the &
+             &specified variables.'
+          write(6,'(a)')'  The assessment is carried out based on the value &
+             &chi^2/Ndf and on the'
+          write(6,'(a)')'  value of the value or derivative of the fit at the &
+             &specified position.'
+          write(6,'(a)')'  The following <variables> can be specified:'
+          write(6,'(a)')'  * fit       : assess convergence with &
+             &choice of fit form.'
+          write(6,'(a)')'  * range     : assess convergence with &
+             &data range.'
+          write(6,'(a)')'  * fit,range : assess convergence with choice of &
+             &fit form and data range'
           write(6,'()')
         case('report')
           write(6,'()')
@@ -912,76 +1116,8 @@ CONTAINS
           write(6,'(a)')'  * range : report basic range statistics of the &
              &data.'
           write(6,'()')
-        case('xscale','yscale')
-          write(6,'()')
-          write(6,'(a)')'Variable: xscale, yscale'
-          write(6,'()')
-          write(6,'(a)')'  These set scale transformations for the &
-             &independent x variable and for the'
-          write(6,'(a)')'  dependent y variable, respectively.  In POLYFIT &
-             &notation, the original'
-          write(6,'(a)')'  variables are called x and y, and the transformed &
-             &variables are called X and'
-          write(6,'(a)')'  Y.'
-          write(6,'()')
-          write(6,'(a)')'  Possible values are:'
-          write(6,'(a)')'  * "linear"      : X = x       [default]'
-          write(6,'(a)')'  * "reciprocal"  : X = 1/x     [x=0 forbidden]'
-          write(6,'(a)')'  * "logarithmic" : X = log(x)  [x<=0 forbidden]'
-          write(6,'(a)')'  * "exponential" : X = exp(x)'
-          write(6,'()')
-          write(6,'(a)')'  These variables can be set in a per-set manner &
-             &or globally.  Note that the'
-          write(6,'(a)')'  global value applies to all loaded datasets and &
-             &becomes the default for new'
-          write(6,'(a)')'  datasets.'
-          write(6,'()')
-        case('exponents')
-          write(6,'()')
-          write(6,'(a)')'Variable: exponents'
-          write(6,'()')
-          write(6,'(a)')'  This sets the exponents to be used in the fitting &
-             &function.  The value can be'
-          write(6,'(a)')'  specified as a list, e.g., "set exponents 0 1.5 3", &
-             &or as an integer range,'
-          write(6,'(a)')'  e.g., "set exponents 0:2".  Note that the form of &
-             &the fitting function is'
-          write(6,'(a)')'  global, so the "for <set-list>" syntax does not &
-             &apply to this variable.'
-          write(6,'()')
-        case('range')
-          write(6,'()')
-          write(6,'(a)')'Variable: range'
-          write(6,'()')
-          write(6,'(a)')'  This sets the data mask to apply to all datasets. &
-             &The value can be specified'
-          write(6,'(a)')'  as <variable> <selector> where:'
-          write(6,'(a)')'  * <variable> is one of x, y, X, or Y (lowercase &
-             &for original and uppercase'
-          write(6,'(a)')'    for transformed values).'
-          write(6,'(a)')'  * <selector> is one of:'
-          write(6,'(a)')'    - <  <threshold>'
-          write(6,'(a)')'    - <= <threshold>'
-          write(6,'(a)')'    - >= <threshold>'
-          write(6,'(a)')'    - >  <threshold>'
-          write(6,'(a)')'    - first <number>'
-          write(6,'(a)')'    - last <number>'
-          write(6,'(a)')'  Note that "range" is a global variable, so the &
-             &"for <set-list>" syntax'
-          write(6,'(a)')'  does not apply to this variable.'
-          write(6,'()')
-        case('shared')
-          write(6,'()')
-          write(6,'(a)')'Variable: shared'
-          write(6,'()')
-          write(6,'(a)')'  This specifies which coefficients are to be shared &
-             &among datasets.  The value'
-          write(6,'(a)')'  is a list of coefficient indices, or "all".  &
-             &Coefficients not flagged'
-          write(6,'(a)')'  as shared take different values for each dataset.'
-          write(6,'()')
         case default
-          write(6,'(a)')'No help for "'//trim(field(2,command))//'".'
+          write(6,'(a)')'No help for command "'//trim(field(2,command))//'".'
         end select
 
       case('quit','exit')
@@ -991,7 +1127,9 @@ CONTAINS
         continue
 
       case default
+        write(6,'()')
         write(6,'(a)')'Command "'//trim(field(1,command))//'" not recognized.'
+        write(6,'()')
       end select
 
     enddo user_loop
@@ -1156,7 +1294,7 @@ CONTAINS
   END SUBROUTINE show_multipoly
 
 
-  SUBROUTINE report_order(ndataset,datasets,drange,fit)
+  SUBROUTINE assess_fit(ndataset,datasets,drange,fit,deval,eval_iset)
     !------------------------------------------------!
     ! Test convergence of chi^2/Ndf as a function of !
     ! expansion order.                               !
@@ -1166,19 +1304,19 @@ CONTAINS
     TYPE(dataset),POINTER :: datasets(:)
     TYPE(range_def),INTENT(in) :: drange
     TYPE(fit_params),INTENT(in) :: fit
+    TYPE(eval_def),INTENT(in) :: deval
+    INTEGER,INTENT(in) :: eval_iset
     TYPE(fit_params),POINTER :: tfit=>null()
     LOGICAL weighted
-    INTEGER tot_nxy,tot_nparam,iset,npoly,nx,nderiv,nrandom
+    INTEGER tot_nxy,tot_nparam,iset,npoly,nrandom,ix
     DOUBLE PRECISION chi2
-    DOUBLE PRECISION,ALLOCATABLE :: a(:,:),da(:,:),tx_target(:),&
-       &fmean(:,:),ferr(:,:)
+    DOUBLE PRECISION,ALLOCATABLE :: a(:,:),da(:,:),fmean(:,:),ferr(:,:)
 
     ! FIXME - expose these parameters.
-    nx=1
-    nderiv=0
     nrandom=10000
-    allocate(tx_target(nx),fmean(nx,ndataset),ferr(nx,ndataset))
-    tx_target(1)=0.d0
+
+    ! Initialize.
+    allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset))
 
     ! Prepare combined dataset arrays.
     weighted=datasets(1)%rtxy%have_dx.or.datasets(1)%rtxy%have_dy
@@ -1189,8 +1327,22 @@ CONTAINS
 
     ! Loop over expansion orders.
     write(6,'()')
-    write(6,'(2x,a5,1x,3(1x,a12))')'Order','chi^2/Ndf','f1    ','df1    '
-    write(6,'(2x,45("-"))')
+    write(6,'(2x,a5,1x,1(1x,a12))',advance='no')'Order','chi^2/Ndf'
+    do ix=1,deval%n
+      do iset=1,ndataset
+        if(eval_iset==0.or.eval_iset==iset)write(6,'(2(1x,a12))',advance='no')&
+           &'f'//trim(i2s(iset))//'(X'//trim(i2s(ix))//')  ',&
+           &'df'//trim(i2s(iset))//'(X'//trim(i2s(ix))//')  '
+      enddo ! iset
+    enddo ! ix
+    write(6,'()')
+    if(eval_iset==0)then
+      write(6,'(2x,'//trim(i2s(19+26*deval%n*ndataset))//'("-"))')
+    elseif(eval_iset>0.and.eval_iset<ndataset)then
+      write(6,'(2x,'//trim(i2s(19+26*deval%n))//'("-"))')
+    else
+      write(6,'(2x,'//trim(i2s(19))//'("-"))')
+    endif
     do npoly=1,fit%npoly
       ! Allocate work arrays.
       allocate(tfit)
@@ -1205,9 +1357,16 @@ CONTAINS
         ! Perform fit and report.
         call perform_multifit(ndataset,datasets,tfit,weighted,chi2,a,da)
         call eval_multifit_monte_carlo(ndataset,datasets,drange,tfit,nrandom,&
-           &nderiv,.false.,nx,tx_target,fmean,ferr)
-        write(6,'(2x,i5,1x,3(1x,es12.4))')npoly-1,&
-           &chi2/dble(tot_nxy-tot_nparam),fmean(1,1),ferr(1,1)
+           &deval,fmean,ferr)
+        write(6,'(2x,i5,2x,es12.4)',advance='no')npoly-1,&
+           &chi2/dble(tot_nxy-tot_nparam)
+        do ix=1,deval%n
+          do iset=1,ndataset
+            if(eval_iset==0.or.eval_iset==iset)write(6,'(2(1x,es12.4))',&
+               &advance='no')fmean(1,iset),ferr(1,iset)
+          enddo ! iset
+        enddo ! ix
+        write(6,'()')
       endif
       ! Destroy work arrays.
       deallocate(a,da)
@@ -1215,13 +1374,19 @@ CONTAINS
       deallocate(tfit)
       nullify(tfit)
     enddo ! npoly
-    write(6,'(2x,45("-"))')
+    if(eval_iset==0)then
+      write(6,'(2x,'//trim(i2s(19+26*deval%n*ndataset))//'("-"))')
+    elseif(eval_iset>0.and.eval_iset<ndataset)then
+      write(6,'(2x,'//trim(i2s(19+26*deval%n))//'("-"))')
+    else
+      write(6,'(2x,'//trim(i2s(19))//'("-"))')
+    endif
     write(6,'()')
 
-  END SUBROUTINE report_order
+  END SUBROUTINE assess_fit
 
 
-  SUBROUTINE report_size(ndataset,datasets,fit)
+  SUBROUTINE assess_range(ndataset,datasets,fit,deval,eval_iset)
     !------------------------------------------------!
     ! Test convergence of chi^2/Ndf as a function of !
     ! number of data points.                         !
@@ -1230,27 +1395,26 @@ CONTAINS
     INTEGER,INTENT(in) :: ndataset
     TYPE(dataset),INTENT(in) :: datasets(:)
     TYPE(fit_params),POINTER :: fit
+    TYPE(eval_def),INTENT(in) :: deval
+    INTEGER,INTENT(in) :: eval_iset
     TYPE(dataset),POINTER :: tdatasets(:)
     TYPE(xydata),POINTER :: xy=>null()
     TYPE(range_def) drange
     LOGICAL weighted
-    INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,nx,nderiv,nrandom
+    INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,nrandom,ix
     INTEGER,ALLOCATABLE :: indx(:)
     DOUBLE PRECISION chi2
     DOUBLE PRECISION,ALLOCATABLE :: txall(:),txgrid(:),a(:,:),da(:,:),&
-       &tx_target(:),fmean(:,:),ferr(:,:)
-
-    ! FIXME - use user-selected criterion to drop points.
-    ! FIXME - use a less granular criterion to drop points.
+       &fmean(:,:),ferr(:,:)
 
     ! FIXME - expose these parameters.
-    nx=1
-    nderiv=0
+    drange%var='X'
+    drange%op='<='
+    drange%size=0
     nrandom=10000
-    allocate(tx_target(nx),fmean(nx,ndataset),ferr(nx,ndataset))
-    tx_target(1)=0.d0
 
     ! Initialize.
+    allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset))
     weighted=datasets(1)%rtxy%have_dx.or.datasets(1)%rtxy%have_dy
     tot_nparam=count(fit%share)+ndataset*count(.not.fit%share)
 
@@ -1301,14 +1465,25 @@ CONTAINS
 
     ! Loop over data to remove.
     write(6,'()')
-    write(6,'(2x,a5,1x,3(1x,a12))')'Ndata','chi^2/Ndf','f1    ','df1    '
-    write(6,'(2x,45("-"))')
+    write(6,'(2x,a5,1x,1(1x,a12))',advance='no')'Ndata','chi^2/Ndf'
+    do ix=1,deval%n
+      do iset=1,ndataset
+        if(eval_iset==0.or.eval_iset==iset)write(6,'(2(1x,a12))',advance='no')&
+           &'f'//trim(i2s(iset))//'(X'//trim(i2s(ix))//')  ',&
+           &'df'//trim(i2s(iset))//'(X'//trim(i2s(ix))//')  '
+      enddo ! iset
+    enddo ! ix
+    write(6,'()')
+    if(eval_iset==0)then
+      write(6,'(2x,'//trim(i2s(19+26*deval%n*ndataset))//'("-"))')
+    elseif(eval_iset>0.and.eval_iset<ndataset)then
+      write(6,'(2x,'//trim(i2s(19+26*deval%n))//'("-"))')
+    else
+      write(6,'(2x,'//trim(i2s(19))//'("-"))')
+    endif
     do igrid=ngrid,1,-1
       ! Apply range.
-      drange%var='X'
-      drange%op='<='
       drange%thres=txgrid(igrid)
-      drange%size=0
       tot_nxy=0
       do iset=1,ndataset
         call refresh_dataset(tdatasets(iset),drange)
@@ -1318,12 +1493,25 @@ CONTAINS
         ! Perform fit and report.
         call perform_multifit(ndataset,tdatasets,fit,weighted,chi2,a,da)
         call eval_multifit_monte_carlo(ndataset,tdatasets,drange,fit,nrandom,&
-           &nderiv,.false.,nx,tx_target,fmean,ferr)
-        write(6,'(2x,i5,1x,3(1x,es12.4))')tot_nxy,&
-           &chi2/dble(tot_nxy-tot_nparam),fmean(1,1),ferr(1,1)
+           &deval,fmean,ferr)
+        write(6,'(2x,i5,2x,es12.4)',advance='no')tot_nxy,&
+           &chi2/dble(tot_nxy-tot_nparam)
+        do ix=1,deval%n
+          do iset=1,ndataset
+            if(eval_iset==0.or.eval_iset==iset)write(6,'(2(1x,es12.4))',&
+               &advance='no')fmean(1,iset),ferr(1,iset)
+          enddo ! iset
+        enddo ! ix
+        write(6,'()')
       endif
     enddo ! igrid
-    write(6,'(2x,45("-"))')
+    if(eval_iset==0)then
+      write(6,'(2x,'//trim(i2s(19+26*deval%n*ndataset))//'("-"))')
+    elseif(eval_iset>0.and.eval_iset<ndataset)then
+      write(6,'(2x,'//trim(i2s(19+26*deval%n))//'("-"))')
+    else
+      write(6,'(2x,'//trim(i2s(19))//'("-"))')
+    endif
     write(6,'()')
 
     ! Clean up.
@@ -1342,10 +1530,10 @@ CONTAINS
     deallocate(tdatasets)
     nullify(tdatasets)
 
-  END SUBROUTINE report_size
+  END SUBROUTINE assess_range
 
 
-  SUBROUTINE report_dual(ndataset,datasets,fit)
+  SUBROUTINE assess_fit_range(ndataset,datasets,fit,deval,eval_iset)
     !------------------------------------------------!
     ! Test convergence of chi^2/Ndf as a function of !
     ! expansion order and number of data points.     !
@@ -1354,28 +1542,28 @@ CONTAINS
     INTEGER,INTENT(in) :: ndataset
     TYPE(dataset),POINTER :: datasets(:)
     TYPE(fit_params),POINTER :: fit
+    TYPE(eval_def),INTENT(in) :: deval
+    INTEGER,INTENT(in) :: eval_iset
     TYPE(dataset),POINTER :: tdatasets(:)
     TYPE(xydata),POINTER :: xy=>null()
     TYPE(range_def) drange
     TYPE(fit_params),POINTER :: tfit=>null()
     LOGICAL weighted
-    INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,npoly,nx,nderiv,nrandom
+    INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,npoly,nrandom,ix
     INTEGER,ALLOCATABLE :: indx(:)
     DOUBLE PRECISION chi2
     DOUBLE PRECISION,ALLOCATABLE :: txall(:),txgrid(:),a(:,:),da(:,:),&
-       &tx_target(:),fmean(:,:),ferr(:,:)
+       &fmean(:,:),ferr(:,:)
 
-    ! FIXME - use user-selected criterion to drop points.
-    ! FIXME - use a less granular criterion to drop points.
 
     ! FIXME - expose these parameters.
-    nx=1
-    nderiv=0
+    drange%var='X'
+    drange%op='<='
+    drange%size=0
     nrandom=10000
-    allocate(tx_target(nx),fmean(nx,ndataset),ferr(nx,ndataset))
-    tx_target(1)=0.d0
 
     ! Initialize.
+    allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset))
     weighted=datasets(1)%rtxy%have_dx.or.datasets(1)%rtxy%have_dy
 
     ! Compute grid.
@@ -1422,9 +1610,23 @@ CONTAINS
 
     ! Loop over data to remove.
     write(6,'()')
-    write(6,'(2x,a5,2x,a5,1x,3(1x,a12))')'Ndata','Order','chi^2/Ndf','f1    ',&
-       &'df1    '
-    write(6,'(2x,52("-"))')
+    write(6,'(2x,a5,2x,a5,1x,1(1x,a12))',advance='no')'Ndata','Order',&
+       &'chi^2/Ndf'
+    do ix=1,deval%n
+      do iset=1,ndataset
+        if(eval_iset==0.or.eval_iset==iset)write(6,'(2(1x,a12))',advance='no')&
+           &'f'//trim(i2s(iset))//'(X'//trim(i2s(ix))//')  ',&
+           &'df'//trim(i2s(iset))//'(X'//trim(i2s(ix))//')  '
+      enddo ! iset
+    enddo ! ix
+    write(6,'()')
+    if(eval_iset==0)then
+      write(6,'(2x,'//trim(i2s(26+26*deval%n*ndataset))//'("-"))')
+    elseif(eval_iset>0.and.eval_iset<ndataset)then
+      write(6,'(2x,'//trim(i2s(26+26*deval%n))//'("-"))')
+    else
+      write(6,'(2x,'//trim(i2s(26))//'("-"))')
+    endif
     do igrid=ngrid,1,-1
       ! Apply range.
       drange%var='X'
@@ -1451,9 +1653,16 @@ CONTAINS
           ! Perform fit and report.
           call perform_multifit(ndataset,tdatasets,tfit,weighted,chi2,a,da)
           call eval_multifit_monte_carlo(ndataset,tdatasets,drange,tfit,&
-             &nrandom,nderiv,.false.,nx,tx_target,fmean,ferr)
-          write(6,'(2x,i5,2x,i5,1x,3(1x,es12.4))')tot_nxy,npoly-1,&
-             &chi2/dble(tot_nxy-tot_nparam),fmean(1,1),ferr(1,1)
+             &nrandom,deval,fmean,ferr)
+          write(6,'(2x,i5,2x,i5,2x,es12.4)',advance='no')tot_nxy,npoly-1,&
+             &chi2/dble(tot_nxy-tot_nparam)
+          do ix=1,deval%n
+            do iset=1,ndataset
+              if(eval_iset==0.or.eval_iset==iset)write(6,'(2(1x,es12.4))',&
+                 &advance='no')fmean(1,iset),ferr(1,iset)
+            enddo ! iset
+          enddo ! ix
+          write(6,'()')
         endif
         ! Destroy work arrays.
         deallocate(a,da)
@@ -1462,7 +1671,13 @@ CONTAINS
         nullify(tfit)
       enddo ! npoly
     enddo ! nxy
-    write(6,'(2x,52("-"))')
+    if(eval_iset==0)then
+      write(6,'(2x,'//trim(i2s(26+26*deval%n*ndataset))//'("-"))')
+    elseif(eval_iset>0.and.eval_iset<ndataset)then
+      write(6,'(2x,'//trim(i2s(26+26*deval%n))//'("-"))')
+    else
+      write(6,'(2x,'//trim(i2s(26))//'("-"))')
+    endif
     write(6,'()')
 
     ! Clean up.
@@ -1480,7 +1695,7 @@ CONTAINS
     deallocate(tdatasets)
     nullify(tdatasets)
 
-  END SUBROUTINE report_dual
+  END SUBROUTINE assess_fit_range
 
 
   SUBROUTINE report_statistics(ndataset,datasets)
@@ -1548,7 +1763,7 @@ CONTAINS
   END SUBROUTINE report_statistics
 
 
-  SUBROUTINE evaluate_fit(ndataset,datasets,fit,drange)
+  SUBROUTINE evaluate_fit(ndataset,datasets,fit,drange,deval)
     !-------------------------------------------------!
     ! Evaluate value or derivative of fit at provided !
     ! points.                                         !
@@ -1558,27 +1773,26 @@ CONTAINS
     TYPE(dataset),INTENT(in) :: datasets(ndataset)
     TYPE(fit_params),INTENT(in) :: fit
     TYPE(range_def),INTENT(in) :: drange
-    INTEGER nx,nderiv,nrandom,iset,ix
-    DOUBLE PRECISION,ALLOCATABLE :: tx_target(:),fmean(:,:),ferr(:,:)
+    TYPE(eval_def),INTENT(in) :: deval
+    INTEGER nrandom,iset,ix
+    DOUBLE PRECISION,ALLOCATABLE :: fmean(:,:),ferr(:,:)
 
     ! FIXME - expose these parameters.
-    nx=1
-    nderiv=0
     nrandom=10000
-    allocate(tx_target(nx),fmean(nx,ndataset),ferr(nx,ndataset))
-    tx_target(1)=0.d0
+
+    allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset))
 
     ! Evaluate.
     call eval_multifit_monte_carlo(ndataset,datasets,drange,fit,&
-       &nrandom,nderiv,.false.,nx,tx_target,fmean,ferr)
+       &nrandom,deval,fmean,ferr)
 
     ! Report.
     write(6,'()')
     write(6,'(2x,a4,1x,3(1x,a16))')'set','X       ','f       ','df       '
     write(6,'(2x,56("-"))')
     do iset=1,ndataset
-      do ix=1,nx
-        write(6,'(2x,i4,1x,3(1x,f16.12))')iset,tx_target(ix),&
+      do ix=1,deval%n
+        write(6,'(2x,i4,1x,3(1x,f16.12))')iset,deval%x(ix),&
            &fmean(ix,iset),ferr(ix,iset)
       enddo ! ix
     enddo ! iset
@@ -2595,8 +2809,8 @@ CONTAINS
 
 
   SUBROUTINE eval_multifit_monte_carlo(ndataset,datasets,drange,fit,nrandom,&
-     &nderiv,eval_relative,nx,tx_target,fmean,ferr,fmean_1s,ferr_1s,fmean_2s,&
-     &ferr_2s,fmed,fskew,fkurt,amean,aerr)
+     &deval,fmean,ferr,fmean_1s,ferr_1s,fmean_2s,ferr_2s,fmed,fskew,fkurt,&
+     &amean,aerr)
     !------------------------------------------------------!
     ! Perform Monte Carlo sampling of data space to obtain !
     ! fit values or derivatives at specified points with   !
@@ -2607,21 +2821,23 @@ CONTAINS
     TYPE(dataset),INTENT(in) :: datasets(ndataset)
     TYPE(range_def),INTENT(in) :: drange
     TYPE(fit_params),INTENT(in) :: fit
+    TYPE(eval_def),INTENT(in) :: deval
+    INTEGER,INTENT(in) :: nrandom
+    DOUBLE PRECISION,INTENT(inout),OPTIONAL :: &
+       &fmean(deval%n,ndataset),ferr(deval%n,ndataset),&
+       &fmean_1s(deval%n,ndataset),ferr_1s(deval%n,ndataset),&
+       &fmean_2s(deval%n,ndataset),ferr_2s(deval%n,ndataset),&
+       &fmed(deval%n,ndataset),fskew(deval%n,ndataset),&
+       &fkurt(deval%n,ndataset),&
+       &amean(fit%npoly,ndataset),aerr(fit%npoly,ndataset)
+    ! Pointers.
     TYPE(dataset),POINTER :: tdatasets(:)=>null()
     TYPE(xydata),POINTER :: xy=>null()
-    INTEGER,INTENT(in) :: nrandom,nderiv,nx
-    LOGICAL,INTENT(in) :: eval_relative
-    DOUBLE PRECISION,INTENT(in) :: tx_target(nx)
-    DOUBLE PRECISION,INTENT(inout),OPTIONAL :: fmean(nx,ndataset),&
-       &ferr(nx,ndataset),fmean_1s(nx,ndataset),ferr_1s(nx,ndataset),&
-       &fmean_2s(nx,ndataset),ferr_2s(nx,ndataset),fmed(nx,ndataset),&
-       &fskew(nx,ndataset),fkurt(nx,ndataset),amean(fit%npoly,ndataset),&
-       &aerr(fit%npoly,ndataset)
     ! Polynomials resulting from operations on fitting polynomial.
     INTEGER op_npoly
     DOUBLE PRECISION op_pow(fit%npoly),op_a(fit%npoly)
     ! Random sampling arrays.
-    DOUBLE PRECISION f_array(nrandom,nx,ndataset),w_vector(nrandom),&
+    DOUBLE PRECISION f_array(nrandom,deval%n,ndataset),w_vector(nrandom),&
        &a_array(nrandom,fit%npoly,ndataset)
     DOUBLE PRECISION ran_a(fit%npoly,ndataset)
     ! Distribution analysis.
@@ -2670,12 +2886,12 @@ CONTAINS
         op_npoly=fit%npoly
         op_pow=fit%pow
         op_a=a(:,iset)
-        do ideriv=1,nderiv
+        do ideriv=1,deval%nderiv
           call deriv_poly(op_npoly,op_pow,op_a)
         enddo ! ideriv
-        if(eval_relative)f0=eval_poly(op_npoly,op_pow,op_a,-fit%x0)
-        do ix=1,nx
-          t1=eval_poly(op_npoly,op_pow,op_a,tx_target(ix)-fit%x0)
+        if(deval%rel)f0=eval_poly(op_npoly,op_pow,op_a,-fit%x0)
+        do ix=1,deval%n
+          t1=eval_poly(op_npoly,op_pow,op_a,deval%x(ix)-fit%x0)
           f_array(irandom,ix,iset)=t1-f0
         enddo ! ix
       enddo ! iset
@@ -2690,7 +2906,7 @@ CONTAINS
         if(present(amean))amean(ipoly,iset)=t1
         if(present(aerr))aerr(ipoly,iset)=sqrt(var)
       enddo ! ipoly
-      do ix=1,nx
+      do ix=1,deval%n
         call characterize_dist(nrandom,f_array(:,ix,iset),w_vector,mean=t1,&
            &var=var,skew=skew,kurt=kurt)
         if(present(fmean))fmean(ix,iset)=t1
