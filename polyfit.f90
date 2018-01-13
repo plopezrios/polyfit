@@ -13,7 +13,8 @@ PROGRAM polyfit
   TYPE xydata
     INTEGER nxy
     LOGICAL have_dx,have_dy
-    DOUBLE PRECISION,ALLOCATABLE :: x(:),y(:),dx(:),dy(:)
+    DOUBLE PRECISION,POINTER :: x(:)=>null(),y(:)=>null(),dx(:)=>null(),&
+       &dy(:)=>null()
   END TYPE xydata
   TYPE dataset
     INTEGER itransfx,itransfy
@@ -86,6 +87,10 @@ CONTAINS
     ! Input file information.
     INTEGER ncolumn,icol_x,icol_y,icol_dx,icol_dy
     CHARACTER(256) fname
+    ! Input file search facility.
+    INTEGER nsearch
+    INTEGER,ALLOCATABLE :: fsearch(:)
+    CHARACTER(1024),ALLOCATABLE :: search(:)
     ! Misc variables.
     CHARACTER(8192) command,token
     INTEGER i,ifield,ierr,ierr1,ierr2,ierr3,ierr4
@@ -271,13 +276,15 @@ CONTAINS
           cycle user_loop
         endif
 
+        ! TEMP
+        nsearch=0
+        allocate(fsearch(nsearch),search(nsearch))
+
         ! Read data.
         allocate(xy)
-        xy%nxy=nxy
-        xy%have_dx=icol_dx>0
-        xy%have_dy=icol_dy>0
-        allocate(xy%x(nxy),xy%y(nxy),xy%dx(nxy),xy%dy(nxy))
-        call read_file(fname,ncolumn,icol_x,icol_y,icol_dx,icol_dy,xy,ierr)
+        call read_file(fname,icol_x,icol_y,icol_dx,icol_dy,nsearch,fsearch,&
+           &search,xy,ierr)
+        deallocate(fsearch,search)
 
         ! Check data ar compatible with current transformations.
         if(ierr==0)then
@@ -322,6 +329,8 @@ CONTAINS
           case(-10)
             write(6,'(a)')'"'//trim(fname)//'" contains y<0, incompatible &
                &with current yscale.'
+          case default
+            write(6,'(a)')'Problem reading "'//trim(fname)//'".'
           end select
           write(6,'()')
           deallocate(xy%x,xy%y,xy%dx,xy%dy)
@@ -2572,9 +2581,8 @@ CONTAINS
     IMPLICIT NONE
     CHARACTER(*),INTENT(in) :: fname
     INTEGER,INTENT(out) :: nline,ncolumn
-    CHARACTER(1024) char1024
-    INTEGER i,ipos,ierr
-    DOUBLE PRECISION t1
+    CHARACTER(8192) line
+    INTEGER ipos,ierr,ncol
     ! Constants.
     INTEGER, PARAMETER :: io=10
 
@@ -2587,35 +2595,27 @@ CONTAINS
     if(ierr/=0)return
     nline=0
 
-    ! Look for first line containing data.
+    ! Loop over lines.
     do
-      read(io,'(a)',iostat=ierr)char1024
+      read(io,'(a)',iostat=ierr)line
       if(ierr<0)exit
       if(ierr>0)then
         nline=-2 ! flag reading error
         exit
       endif
-      char1024=adjustl(char1024)
+      line=adjustl(line)
       ! Skip comments.
-      ipos=scan(char1024,'#!')
+      ipos=scan(line,'#!')
       if(ipos==1)cycle
-      if(ipos>1)char1024=char1024(1:ipos-1)
+      if(ipos>1)line=line(1:ipos-1)
       ! Skip empty lines.
-      if(len_trim(char1024)==0)cycle
+      if(len_trim(line)==0)cycle
+      ! Find how many elements there are in this line.
+      ncol=nfield(line)
       if(ncolumn==0)then
-        ! Find how many elements there are in this line.
-        do
-          read(char1024,*,iostat=ierr)(t1,i=1,ncolumn+1)
-          if(ierr/=0)exit
-          ncolumn=ncolumn+1
-        enddo
+        ncolumn=ncol
       else
-        ! Ensure we can read ncolumn elements in this line.
-        do
-          read(char1024,*,iostat=ierr)(t1,i=1,ncolumn)
-          if(ierr==0)exit
-          ncolumn=ncolumn-1
-        enddo
+        ncolumn=min(ncolumn,ncol)
       endif
       if(ncolumn<1)then
         nline=-3 ! flag column count problem
@@ -2630,18 +2630,21 @@ CONTAINS
   END SUBROUTINE check_file
 
 
-  SUBROUTINE read_file(fname,ncolumn,icol_x,icol_y,icol_dx,icol_dy,xy,ierr)
+  SUBROUTINE read_file(fname,icol_x,icol_y,icol_dx,icol_dy,nsearch,fsearch,&
+     &search,xy,ierr)
     !-------------------------------------!
     ! Read in the data in the input file. !
     !-------------------------------------!
     IMPLICIT NONE
-    INTEGER,INTENT(in) :: ncolumn,icol_x,icol_y,icol_dx,icol_dy
+    INTEGER,INTENT(in) :: icol_x,icol_y,icol_dx,icol_dy,nsearch,&
+       &fsearch(nsearch)
+    CHARACTER(*),INTENT(in) :: search(nsearch)
     TYPE(xydata),POINTER :: xy
     CHARACTER(*),INTENT(in) :: fname
     INTEGER,INTENT(inout) :: ierr
-    DOUBLE PRECISION tvec(ncolumn)
-    INTEGER i,ipos,pline
-    CHARACTER(1024) line
+    CHARACTER(8192) line
+    INTEGER i,ipos,isearch,jerr
+    DOUBLE PRECISION t1,t2
     ! Constants.
     INTEGER, PARAMETER :: io=10
 
@@ -2653,53 +2656,69 @@ CONTAINS
     endif
 
     ! Initialize.
-    pline=0
-    xy%x=(/(dble(i),i=1,xy%nxy)/)
-    xy%y=(/(dble(i),i=1,xy%nxy)/)
-    xy%dx=0.d0
-    xy%dy=0.d0
+    xy%nxy=0
+    xy%have_dx=icol_dx>0
+    xy%have_dy=icol_dy>0
 
-    ! Loop over data lines.
-    do i=1,xy%nxy
-      ! Load next line containing data.
-      do
-        read(io,'(a)',iostat=ierr)line
-        if(ierr<0)then
-          ierr=-2 ! flag unexpected EOF
-          exit
-        endif
-        pline=pline+1
-        if(ierr>0)then
-          ierr=-3 ! flag reading error
-          exit
-        endif
-        line=adjustl(line)
-        ! Skip comments.
-        ipos=scan(line,'#!')
-        if(ipos==1)cycle
-        if(ipos>1)line=line(1:ipos-1)
-        ! Skip empty lines.
-        if(len_trim(line)==0)cycle
-        exit
-      enddo
-      ! Read data point from string.
-      read(line,*,iostat=ierr)tvec(1:ncolumn)
-      if(ierr/=0)then
-        ierr=-4 ! flag data parsing error
+    ! Loop over lines.
+    i=0
+    do
+      read(io,'(a)',iostat=ierr)line
+      if(ierr<0)then
+        ierr=0
         exit
       endif
-      ! Set data and check that error bars are positive.
-      if(icol_x>0)xy%x(i)=tvec(icol_x)
-      if(icol_y>0)xy%y(i)=tvec(icol_y)
+      if(ierr>0)then
+        ierr=-3 ! flag reading error (should not happen)
+        exit
+      endif
+      line=adjustl(line)
+      ! Skip comments.
+      ipos=scan(line,'#!')
+      if(ipos==1)cycle
+      if(ipos>1)line=line(1:ipos-1)
+      ! Skip empty lines.
+      if(len_trim(line)==0)cycle
+      ! Verify that this line contains all search strings.
+      do isearch=1,nsearch
+        ! Test for string equality.
+        if(trim(field(fsearch(isearch),line))/=trim(search(isearch)))then
+          ! Test for numerical equality.
+          read(search(isearch),*,iostat=jerr)t1
+          if(jerr/=0)exit
+          t2=dble_field(fsearch(isearch),line,jerr)
+          if(jerr/=0)exit
+          if(.not.are_equal(t1,t2))exit
+        endif ! string inequality
+      enddo ! isearch
+      if(isearch<=nsearch)cycle
+      ! Enlarge arrays.
+      i=i+1
+      xy%nxy=i
+      call resize_pointer_dble1((/i/),xy%x,init=dble(i))
+      call resize_pointer_dble1((/i/),xy%y,init=dble(i))
+      call resize_pointer_dble1((/i/),xy%dx,init=0.d0)
+      call resize_pointer_dble1((/i/),xy%dy,init=0.d0)
+      ! Read data point from string.
+      if(icol_x>0)then
+        xy%x(i)=dble_field(icol_x,line,ierr)
+        if(ierr/=0)exit
+      endif
+      if(icol_y>0)then
+        xy%y(i)=dble_field(icol_y,line,ierr)
+        if(ierr/=0)exit
+      endif
       if(icol_dx>0)then
-        xy%dx(i)=tvec(icol_dx)
+        xy%dx(i)=dble_field(icol_dx,line,ierr)
+        if(ierr/=0)exit
         if(xy%dx(i)<=0.d0)then
           ierr=-5 ! flag non-positive dx
           exit
         endif
       endif ! have_dx
       if(icol_dy>0)then
-        xy%dy(i)=tvec(icol_dy)
+        xy%dy(i)=dble_field(icol_dy,line,ierr)
+        if(ierr/=0)exit
         if(xy%dy(i)<=0.d0)then
           ierr=-6 ! flag non-poistive dy
           exit
@@ -3348,6 +3367,44 @@ CONTAINS
     endif
     stop
   END SUBROUTINE quit
+
+
+  SUBROUTINE resize_pointer_dble1(dims,pt,init)
+    !------------------------------------------------------!
+    ! Allocate or resize a first-rank dble pointer PT to   !
+    ! size DIMS, keeping any existing data untouched. New  !
+    ! elements initialized to zero unless INIT specified.  !
+    !------------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: dims(1)
+    DOUBLE PRECISION,INTENT(in),OPTIONAL :: init
+    DOUBLE PRECISION,POINTER :: pt(:),pt_new(:)=>null()
+    DOUBLE PRECISION,PARAMETER :: init_default=0.d0
+    INTEGER old_dims(1)
+    if(.not.associated(pt))then
+      allocate(pt(dims(1)))
+      if(present(init))then
+        pt=init
+      else
+        pt=init_default
+      endif
+      return
+    endif
+    old_dims=shape(pt)
+    if(all(old_dims==dims))return
+    allocate(pt_new(dims(1)))
+    if(any(old_dims<dims))then
+      if(present(init))then
+        pt_new=init
+      else
+        pt_new=init_default
+      endif
+    endif
+    pt_new(1:min(old_dims(1),dims(1)))=pt(1:min(old_dims(1),dims(1)))
+    deallocate(pt)
+    pt=>pt_new
+    nullify(pt_new)
+  END SUBROUTINE resize_pointer_dble1
 
 
 END PROGRAM polyfit
