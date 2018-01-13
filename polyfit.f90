@@ -88,9 +88,10 @@ CONTAINS
     INTEGER ncolumn,icol_x,icol_y,icol_dx,icol_dy
     CHARACTER(256) fname
     ! Input file search facility.
+    INTEGER,PARAMETER :: search_size=1024
     INTEGER nsearch
-    INTEGER,ALLOCATABLE :: fsearch(:)
-    CHARACTER(1024),ALLOCATABLE :: search(:)
+    INTEGER,POINTER :: fsearch(:)=>null()
+    CHARACTER(search_size),POINTER :: search(:)=>null()
     ! Misc variables.
     CHARACTER(8192) command,token
     INTEGER i,ifield,ierr,ierr1,ierr2,ierr3,ierr4
@@ -183,6 +184,9 @@ CONTAINS
           cycle user_loop
         end select
 
+        ! Initialize search facility.
+        nsearch=0
+
         ! Get column selection.
         ! Initialize to default column indices.
         icol_x=0
@@ -216,6 +220,7 @@ CONTAINS
               write(6,'(a)')'Syntax error in load command: "type" without &
                  &"using".'
               write(6,'()')
+              if(associated(search))deallocate(fsearch,search)
               cycle user_loop
             endif
             icol_x=0
@@ -251,14 +256,45 @@ CONTAINS
               write(6,'(a)')'Syntax error in load command: unknown type "'//&
                  &trim(field(ifield+1,command))//'".'
               write(6,'()')
+              if(associated(search))deallocate(fsearch,search)
+              cycle user_loop
             end select
-            ifield=ifield+3
+          case('where')
+            ! Add a search clause.
+            if(nfield(command)<ifield+2)then
+              write(6,'(a)')'Syntax error in load command: too few arguments &
+                 &for "where" subcommand"'
+              write(6,'()')
+              if(associated(search))deallocate(fsearch,search)
+              cycle user_loop
+            endif
+            i=int_field(ifield+1,command,ierr)
+            if(ierr/=0)then
+              write(6,'(a)')'Syntax error in load command: invalid column &
+                 &index for "where".'
+              write(6,'()')
+              if(associated(search))deallocate(fsearch,search)
+              cycle user_loop
+            endif
+            if(i<1.or.i>ncolumn)then
+              write(6,'(a)')'Column index out of range in "where" subcommand.'
+              write(6,'()')
+              if(associated(search))deallocate(fsearch,search)
+              cycle user_loop
+            endif
+            nsearch=nsearch+1
+            call resize_pointer_int1((/nsearch/),fsearch)
+            call resize_pointer_char1(search_size,(/nsearch/),search)
+            fsearch(nsearch)=i
+            search(nsearch)=field(ifield+2,command)
+            ifield=ifield+2
           case('')
             exit
           case default
             write(6,'(a)')'Syntax error in load command: unknown subcommand "'&
                &//trim(field(ifield,command))//'".'
             write(6,'()')
+            if(associated(search))deallocate(fsearch,search)
             cycle user_loop
           end select
         enddo ! ifield
@@ -267,21 +303,20 @@ CONTAINS
         if(ierr1/=0.or.ierr2/=0.or.ierr3/=0.or.ierr4/=0)then
           write(6,'(a)')'Problem parsing column indices.'
           write(6,'()')
+          if(associated(search))deallocate(fsearch,search)
           cycle user_loop
         endif
         if(icol_x>ncolumn.or.icol_x<0.or.icol_y>ncolumn.or.icol_y<0.or.&
            &icol_dx>ncolumn.or.icol_dx<0.or.icol_dy>ncolumn.or.icol_dy<0)then
           write(6,'(a)')'Column indices out of range.'
           write(6,'()')
+          if(associated(search))deallocate(fsearch,search)
           cycle user_loop
         endif
 
-        ! TEMP
-        nsearch=0
-        allocate(fsearch(nsearch),search(nsearch))
-
         ! Read data.
         allocate(xy)
+        if(.not.associated(search))allocate(fsearch(nsearch),search(nsearch))
         call read_file(fname,icol_x,icol_y,icol_dx,icol_dy,nsearch,fsearch,&
            &search,xy,ierr)
         deallocate(fsearch,search)
@@ -2682,14 +2717,13 @@ CONTAINS
       ! Verify that this line contains all search strings.
       do isearch=1,nsearch
         ! Test for string equality.
-        if(trim(field(fsearch(isearch),line))/=trim(search(isearch)))then
-          ! Test for numerical equality.
-          read(search(isearch),*,iostat=jerr)t1
-          if(jerr/=0)exit
-          t2=dble_field(fsearch(isearch),line,jerr)
-          if(jerr/=0)exit
-          if(.not.are_equal(t1,t2))exit
-        endif ! string inequality
+        if(trim(field(fsearch(isearch),line))==trim(search(isearch)))cycle
+        ! Test for numerical equality.
+        read(search(isearch),*,iostat=jerr)t1
+        if(jerr/=0)exit
+        t2=dble_field(fsearch(isearch),line,jerr)
+        if(jerr/=0)exit
+        if(.not.are_equal(t1,t2))exit
       enddo ! isearch
       if(isearch<=nsearch)cycle
       ! Enlarge arrays.
@@ -3369,12 +3403,88 @@ CONTAINS
   END SUBROUTINE quit
 
 
+  SUBROUTINE resize_pointer_char1(sz,dims,pt,init)
+    !------------------------------------------------------!
+    ! Allocate or resize a first-rank character pointer PT !
+    ! to size DIMS, keeping any existing data untouched.   !
+    ! New elements initialized to empty string.            !
+    !------------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: sz,dims(1)
+    CHARACTER(sz),INTENT(in),OPTIONAL :: init
+    INTEGER old_dims(1)
+    CHARACTER(0),PARAMETER :: init_default=''
+    CHARACTER(sz),POINTER :: pt(:),pt_new(:)
+    if(.not.associated(pt))then
+      allocate(pt(dims(1)))
+      if(present(init))then
+        pt=init
+      else
+        pt=init_default
+      endif
+      return
+    endif
+    old_dims=shape(pt)
+    if(all(old_dims==dims))return
+    allocate(pt_new(dims(1)))
+    if(any(old_dims<dims))then
+      if(present(init))then
+        pt_new=init
+      else
+        pt_new=init_default
+      endif
+    endif
+    pt_new(1:min(old_dims(1),dims(1)))=pt(1:min(old_dims(1),dims(1)))
+    deallocate(pt)
+    pt=>pt_new
+    nullify(pt_new)
+  END SUBROUTINE resize_pointer_char1
+
+
+  SUBROUTINE resize_pointer_int1(dims,pt,init)
+    !-----------------------------------------------------!
+    ! Allocate or resize a first-rank int pointer PT to   !
+    ! size DIMS, keeping any existing data untouched. New !
+    ! elements initialized to zero unless INIT specified. !
+    !-----------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: dims(1)
+    INTEGER,INTENT(in),OPTIONAL :: init
+    INTEGER,POINTER :: pt(:),pt_new(:)=>null()
+    INTEGER,PARAMETER :: init_default=0
+    INTEGER old_dims(1)
+    if(.not.associated(pt))then
+      allocate(pt(dims(1)))
+      if(present(init))then
+        pt=init
+      else
+        pt=init_default
+      endif
+      return
+    endif
+    old_dims=shape(pt)
+    if(all(old_dims==dims))return
+    allocate(pt_new(dims(1)))
+    if(any(old_dims<dims))then
+      if(present(init))then
+        pt_new=init
+      else
+        pt_new=init_default
+      endif
+    endif
+    pt_new(1:min(old_dims(1),dims(1)))=pt(1:min(old_dims(1),dims(1)))
+    deallocate(pt)
+    pt=>pt_new
+    nullify(pt_new)
+  END SUBROUTINE resize_pointer_int1
+
+
   SUBROUTINE resize_pointer_dble1(dims,pt,init)
-    !------------------------------------------------------!
-    ! Allocate or resize a first-rank dble pointer PT to   !
-    ! size DIMS, keeping any existing data untouched. New  !
-    ! elements initialized to zero unless INIT specified.  !
-    !------------------------------------------------------!
+    !-----------------------------------------------------!
+    ! Allocate or resize a first-rank dble pointer PT to  !
+    ! size DIMS, keeping any existing data untouched. New !
+    ! elements initialized to zero unless INIT specified. !
+    !-----------------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: dims(1)
     DOUBLE PRECISION,INTENT(in),OPTIONAL :: init
