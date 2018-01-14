@@ -718,7 +718,9 @@ CONTAINS
           endif
           fit%share(1:npoly)=.false.
           ! Report.
+          write(6,'(a)')'Fit form set to:'
           write(6,'(2x,a)')trim(print_poly_sym(fit%npoly,fit%pow,fit%X0))
+          write(6,'(2x,a)')'Shared coefficients reset to: none'
           write(6,'()')
 
         case('range')
@@ -863,7 +865,15 @@ CONTAINS
               enddo
             endif
           endif
-          write(6,'(a)')'Set shared coefficients.'
+          write(6,'(a)',advance='no')'Shared coefficients set to:'
+          if(.not.any(fit%share))then
+            write(6,'(a)')' none'
+          else
+            do i=1,fit%npoly
+              if(fit%share(i))write(6,'(a)',advance='no')' k'//trim(i2s(i))
+            enddo ! i
+            write(6,'()')
+          endif
           write(6,'()')
 
         case('weights')
@@ -1492,12 +1502,12 @@ CONTAINS
     TYPE(eval_def),INTENT(in) :: deval
     INTEGER,INTENT(in) :: eval_iset
     TYPE(fit_params),POINTER :: tfit=>null()
-    INTEGER tot_nxy,tot_nparam,iset,npoly,ix
-    DOUBLE PRECISION chi2,chi2err
-    DOUBLE PRECISION,ALLOCATABLE :: fmean(:,:),ferr(:,:)
-
-    ! Initialize.
-    allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset))
+    INTEGER tot_nxy,tot_nparam,iset,npoly,ix,prev_npoly
+    DOUBLE PRECISION chi2,chi2err,fmean(deval%n,ndataset),&
+       &ferr(deval%n,ndataset),t1,t2,min_chi2
+    DOUBLE PRECISION chi2_all(fit%npoly),chi2err_all(fit%npoly),&
+       &fmean_all(deval%n,ndataset,fit%npoly),&
+       &ferr_all(deval%n,ndataset,fit%npoly)
 
     ! Prepare combined dataset arrays.
     tot_nxy=0
@@ -1505,17 +1515,17 @@ CONTAINS
       tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
     enddo ! iset
 
-    ! Loop over expansion orders.
+    ! Print table header.
     write(6,'()')
     write(6,'(2x,a5,1x,2(1x,a12))',advance='no')'Order','chi^2/Ndf',&
        &'dchi^2/Ndf'
-    do ix=1,deval%n
-      do iset=1,ndataset
+    do iset=1,ndataset
+      do ix=1,deval%n
         if(eval_iset==0.or.eval_iset==iset)write(6,'(2(1x,a12))',advance='no')&
            &'f'//trim(i2s(iset))//'(X'//trim(i2s(ix))//')  ',&
            &'df'//trim(i2s(iset))//'(X'//trim(i2s(ix))//')  '
-      enddo ! iset
-    enddo ! ix
+      enddo ! ix
+    enddo ! iset
     write(6,'()')
     if(eval_iset==0)then
       write(6,'(2x,'//trim(i2s(32+26*deval%n*ndataset))//'("-"))')
@@ -1524,6 +1534,14 @@ CONTAINS
     else
       write(6,'(2x,'//trim(i2s(32))//'("-"))')
     endif
+
+    ! Initialize test results to "invalid".
+    chi2_all=-1.d0
+    chi2err_all=-1.d0
+    fmean_all=0.d0
+    ferr_all=-1.d0
+
+    ! Loop over expansion orders.
     do npoly=1,fit%npoly
       ! Allocate work arrays.
       allocate(tfit)
@@ -1539,12 +1557,16 @@ CONTAINS
         ! Perform fit and report.
         call eval_multifit_monte_carlo(ndataset,datasets,drange,tfit,mcparams,&
            &deval,fmean,ferr,chi2,chi2err)
+        chi2_all(npoly)=chi2/dble(tot_nxy-tot_nparam)
+        chi2err_all(npoly)=chi2err/dble(tot_nxy-tot_nparam)
+        fmean_all(:,:,npoly)=fmean
+        ferr_all(:,:,npoly)=ferr
         write(6,'(2x,i5,1x,2(1x,es12.4))',advance='no')npoly-1,&
            &chi2/dble(tot_nxy-tot_nparam),chi2err/dble(tot_nxy-tot_nparam)
         do ix=1,deval%n
           do iset=1,ndataset
             if(eval_iset==0.or.eval_iset==iset)write(6,'(2(1x,es12.4))',&
-               &advance='no')fmean(1,iset),ferr(1,iset)
+               &advance='no')fmean(ix,iset),ferr(ix,iset)
           enddo ! iset
         enddo ! ix
         write(6,'()')
@@ -1554,12 +1576,52 @@ CONTAINS
       deallocate(tfit)
       nullify(tfit)
     enddo ! npoly
+
+    ! Print table footer.
     if(eval_iset==0)then
       write(6,'(2x,'//trim(i2s(32+26*deval%n*ndataset))//'("-"))')
     elseif(eval_iset>0.and.eval_iset<ndataset)then
       write(6,'(2x,'//trim(i2s(32+26*deval%n))//'("-"))')
     else
       write(6,'(2x,'//trim(i2s(32))//'("-"))')
+    endif
+    write(6,'()')
+
+    ! Report best choice of parameters.
+    ! Locate minimum chi2/Ndf.
+    min_chi2=-1.d0
+    do npoly=1,fit%npoly
+      if(chi2_all(npoly)<0.d0)cycle
+      t1=chi2_all(npoly)+2.d0*chi2err_all(npoly)
+      if(min_chi2<0.d0.or.t1<min_chi2)min_chi2=t1
+    enddo ! npoly
+    ! Converge function value with respect to npoly.
+    prev_npoly=0
+    do npoly=1,fit%npoly
+      ! Skip invalid points.
+      if(chi2_all(npoly)<0.d0)cycle
+      ! Skip points whose chi2 is not within uncertainty of minimum.
+      if(min_chi2<chi2_all(npoly)-2.d0*chi2err_all(npoly))cycle
+      if(prev_npoly>0)then
+        ! Check all functions.
+        do iset=1,ndataset
+          do ix=1,deval%n
+            t1=fmean_all(ix,iset,npoly)-fmean_all(ix,iset,prev_npoly)
+            t2=sqrt(ferr_all(ix,iset,npoly)**2+&
+               &ferr_all(ix,iset,prev_npoly)**2)
+            if(abs(t1)>3.d0*t2)exit
+          enddo ! ix
+          if(ix<=deval%n)exit
+        enddo ! iset
+        if(iset>ndataset)exit
+        if(.true.)exit ! ignore functions
+      endif
+      prev_npoly=npoly
+    enddo ! npoly
+    if(npoly<=fit%npoly)then
+      write(6,'(a)')'Suggested fit: '//trim(i2s(prev_npoly-1))
+    else
+      write(6,'(a)')'Could not find optimal fit by criteria.'
     endif
     write(6,'()')
 
@@ -1581,10 +1643,13 @@ CONTAINS
     TYPE(dataset),POINTER :: tdatasets(:)
     TYPE(xydata),POINTER :: xy=>null()
     TYPE(range_def) drange
-    INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,ix
+    INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,ix,prev_igrid
     INTEGER,ALLOCATABLE :: indx(:)
-    DOUBLE PRECISION chi2,chi2err
-    DOUBLE PRECISION,ALLOCATABLE :: txall(:),txgrid(:),fmean(:,:),ferr(:,:)
+    DOUBLE PRECISION chi2,chi2err,fmean(deval%n,ndataset),&
+       &ferr(deval%n,ndataset),t1,t2,min_chi2
+    DOUBLE PRECISION,ALLOCATABLE :: chi2_all(:),chi2err_all(:),&
+       &fmean_all(:,:,:),ferr_all(:,:,:)
+    DOUBLE PRECISION,ALLOCATABLE :: txall(:),txgrid(:)
 
     ! FIXME - expose these parameters.
     drange%var='X'
@@ -1592,7 +1657,6 @@ CONTAINS
     drange%size=0
 
     ! Initialize.
-    allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset))
     tot_nparam=count(fit%share)+ndataset*count(.not.fit%share)
 
     ! Compute grid.
@@ -1617,6 +1681,15 @@ CONTAINS
     enddo ! ixy
     deallocate(txall,indx)
 
+    ! Allocate arrays to store test results and initialize to "invalid".
+    allocate(chi2_all(tot_nxy),chi2err_all(tot_nxy),&
+       &fmean_all(deval%n,ndataset,tot_nxy),&
+       &ferr_all(deval%n,ndataset,tot_nxy))
+    chi2_all=-1.d0
+    chi2err_all=-1.d0
+    fmean_all=0.d0
+    ferr_all=-1.d0
+
     ! Make copy of datasets.
     allocate(tdatasets(ndataset))
     do iset=1,ndataset
@@ -1637,7 +1710,7 @@ CONTAINS
       nullify(xy)
     enddo ! iset
 
-    ! Loop over data to remove.
+    ! Print table header.
     write(6,'()')
     write(6,'(2x,a5,1x,2(1x,a12))',advance='no')'Ndata','chi^2/Ndf',&
        &'dchi^2/Ndf'
@@ -1656,6 +1729,8 @@ CONTAINS
     else
       write(6,'(2x,'//trim(i2s(32))//'("-"))')
     endif
+
+    ! Loop over points in grid.
     do igrid=ngrid,1,-1
       ! Apply range.
       drange%thres=txgrid(igrid)
@@ -1668,23 +1743,66 @@ CONTAINS
         ! Perform fit and report.
         call eval_multifit_monte_carlo(ndataset,tdatasets,drange,fit,mcparams,&
            &deval,fmean,ferr,chi2,chi2err)
+        chi2_all(igrid)=chi2/dble(tot_nxy-tot_nparam)
+        chi2err_all(igrid)=chi2err/dble(tot_nxy-tot_nparam)
+        fmean_all(:,:,igrid)=fmean
+        ferr_all(:,:,igrid)=ferr
         write(6,'(2x,i5,1x,2(1x,es12.4))',advance='no')tot_nxy,&
            &chi2/dble(tot_nxy-tot_nparam),chi2err/dble(tot_nxy-tot_nparam)
         do ix=1,deval%n
           do iset=1,ndataset
             if(eval_iset==0.or.eval_iset==iset)write(6,'(2(1x,es12.4))',&
-               &advance='no')fmean(1,iset),ferr(1,iset)
+               &advance='no')fmean(ix,iset),ferr(ix,iset)
           enddo ! iset
         enddo ! ix
         write(6,'()')
       endif
     enddo ! igrid
+
+    ! Print table footer.
     if(eval_iset==0)then
       write(6,'(2x,'//trim(i2s(32+26*deval%n*ndataset))//'("-"))')
     elseif(eval_iset>0.and.eval_iset<ndataset)then
       write(6,'(2x,'//trim(i2s(32+26*deval%n))//'("-"))')
     else
       write(6,'(2x,'//trim(i2s(32))//'("-"))')
+    endif
+    write(6,'()')
+
+    ! Report best choice of parameters.
+    ! Locate minimum chi2/Ndf.
+    min_chi2=-1.d0
+    do igrid=1,ngrid
+      if(chi2_all(igrid)<0.d0)cycle
+      t1=chi2_all(igrid)+2.d0*chi2err_all(igrid)
+      if(min_chi2<0.d0.or.t1<min_chi2)min_chi2=t1
+    enddo ! igrid
+    ! Converge function value with respect to igrid.
+    prev_igrid=0
+    do igrid=ngrid,1,-1
+      ! Skip invalid points.
+      if(chi2_all(igrid)<0.d0)cycle
+      ! Skip points whose chi2 is not within uncertainty of minimum.
+      if(min_chi2<chi2_all(igrid)-2.d0*chi2err_all(igrid))cycle
+      if(prev_igrid>0)then
+        ! Check all functions.
+        do iset=1,ndataset
+          do ix=1,deval%n
+            t1=fmean_all(ix,iset,igrid)-fmean_all(ix,iset,prev_igrid)
+            t2=sqrt(ferr_all(ix,iset,igrid)**2+&
+               &ferr_all(ix,iset,prev_igrid)**2)
+            if(abs(t1)>3.d0*t2)exit
+          enddo ! ix
+          if(ix<=deval%n)exit
+        enddo ! iset
+        if(iset>ndataset)exit
+      endif
+      prev_igrid=igrid
+    enddo ! igrid
+    if(igrid>=1)then
+      write(6,'(a)')'Suggested grid point: '//trim(i2s(prev_igrid))
+    else
+      write(6,'(a)')'Could not find optimal range by criteria.'
     endif
     write(6,'()')
 
@@ -1702,6 +1820,7 @@ CONTAINS
     enddo ! iset
     deallocate(tdatasets)
     nullify(tdatasets)
+    deallocate(chi2_all,chi2err_all,fmean_all,ferr_all)
 
   END SUBROUTINE assess_range
 
@@ -1722,18 +1841,19 @@ CONTAINS
     TYPE(xydata),POINTER :: xy=>null()
     TYPE(range_def) drange
     TYPE(fit_params),POINTER :: tfit=>null()
-    INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,npoly,ix
+    INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,npoly,ix,prev_igrid,&
+       &prev_npoly,prev_prev_npoly
     INTEGER,ALLOCATABLE :: indx(:)
-    DOUBLE PRECISION chi2,chi2err
-    DOUBLE PRECISION,ALLOCATABLE :: txall(:),txgrid(:),fmean(:,:),ferr(:,:)
+    DOUBLE PRECISION chi2,chi2err,fmean(deval%n,ndataset),&
+       &ferr(deval%n,ndataset),t1,t2,min_chi2
+    DOUBLE PRECISION,ALLOCATABLE :: chi2_all(:,:),chi2err_all(:,:),&
+       &fmean_all(:,:,:,:),ferr_all(:,:,:,:)
+    DOUBLE PRECISION,ALLOCATABLE :: txall(:),txgrid(:)
 
     ! FIXME - expose these parameters.
     drange%var='X'
     drange%op='<='
     drange%size=0
-
-    ! Initialize.
-    allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset))
 
     ! Compute grid.
     tot_nxy=0
@@ -1757,6 +1877,15 @@ CONTAINS
     enddo ! ixy
     deallocate(txall,indx)
 
+    ! Allocate arrays to store test results and initialize to "invalid".
+    allocate(chi2_all(fit%npoly,tot_nxy),chi2err_all(fit%npoly,tot_nxy),&
+       &fmean_all(deval%n,ndataset,fit%npoly,tot_nxy),&
+       &ferr_all(deval%n,ndataset,fit%npoly,tot_nxy))
+    chi2_all=-1.d0
+    chi2err_all=-1.d0
+    fmean_all=0.d0
+    ferr_all=-1.d0
+
     ! Make copy of datasets.
     allocate(tdatasets(ndataset))
     do iset=1,ndataset
@@ -1777,7 +1906,7 @@ CONTAINS
       nullify(xy)
     enddo ! iset
 
-    ! Loop over data to remove.
+    ! Print table header.
     write(6,'()')
     write(6,'(2x,a5,2x,a5,1x,2(1x,a12))',advance='no')'Ndata','Order',&
        &'chi^2/Ndf','dchi^2/Ndf'
@@ -1796,6 +1925,8 @@ CONTAINS
     else
       write(6,'(2x,'//trim(i2s(39))//'("-"))')
     endif
+
+    ! Loop over points in grid.
     do igrid=ngrid,1,-1
       ! Apply range.
       drange%var='X'
@@ -1823,13 +1954,17 @@ CONTAINS
           ! Perform fit and report.
           call eval_multifit_monte_carlo(ndataset,tdatasets,drange,tfit,&
              &mcparams,deval,fmean,ferr,chi2,chi2err)
+          chi2_all(npoly,igrid)=chi2/dble(tot_nxy-tot_nparam)
+          chi2err_all(npoly,igrid)=chi2err/dble(tot_nxy-tot_nparam)
+          fmean_all(:,:,npoly,igrid)=fmean
+          ferr_all(:,:,npoly,igrid)=ferr
           write(6,'(2x,i5,2x,i5,1x,2(1x,es12.4))',advance='no')&
              &tot_nxy,npoly-1,&
              &chi2/dble(tot_nxy-tot_nparam),chi2err/dble(tot_nxy-tot_nparam)
           do ix=1,deval%n
             do iset=1,ndataset
               if(eval_iset==0.or.eval_iset==iset)write(6,'(2(1x,es12.4))',&
-                 &advance='no')fmean(1,iset),ferr(1,iset)
+                 &advance='no')fmean(ix,iset),ferr(ix,iset)
             enddo ! iset
           enddo ! ix
           write(6,'()')
@@ -1839,13 +1974,77 @@ CONTAINS
         deallocate(tfit)
         nullify(tfit)
       enddo ! npoly
-    enddo ! nxy
+    enddo ! igrid
+
+    ! Print table footer.
     if(eval_iset==0)then
       write(6,'(2x,'//trim(i2s(39+26*deval%n*ndataset))//'("-"))')
     elseif(eval_iset>0.and.eval_iset<ndataset)then
       write(6,'(2x,'//trim(i2s(39+26*deval%n))//'("-"))')
     else
       write(6,'(2x,'//trim(i2s(39))//'("-"))')
+    endif
+    write(6,'()')
+
+    ! Report best choice of parameters.
+    ! Locate minimum chi2/Ndf.
+    min_chi2=-1.d0
+    do igrid=1,ngrid
+      do npoly=1,fit%npoly
+        if(chi2_all(npoly,igrid)<0.d0)cycle
+        t1=chi2_all(npoly,igrid)+2.d0*chi2err_all(npoly,igrid)
+        if(min_chi2<0.d0.or.t1<min_chi2)min_chi2=t1
+      enddo ! npoly
+    enddo ! igrid
+    ! Converge function value with respect to igrid.
+    prev_igrid=0
+    do igrid=ngrid,1,-1
+      prev_npoly=0
+      do npoly=1,fit%npoly
+        ! Skip invalid points.
+        if(chi2_all(npoly,igrid)<0.d0)cycle
+        ! Skip points whose chi2 is not within uncertainty of minimum.
+        if(min_chi2<chi2_all(npoly,igrid)-2.d0*chi2err_all(npoly,igrid))cycle
+        if(prev_npoly>0)then
+          ! Check all functions.
+          do iset=1,ndataset
+            do ix=1,deval%n
+              t1=fmean_all(ix,iset,npoly,igrid)-&
+                 &fmean_all(ix,iset,prev_npoly,igrid)
+              t2=sqrt(ferr_all(ix,iset,npoly,igrid)**2+&
+                 &ferr_all(ix,iset,prev_npoly,igrid)**2)
+              if(abs(t1)>3.d0*t2)exit
+            enddo ! ix
+            if(ix<=deval%n)exit
+          enddo ! iset
+          if(iset>ndataset)exit
+        endif
+        prev_npoly=npoly
+      enddo ! npoly
+      ! Skip points for which test did not converge.
+      if(npoly>fit%npoly)cycle
+      if(prev_igrid>0)then
+        ! Check function value across grid sizes.
+        do iset=1,ndataset
+          do ix=1,deval%n
+            t1=fmean_all(ix,iset,prev_prev_npoly,igrid)-&
+               &fmean_all(ix,iset,prev_prev_npoly,prev_igrid)
+            t2=sqrt(ferr_all(ix,iset,prev_prev_npoly,igrid)**2+&
+               &ferr_all(ix,iset,prev_prev_npoly,prev_igrid)**2)
+            if(abs(t1)>3.d0*t2)exit
+          enddo ! ix
+          if(ix<=deval%n)exit
+        enddo ! iset
+        if(iset>ndataset)exit
+      endif
+      prev_igrid=igrid
+      prev_prev_npoly=prev_npoly
+    enddo ! igrid
+    if(igrid>=1)then
+      write(6,'(a)')'Suggested fit: '//trim(i2s(prev_prev_npoly-1))
+      write(6,'(a)')'Suggested grid point: '//trim(i2s(prev_igrid))
+    else
+      write(6,'(a)')'Could not find optimal range by criteria.'
     endif
     write(6,'()')
 
@@ -1863,6 +2062,7 @@ CONTAINS
     enddo ! iset
     deallocate(tdatasets)
     nullify(tdatasets)
+    deallocate(chi2_all,chi2err_all,fmean_all,ferr_all)
 
   END SUBROUTINE assess_fit_range
 
