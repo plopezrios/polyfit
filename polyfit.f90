@@ -439,6 +439,21 @@ CONTAINS
         endif ! nfield>1
         call show_multipoly(ndataset,datasets,drange,fit,mcparams)
 
+      case('plot')
+        write(6,'()')
+        if(ndataset<1)then
+          write(6,'(a)')'No datasets loaded.'
+          write(6,'()')
+          cycle user_loop
+        endif
+        if(nfield(command)>1)then
+          write(6,'(a)')'Syntax error: subcommand "'//&
+             &trim(field(2,command))//'" not recognized.'
+          write(6,'()')
+          cycle user_loop
+        endif ! nfield>1
+        call plot_multipoly(ndataset,datasets,drange,fit,mcparams)
+
       case('assess')
         if(ndataset<1)then
           write(6,'()')
@@ -486,6 +501,68 @@ CONTAINS
           write(6,'()')
           cycle user_loop
         end select
+
+      case('evaluate')
+        write(6,'()')
+        if(ndataset<1)then
+          write(6,'(a)')'No datasets loaded.'
+          write(6,'()')
+          cycle user_loop
+        endif
+        ! Initialize unused components.
+        deval%rel=.false.
+        ! Get object to evaluate.
+        select case(field(2,command))
+        case("f")
+          deval%nderiv=0
+        case("f'")
+          deval%nderiv=1
+        case("f''")
+          deval%nderiv=2
+        case default
+          write(6,'(a)')'Syntax error: unknown function "'//&
+             &trim(field(2,command))//'".'
+          write(6,'()')
+          cycle user_loop
+        end select
+        ! Get where to evaluate it at.
+        if(trim(field(3,command))/='at')then
+          write(6,'(a)')'Syntax error: missing "at" subcommand.'
+          write(6,'()')
+          cycle user_loop
+        endif
+        select case(trim(field(4,command)))
+        case('X')
+          deval%var='X'
+        case default
+          write(6,'(a)')'Syntax error: unknown variable "'//&
+             &trim(field(4,command))//'".'
+          write(6,'()')
+          cycle user_loop
+        end select
+        if(nfield(command)<5)then
+          write(6,'(a)')'Syntax error: no values of "'//&
+             &trim(field(4,command))//'" specified.'
+          write(6,'()')
+          cycle user_loop
+        endif
+        do ifield=5,nfield(command)
+          t1=dble_field(ifield,command,ierr)
+          if(ierr/=0)then
+            write(6,'(a)')'Syntax error: invalid value of "'//&
+               &trim(field(4,command))//'" specified.'
+            write(6,'()')
+            cycle user_loop
+          endif
+        enddo ! ifield
+        deval%n=nfield(command)-4
+        allocate(deval%x(deval%n))
+        do ifield=5,nfield(command)
+          deval%x(ifield-4)=dble_field(ifield,command,ierr)
+        enddo ! ifield
+        ! Perform evaluation.
+        call evaluate_fit(ndataset,datasets,fit,mcparams,drange,deval)
+        deallocate(deval%x)
 
       case('set')
 
@@ -932,35 +1009,10 @@ CONTAINS
           mcparams%nsample=i
 
         case default
-          write(6,'()')
           write(6,'(a)')'Unknown variable "'//trim(field(2,command))//'".'
           write(6,'()')
           cycle user_loop
         end select ! variable to set
-
-      case('plot')
-        if(ndataset<1)then
-          write(6,'()')
-          write(6,'(a)')'No datasets loaded.'
-          write(6,'()')
-          cycle user_loop
-        endif
-
-      case('evaluate')
-        if(ndataset<1)then
-          write(6,'()')
-          write(6,'(a)')'No datasets loaded.'
-          write(6,'()')
-          cycle user_loop
-        endif
-        deval%nderiv=0
-        deval%rel=.false.
-        deval%var='X'
-        deval%n=1
-        allocate(deval%x(deval%n))
-        deval%x(1)=0.d0
-        call evaluate_fit(ndataset,datasets,fit,mcparams,drange,deval)
-        deallocate(deval%x)
 
       case('status')
         write(6,'()')
@@ -1436,8 +1488,7 @@ CONTAINS
     TYPE(monte_carlo_params),INTENT(in) :: mcparams
     TYPE(eval_def) deval
     INTEGER tot_nparam,tot_nxy,iset,i
-    DOUBLE PRECISION chi2,chi2err
-    DOUBLE PRECISION,ALLOCATABLE :: a(:,:),da(:,:)
+    DOUBLE PRECISION chi2,chi2err,a(fit%npoly,ndataset),da(fit%npoly,ndataset)
 
     ! Initialize.
     tot_nparam=count(fit%share)+ndataset*count(.not.fit%share)
@@ -1445,9 +1496,6 @@ CONTAINS
     do iset=1,ndataset
       tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
     enddo ! iset
-
-    ! Allocate space for fit parameters.
-    allocate(a(fit%npoly,ndataset),da(fit%npoly,ndataset))
 
     ! Perform fit.
     deval%nderiv=0
@@ -1482,10 +1530,148 @@ CONTAINS
        &chi2err/dble(tot_nxy-tot_nparam)
     write(6,'()')
 
-    ! Clean up.
-    deallocate(a,da)
-
   END SUBROUTINE show_multipoly
+
+
+  SUBROUTINE plot_multipoly(ndataset,datasets,drange,fit,mcparams)
+    !--------------------------------!
+    ! Perform chosen fit and report. !
+    !--------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: ndataset
+    TYPE(dataset),INTENT(in) :: datasets(ndataset)
+    TYPE(range_def),INTENT(in) :: drange
+    TYPE(fit_params),INTENT(in) :: fit
+    TYPE(monte_carlo_params),INTENT(in) :: mcparams
+    TYPE(eval_def) deval
+    INTEGER tot_nparam,tot_nxy,iset,i,nplot,ierr
+    DOUBLE PRECISION chi2,chi2err,a(fit%npoly,ndataset),&
+       &da(fit%npoly,ndataset),atilde(fit%npoly),tx0,tx1,tx
+    INTEGER,PARAMETER :: io=10
+
+    ! Initialize.
+    tot_nparam=count(fit%share)+ndataset*count(.not.fit%share)
+    tot_nxy=0
+    do iset=1,ndataset
+      tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
+    enddo ! iset
+
+    ! Perform fit.
+    deval%nderiv=0
+    deval%rel=.false.
+    deval%var='X'
+    deval%n=0
+    call eval_multifit_monte_carlo(ndataset,datasets,drange,fit,mcparams,&
+       &deval,chi2=chi2,chi2err=chi2err,amean=a,aerr=da)
+
+    ! Plot.
+    open(unit=io,file='fit.plot',status='replace',iostat=ierr)
+    if(ierr/=0)then
+      write(6,'(a)')'Problem opening file.'
+      write(6,'()')
+      return
+    endif
+
+    ! Find plot range.
+    nplot=100
+    tx0=minval(datasets(1)%rtxy%x)
+    tx1=maxval(datasets(1)%rtxy%x)
+    do iset=2,ndataset
+      tx0=min(tx0,minval(datasets(iset)%rtxy%x))
+      tx1=max(tx1,maxval(datasets(iset)%rtxy%x))
+    enddo ! iset
+
+    if(all(.not.fit%share))then
+      ! Plot data.
+      do iset=1,ndataset
+        if(datasets(iset)%rtxy%have_dx.and.datasets(iset)%rtxy%have_dy)then
+          write(io,'(a)')'@type xydxdy'
+          do i=1,datasets(iset)%rtxy%nxy
+            write(io,*)datasets(iset)%rtxy%x(i),datasets(iset)%rtxy%y(i),&
+               &datasets(iset)%rtxy%dx(i),datasets(iset)%rtxy%dy(i)
+          enddo ! i
+        elseif(datasets(iset)%rtxy%have_dx)then
+          write(io,'(a)')'@type xydx'
+          do i=1,datasets(iset)%rtxy%nxy
+            write(io,*)datasets(iset)%rtxy%x(i),datasets(iset)%rtxy%y(i),&
+               &datasets(iset)%rtxy%dx(i)
+          enddo ! i
+        elseif(datasets(iset)%rtxy%have_dy)then
+          write(io,'(a)')'@type xydy'
+          do i=1,datasets(iset)%rtxy%nxy
+            write(io,*)datasets(iset)%rtxy%x(i),datasets(iset)%rtxy%y(i),&
+               &datasets(iset)%rtxy%dy(i)
+          enddo ! i
+        else
+          write(io,'(a)')'@type xy'
+          do i=1,datasets(iset)%rtxy%nxy
+            write(io,*)datasets(iset)%rtxy%x(i),datasets(iset)%rtxy%y(i)
+          enddo ! i
+        endif
+        write(io,'(a)')'&'
+      enddo ! iset
+      ! Plot fit functions.
+      do iset=1,ndataset
+        write(io,'(a)')'@type xy'
+        do i=0,nplot
+          tx=tx0+(tx1-tx0)*dble(i)/dble(nplot)
+          write(io,*)tx,eval_poly(fit%npoly,fit%pow,a(1,iset),tx)
+        enddo ! i
+        write(io,'(a)')'&'
+      enddo ! iset
+    else
+      ! Plot data minus independent bit.
+      do iset=1,ndataset
+        atilde(1:fit%npoly)=a(1:fit%npoly,iset)
+        where(fit%share)atilde=0.d0
+        if(datasets(iset)%rtxy%have_dx.and.datasets(iset)%rtxy%have_dy)then
+          write(io,'(a)')'@type xydxdy'
+          do i=1,datasets(iset)%rtxy%nxy
+            write(io,*)datasets(iset)%rtxy%x(i),datasets(iset)%rtxy%y(i)-&
+               &eval_poly(fit%npoly,fit%pow,atilde,datasets(iset)%rtxy%x(i)),&
+               &datasets(iset)%rtxy%dx(i),datasets(iset)%rtxy%dy(i)
+          enddo ! i
+        elseif(datasets(iset)%rtxy%have_dx)then
+          write(io,'(a)')'@type xydx'
+          do i=1,datasets(iset)%rtxy%nxy
+            write(io,*)datasets(iset)%rtxy%x(i),datasets(iset)%rtxy%y(i)-&
+               &eval_poly(fit%npoly,fit%pow,atilde,datasets(iset)%rtxy%x(i)),&
+               &datasets(iset)%rtxy%dx(i)
+          enddo ! i
+        elseif(datasets(iset)%rtxy%have_dy)then
+          write(io,'(a)')'@type xydy'
+          do i=1,datasets(iset)%rtxy%nxy
+            write(io,*)datasets(iset)%rtxy%x(i),datasets(iset)%rtxy%y(i)-&
+               &eval_poly(fit%npoly,fit%pow,atilde,datasets(iset)%rtxy%x(i)),&
+               &datasets(iset)%rtxy%dy(i)
+          enddo ! i
+        else
+          write(io,'(a)')'@type xy'
+          do i=1,datasets(iset)%rtxy%nxy
+            write(io,*)datasets(iset)%rtxy%x(i),datasets(iset)%rtxy%y(i)-&
+               &eval_poly(fit%npoly,fit%pow,atilde,datasets(iset)%rtxy%x(i))
+          enddo ! i
+        endif
+        write(io,'(a)')'&'
+      enddo ! iset
+      ! Plot shared part of fit functions.
+      atilde(1:fit%npoly)=a(1:fit%npoly,1)
+      where(.not.fit%share)atilde=0.d0
+      write(io,'(a)')'@type xy'
+      do i=0,nplot
+        tx=tx0+(tx1-tx0)*dble(i)/dble(nplot)
+        write(io,*)tx,eval_poly(fit%npoly,fit%pow,atilde,tx)
+      enddo ! i
+    endif
+
+    ! Close file.
+    close(io)
+
+    ! Report.
+    write(6,'(a)')'Plot saved to fit.plot.'
+    write(6,'()')
+
+  END SUBROUTINE plot_multipoly
 
 
   SUBROUTINE assess_fit(ndataset,datasets,drange,fit,mcparams,deval,eval_iset)
