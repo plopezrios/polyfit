@@ -465,14 +465,89 @@ CONTAINS
           write(6,'()')
           cycle user_loop
         endif
-        ! FIXME - expose this
-        deval%nderiv=0
-        deval%rel=.false.
-        deval%var='X'
-        deval%n=1
+        ! Check assessment target.
+        select case(trim(field(2,command)))
+        case('fit','range','range,fit','fit,range')
+        case default
+          write(6,'()')
+          write(6,'(a)')'Unknown variable to assess "'//&
+             &trim(field(2,command))//'".'
+          write(6,'()')
+        end select
+        ! Initialize.
+        deval%n=0
         eval_iset=0
+        ! Loop over subcommands.
+        ifield=2
+        do
+          ifield=ifield+1
+          if(ifield>nfield(command))exit
+          select case(field(ifield,command))
+          case('using')
+            ! Get object to evaluate.
+            select case(field(ifield+1,command))
+            case("f")
+              deval%nderiv=0
+            case("f'")
+              deval%nderiv=1
+            case("f''")
+              deval%nderiv=2
+            case default
+              write(6,'(a)')'Syntax error: unknown function "'//&
+                 &trim(field(ifield+1,command))//'".'
+              write(6,'()')
+              cycle user_loop
+            end select
+            ! Get where to evaluate it at.
+            if(trim(field(ifield+2,command))/='at')then
+              write(6,'(a)')'Syntax error: missing "at" subcommand.'
+              write(6,'()')
+              cycle user_loop
+            endif
+            select case(trim(field(ifield+3,command)))
+            case('X')
+              deval%var='X'
+            case default
+              write(6,'(a)')'Syntax error: unknown variable "'//&
+                 &trim(field(ifield+3,command))//'".'
+              write(6,'()')
+              cycle user_loop
+            end select
+            t1=dble_field(ifield+4,command,ierr)
+            if(ierr/=0)then
+              write(6,'(a)')'Syntax error: invalid value of "'//&
+                 &trim(field(ifield+3,command))//'" specified.'
+              write(6,'()')
+              cycle user_loop
+            endif
+            deval%n=1
+            ifield=ifield+4
+          case('for')
+            i=int_field(ifield+1,command,ierr)
+            if(ierr/=0)then
+              write(6,'(a)')'Syntax error: invalid set index "'//&
+                 &trim(field(ifield+1,command))//'" specified.'
+              write(6,'()')
+              cycle user_loop
+            endif
+            if(i<1.or.i>ndataset)then
+              write(6,'(a)')'Syntax error: set index out of range.'
+              write(6,'()')
+              cycle user_loop
+            endif
+            eval_iset=i
+            ifield=ifield+1
+          case default
+            write(6,'(a)')'Syntax error: unknown subcommand "'//&
+                 &trim(field(ifield,command))//'".'
+            write(6,'()')
+            cycle user_loop
+          end select
+        enddo ! ifield
+        ! Evaluate.
         allocate(deval%x(deval%n))
-        deval%x(1)=0.d0
+        if(deval%n>0)deval%x(1)=t1
+        deval%rel=.false.
         select case(trim(field(2,command)))
         case('fit')
           call assess_fit(ndataset,datasets,drange,fit,mcparams,deval,&
