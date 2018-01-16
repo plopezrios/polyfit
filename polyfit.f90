@@ -9,21 +9,34 @@ PROGRAM polyfit
   !-------------------------------------------------!
   IMPLICIT NONE
 
+  ! Global variables.
+  ! Precision for real-to-integer conversions and exponent comparisons.
+  DOUBLE PRECISION,PARAMETER :: tol_zero=1.d-10
+  ! Scale transformations.
+  INTEGER,PARAMETER :: NTRANSF=3
+  INTEGER,PARAMETER :: ITRANSF_NONE=0,ITRANSF_REC=1,ITRANSF_LOG=2,ITRANSF_EXP=3
+  CHARACTER(32),PARAMETER :: TRANSF_NAME(0:NTRANSF)=&
+     &(/'linear     ','reciprocal ','logarithmic','exponential'/)
+  LOGICAL,PARAMETER :: TRANSF_REQ_NONZERO(0:NTRANSF)=&
+     &(/.false.,.true.,.true.,.false./)
+  LOGICAL,PARAMETER :: TRANSF_REQ_POSITIVE(0:NTRANSF)=&
+     &(/.false.,.false.,.true.,.false./)
+
   ! Types.
   TYPE xydata
-    INTEGER nxy
-    LOGICAL have_dx,have_dy
+    INTEGER :: nxy=0
+    LOGICAL :: have_dx=.false.,have_dy=.false.
     DOUBLE PRECISION,POINTER :: x(:)=>null(),y(:)=>null(),dx(:)=>null(),&
        &dy(:)=>null()
   END TYPE xydata
   TYPE dataset
-    INTEGER itransfx,itransfy
+    INTEGER :: itransfx=ITRANSF_NONE,itransfy=ITRANSF_NONE
     TYPE(xydata),POINTER :: xy=>null() ! original data
     TYPE(xydata),POINTER :: txy=>null() ! transformed data
     TYPE(xydata),POINTER :: rtxy=>null() ! range-restricted transformed data
   END TYPE dataset
   TYPE fit_params
-    INTEGER npoly
+    INTEGER :: npoly=0
     DOUBLE PRECISION :: X0=0.d0
     DOUBLE PRECISION,ALLOCATABLE :: pow(:)
     LOGICAL,ALLOCATABLE :: share(:)
@@ -46,19 +59,6 @@ PROGRAM polyfit
     INTEGER :: nsample=10000
   END TYPE monte_carlo_params
 
-  ! Global variables.
-  ! Precision for real-to-integer conversions and exponent comparisons.
-  DOUBLE PRECISION,PARAMETER :: tol_zero=1.d-10
-  ! Scale transformations.
-  INTEGER,PARAMETER :: NTRANSF=3
-  INTEGER,PARAMETER :: ITRANSF_NONE=0,ITRANSF_REC=1,ITRANSF_LOG=2,ITRANSF_EXP=3
-  CHARACTER(32),PARAMETER :: TRANSF_NAME(0:NTRANSF)=&
-     &(/'linear     ','reciprocal ','logarithmic','exponential'/)
-  LOGICAL,PARAMETER :: TRANSF_REQ_NONZERO(0:NTRANSF)=&
-     &(/.false.,.true.,.true.,.false./)
-  LOGICAL,PARAMETER :: TRANSF_REQ_POSITIVE(0:NTRANSF)=&
-     &(/.false.,.false.,.true.,.false./)
-
   call main()
 
 
@@ -71,9 +71,8 @@ CONTAINS
     !--------------!
     IMPLICIT NONE
     ! (x,y[,dx][,dy]) datasets.
-    INTEGER ndataset
-    TYPE(xydata),POINTER :: xy=>null()
-    TYPE(dataset),POINTER :: datasets(:)=>null(),temp_datasets(:)=>null()
+    INTEGER ndataset,tndataset
+    TYPE(dataset),POINTER :: datasets(:)=>null(),tdatasets(:)=>null()
     ! Fit form.
     TYPE(fit_params),POINTER :: fit=>null()
     ! All-set settings.
@@ -89,8 +88,8 @@ CONTAINS
     CHARACTER(256) fname
     ! Input file search facility.
     INTEGER,PARAMETER :: search_size=1024
-    INTEGER nsearch
-    INTEGER,POINTER :: fsearch(:)=>null()
+    INTEGER nsearch,ndiscr
+    INTEGER,POINTER :: fsearch(:)=>null(),fdiscr(:)=>null()
     CHARACTER(search_size),POINTER :: search(:)=>null()
     ! Misc variables.
     CHARACTER(8192) command,token
@@ -186,6 +185,7 @@ CONTAINS
 
         ! Initialize search facility.
         nsearch=0
+        ndiscr=0
 
         ! Get column selection.
         ! Initialize to default column indices.
@@ -257,6 +257,7 @@ CONTAINS
                  &trim(field(ifield+1,command))//'".'
               write(6,'()')
               if(associated(search))deallocate(fsearch,search)
+              if(associated(fdiscr))deallocate(fdiscr)
               cycle user_loop
             end select
           case('where')
@@ -266,6 +267,7 @@ CONTAINS
                  &for "where" subcommand"'
               write(6,'()')
               if(associated(search))deallocate(fsearch,search)
+              if(associated(fdiscr))deallocate(fdiscr)
               cycle user_loop
             endif
             i=int_field(ifield+1,command,ierr)
@@ -274,12 +276,14 @@ CONTAINS
                  &index for "where".'
               write(6,'()')
               if(associated(search))deallocate(fsearch,search)
+              if(associated(fdiscr))deallocate(fdiscr)
               cycle user_loop
             endif
             if(i<1.or.i>ncolumn)then
               write(6,'(a)')'Column index out of range in "where" subcommand.'
               write(6,'()')
               if(associated(search))deallocate(fsearch,search)
+              if(associated(fdiscr))deallocate(fdiscr)
               cycle user_loop
             endif
             nsearch=nsearch+1
@@ -288,6 +292,36 @@ CONTAINS
             fsearch(nsearch)=i
             search(nsearch)=field(ifield+2,command)
             ifield=ifield+2
+          case('by')
+            ! Add a discriminator clause.
+            if(nfield(command)<ifield+1)then
+              write(6,'(a)')'Syntax error in load command: too few arguments &
+                 &for "by" subcommand"'
+              write(6,'()')
+              if(associated(search))deallocate(fsearch,search)
+              if(associated(fdiscr))deallocate(fdiscr)
+              cycle user_loop
+            endif
+            i=int_field(ifield+1,command,ierr)
+            if(ierr/=0)then
+              write(6,'(a)')'Syntax error in load command: invalid column &
+                 &index for "by".'
+              write(6,'()')
+              if(associated(search))deallocate(fsearch,search)
+              if(associated(fdiscr))deallocate(fdiscr)
+              cycle user_loop
+            endif
+            if(i<1.or.i>ncolumn)then
+              write(6,'(a)')'Column index out of range in "by" subcommand.'
+              write(6,'()')
+              if(associated(search))deallocate(fsearch,search)
+              if(associated(fdiscr))deallocate(fdiscr)
+              cycle user_loop
+            endif
+            ndiscr=ndiscr+1
+            call resize_pointer_int1((/ndiscr/),fdiscr)
+            fdiscr(ndiscr)=i
+            ifield=ifield+1
           case('')
             exit
           case default
@@ -295,6 +329,7 @@ CONTAINS
                &//trim(field(ifield,command))//'".'
             write(6,'()')
             if(associated(search))deallocate(fsearch,search)
+            if(associated(fdiscr))deallocate(fdiscr)
             cycle user_loop
           end select
         enddo ! ifield
@@ -304,6 +339,7 @@ CONTAINS
           write(6,'(a)')'Problem parsing column indices.'
           write(6,'()')
           if(associated(search))deallocate(fsearch,search)
+          if(associated(fdiscr))deallocate(fdiscr)
           cycle user_loop
         endif
         if(icol_x>ncolumn.or.icol_x<0.or.icol_y>ncolumn.or.icol_y<0.or.&
@@ -311,117 +347,85 @@ CONTAINS
           write(6,'(a)')'Column indices out of range.'
           write(6,'()')
           if(associated(search))deallocate(fsearch,search)
+          if(associated(fdiscr))deallocate(fdiscr)
           cycle user_loop
         endif
 
         ! Read data.
-        allocate(xy)
         if(.not.associated(search))allocate(fsearch(nsearch),search(nsearch))
+        if(.not.associated(fdiscr))allocate(fdiscr(ndiscr))
         call read_file(fname,icol_x,icol_y,icol_dx,icol_dy,nsearch,fsearch,&
-           &search,xy,ierr)
+           &search,ndiscr,fdiscr,tndataset,tdatasets,ierr)
         deallocate(fsearch,search)
-
-        ! Check data ar compatible with current transformations.
-        if(ierr==0)then
-          if(TRANSF_REQ_NONZERO(itransfx_default))then
-            if(any(are_equal(xy%x,0.d0)))ierr=-7
-          endif
-          if(TRANSF_REQ_NONZERO(itransfy_default))then
-            if(any(are_equal(xy%y,0.d0)))ierr=-8
-          endif
-          if(TRANSF_REQ_POSITIVE(itransfx_default))then
-            if(any(xy%x<0.d0))ierr=-9
-          endif
-          if(TRANSF_REQ_POSITIVE(itransfy_default))then
-            if(any(xy%y<0.d0))ierr=-10
-          endif
-        endif
-
-        ! Bail out if there has been an error.
-        if(ierr/=0)then
-          select case(ierr)
-          case(-1)
-            write(6,'(a)')'Problem opening "'//trim(fname)//'".'
-          case(-2)
-            write(6,'(a)')'Unexpected enf of file reading "'//trim(fname)//'".'
-          case(-3)
-            write(6,'(a)')'Problem reading line in "'//trim(fname)//'".'
-          case(-4)
-            write(6,'(a)')'Problem parsing data in "'//trim(fname)//'".'
-          case(-5)
-            write(6,'(a)')'"'//trim(fname)//'" contains non-positive dx.'
-          case(-6)
-            write(6,'(a)')'"'//trim(fname)//'" contains non-positive dy.'
-          case(-7)
-            write(6,'(a)')'"'//trim(fname)//'" contains x=0, incompatible &
-               &with current xscale.'
-          case(-8)
-            write(6,'(a)')'"'//trim(fname)//'" contains y=0, incompatible &
-               &with current yscale.'
-          case(-9)
-            write(6,'(a)')'"'//trim(fname)//'" contains x<0, incompatible &
-               &with current xscale.'
-          case(-10)
-            write(6,'(a)')'"'//trim(fname)//'" contains y<0, incompatible &
-               &with current yscale.'
-          case default
-            write(6,'(a)')'Problem reading "'//trim(fname)//'".'
-          end select
+        deallocate(fdiscr)
+        if(ierr/=0)cycle user_loop
+        if(tndataset<1)then
+          write(6,'(a)')'No data loaded.'
           write(6,'()')
-          deallocate(xy%x,xy%y,xy%dx,xy%dy)
-          deallocate(xy)
-          nullify(xy)
           cycle user_loop
         endif
 
-        if(ndataset>0)then
-          ! Copy of vector of pointers to datasets and destroy original.
-          allocate(temp_datasets(ndataset+1))
-          do i=1,ndataset
-            temp_datasets(i)=datasets(i)
-          enddo
-          deallocate(datasets)
-        endif
+        ! Check data ar compatible with current transformations.
+        do iset=1,tndataset
+          tdatasets(iset)%itransfx=itransfx_default
+          tdatasets(iset)%itransfy=itransfy_default
+          if(TRANSF_REQ_NONZERO(tdatasets(iset)%itransfy))then
+            if(any(are_equal(tdatasets(iset)%xy%x,0.d0)))then
+              tdatasets(iset)%itransfx=ITRANSF_NONE
+              write(6,'(a)')'Note: using linear X for set '//&
+                 &trim(i2s(iset+ndataset))//' since it contains x=0.'
+              write(6,'()')
+            endif
+          endif
+          if(TRANSF_REQ_NONZERO(tdatasets(iset)%itransfy))then
+            if(any(are_equal(tdatasets(iset)%xy%y,0.d0)))then
+              tdatasets(iset)%itransfy=ITRANSF_NONE
+              write(6,'(a)')'Note: using linear Y for set '//&
+                 &trim(i2s(iset+ndataset))//' since it contains y=0.'
+              write(6,'()')
+            endif
+          endif
+          if(TRANSF_REQ_POSITIVE(tdatasets(iset)%itransfx))then
+            if(any(tdatasets(iset)%xy%x<0.d0))then
+              tdatasets(iset)%itransfx=ITRANSF_NONE
+              write(6,'(a)')'Note: using linear X for set '//&
+                 &trim(i2s(iset+ndataset))//' since it contains x<0.'
+              write(6,'()')
+            endif
+          endif
+          if(TRANSF_REQ_POSITIVE(tdatasets(iset)%itransfy))then
+            if(any(tdatasets(iset)%xy%y<0.d0))then
+              tdatasets(iset)%itransfy=ITRANSF_NONE
+              write(6,'(a)')'Note: using linear Y for set '//&
+                 &trim(i2s(iset+ndataset))//' since it contains y<0.'
+              write(6,'()')
+            endif
+          endif
+        enddo ! iset
 
-        ! Create new vector of pointers to datasets.
-        ndataset=ndataset+1
-        allocate(datasets(ndataset))
-
-        if(ndataset>1)then
-          ! Copy vector of pointers to datasets from backup and destroy backup.
-          do i=1,ndataset-1
-            datasets(i)=temp_datasets(i)
-          enddo
-          deallocate(temp_datasets)
-          nullify(temp_datasets)
-        endif
-
-        ! Point last element in vector of pointers to the new dataset.
-        datasets(ndataset)%xy=>xy
-        nullify(xy)
-
-        ! Set other properties.
-        datasets(ndataset)%itransfx=itransfx_default
-        datasets(ndataset)%itransfy=itransfy_default
-
-        ! Populate transformed dataset.
-        call refresh_dataset(datasets(ndataset),drange)
-        ! Update X0.
+        ! Add datasets to list.
+        call resize_dataset(ndataset+tndataset,datasets)
+        do iset=ndataset+1,ndataset+tndataset
+          datasets(iset)=tdatasets(iset-ndataset)
+          call refresh_dataset(datasets(iset),drange)
+          ! Report.
+          write(6,'(a)',advance='no')'Loaded data from "'//trim(fname)//&
+             &'" as dataset #'//trim(i2s(iset))//', type '
+          if(datasets(iset)%xy%have_dx.and.datasets(iset)%xy%have_dy)then
+            write(6,'(a)',advance='no')'xdxydy'
+          elseif(datasets(iset)%xy%have_dx)then
+            write(6,'(a)',advance='no')'xdxy'
+          elseif(datasets(iset)%xy%have_dy)then
+            write(6,'(a)',advance='no')'xydy'
+          else
+            write(6,'(a)',advance='no')'xy'
+          endif
+          write(6,'(a)')', '//trim(i2s(datasets(iset)%xy%nxy))//' data.'
+        enddo ! iset
+        deallocate(tdatasets)
+        nullify(tdatasets)
+        ndataset=ndataset+tndataset
         call refresh_fit(ndataset,datasets,fit)
-
-        ! Report success.
-        write(6,'(a)',advance='no')'Loaded data from "'//trim(fname)//&
-           &'" as dataset #'//trim(i2s(ndataset))//', type '
-        if(datasets(ndataset)%xy%have_dx.and.datasets(ndataset)%xy%have_dy)then
-          write(6,'(a)',advance='no')'xdxydy'
-        elseif(datasets(ndataset)%xy%have_dx)then
-          write(6,'(a)',advance='no')'xdxy'
-        elseif(datasets(ndataset)%xy%have_dy)then
-          write(6,'(a)',advance='no')'xydy'
-        else
-          write(6,'(a)',advance='no')'xy'
-        endif
-        write(6,'(a)')', '//trim(i2s(datasets(ndataset)%xy%nxy))//' data.'
         write(6,'()')
 
       case('fit')
@@ -2384,253 +2388,6 @@ CONTAINS
   END SUBROUTINE scale_transform
 
 
-  !SUBROUTINE show_dual_assessment(nxy,have_dx,have_dy,x,y,dx,dy,itransfx,&
-  !   &itransfy,tx0,npoly_out,pow_out,mask_out)
-  !  !-----------------------------------------------------------!
-  !  ! Perform an "extrapolation" assessment in which the number !
-  !  ! of points included in the fit and the expansion order are !
-  !  ! simultaneously optimized.                                 !
-  !  !-----------------------------------------------------------!
-  !  IMPLICIT NONE
-  !  INTEGER,INTENT(in) :: nxy,itransfx,itransfy
-  !  LOGICAL,INTENT(in) :: have_dx,have_dy
-  !  DOUBLE PRECISION,INTENT(in) :: x(nxy),y(nxy),dx(nxy),dy(nxy),tx0
-  !  INTEGER,INTENT(inout) :: npoly_out
-  !  DOUBLE PRECISION,INTENT(inout) :: pow_out(nxy)
-  !  LOGICAL,INTENT(inout) :: mask_out(nxy)
-  !  DOUBLE PRECISION tx(nxy),ty(nxy),dtx(nxy),dty(nxy),weight(nxy),&
-  !     &rtx(nxy),rty(nxy),rweight(nxy),xtarget,min_chi2,t1,&
-  !     &rx(nxy),ry(nxy),rdx(nxy),rdy(nxy),list_f(nxy),list_df(nxy),&
-  !     &list_gof(nxy),list_a(nxy,nxy),list_da(nxy,nxy),&
-  !     &pow(nxy),a(nxy),da(nxy),txrange,txplot,dtxplot
-  !  INTEGER i,ntest,npoly,rnxy,nderiv,ierr,indx(nxy),rnxy_min_chi2,nrandom,&
-  !     &npoly_best,rnxy_best,ipoly,jpoly,list_rnxy(nxy)
-  !  LOGICAL mask(nxy),weighted
-  !  CHARACTER(20) drop_by,drop_criterion
-  !  CHARACTER(2048) char2048
-  !  DOUBLE PRECISION fmean(1),ferr(1),best_f,best_df
-  !  ! Parameters.
-  !  INTEGER,PARAMETER :: DEFAULT_NRANDOM=100000
-  !  INTEGER,PARAMETER :: npoint=1000
-  !  INTEGER,PARAMETER :: io=10
-
-  !  ! Initialize.
-  !  npoly_out=0
-
-  !  ! Initialize internal variables.  FIXME - expose to user.
-  !  nderiv=0
-  !  xtarget=0.d0
-  !  nrandom=DEFAULT_NRANDOM
-  !  drop_by='X'
-  !  drop_criterion='largest'
-
-  !  ! Evaluate transformed variables and fit weights.
-  !  call scale_transform(nxy,itransfx,x,tx,have_dx,dx,dtx)
-  !  call scale_transform(nxy,itransfy,y,ty,have_dy,dy,dty)
-  !  if(have_dx.and.have_dy)then
-  !    weight=1.d0/(dtx*dty)**2
-  !  elseif(have_dx)then
-  !    weight=1.d0/dtx**2
-  !  elseif(have_dy)then
-  !    weight=1.d0/dty**2
-  !  else
-  !    weight=1.d0
-  !  endif
-  !  weighted=have_dx.or.have_dy
-
-  !  ! Perform sort.
-  !  select case(trim(drop_by))
-  !  case('X')
-  !    call isort(nxy,tx,indx)
-  !  case('Y')
-  !    call isort(nxy,ty,indx)
-  !  case('x')
-  !    call isort(nxy,x,indx)
-  !  case('y')
-  !    call isort(nxy,y,indx)
-  !  case('index')
-  !    indx=(/(i,i=1,nxy)/)
-  !  end select
-
-  !  ! Assess integer expansion orders up to order 8.
-  !  ntest=min(nxy-1,9)
-  !  pow(1:nxy)=(/(dble(i-1),i=1,nxy)/)
-
-  !  ! Loop over expansion orders.
-  !  write(6,'(1x,a,t8,a,t14,a,t27,a,t44,a)')'Order','  Nxy','  chi^2/Ndf',&
-  !     &'    Target f','    Target df'
-  !  write(6,'(1x,59("-"))')
-  !  list_rnxy=0
-  !  do npoly=2,ntest
-  !    ! Loop over number of points in fit.
-  !    rnxy_min_chi2=0
-  !    min_chi2=0.d0
-  !    do rnxy=nxy,npoly+1,-1
-  !      ! Build data mask.
-  !      mask=.false.
-  !      select case(trim(drop_criterion))
-  !      case('smallest')
-  !        mask(indx(nxy-rnxy+1:nxy))=.true.
-  !      case('largest')
-  !        mask(indx(1:rnxy))=.true.
-  !      end select
-  !      ! Apply data mask.
-  !      rtx(1:rnxy)=pack(tx,mask)
-  !      rty(1:rnxy)=pack(ty,mask)
-  !      rweight(1:rnxy)=pack(weight,mask)
-  !      ! Fit to polynomial of order npoly-1.
-  !      call perform_fit(rnxy,npoly,rtx-tx0,rty,pow,a,weighted,rweight,da)
-  !      ! Evaluate chi^2.
-  !      t1=chi_squared(rnxy,npoly,rtx-tx0,rty,rweight,pow,a,weighted)/&
-  !         &dble(rnxy-npoly)
-  !      ! Report.
-  !      write(6,'(1x,i5,1x,i5,1x,es12.4)')npoly-1,rnxy,t1
-  !      if(rnxy_min_chi2==0.or.t1<min_chi2)then
-  !        rnxy_min_chi2=rnxy
-  !        min_chi2=t1
-  !      endif
-  !    enddo ! rnxy
-  !    ! Evaluate estimate at number of points that minimizes gof measure.
-  !    rnxy=rnxy_min_chi2
-  !    ! Build data mask.
-  !    mask=.false.
-  !    select case(trim(drop_criterion))
-  !    case('smallest')
-  !      mask(indx(nxy-rnxy+1:nxy))=.true.
-  !    case('largest')
-  !      mask(indx(1:rnxy))=.true.
-  !    end select
-  !    ! Apply data mask.
-  !    rx(1:rnxy)=pack(x,mask)
-  !    ry(1:rnxy)=pack(y,mask)
-  !    rdx(1:rnxy)=pack(dx,mask)
-  !    rdy(1:rnxy)=pack(dy,mask)
-  !    ! Fit to polynomial of order npoly-1.
-  !    call eval_fit_monte_carlo(rnxy,have_dx,have_dy,rx,ry,rdx,rdy,&
-  !       &itransfx,itransfy,tx0,npoly,pow,nrandom,nderiv,.false.,1,&
-  !       &(/xtarget/),fmean,ferr,amean=a,aerr=da)
-  !    ! Report.
-  !    write(6,'(1x,i5,1x,i5,1x,es12.4,2(1x,es16.8))')npoly-1,rnxy_min_chi2,&
-  !       &min_chi2,fmean(1),ferr(1)
-  !    ! Store.
-  !    list_f(npoly)=fmean(1)
-  !    list_df(npoly)=ferr(1)
-  !    list_rnxy(npoly)=rnxy_min_chi2
-  !    list_gof(npoly)=min_chi2
-  !    list_a(1:npoly,npoly)=a(1:npoly)
-  !    list_da(1:npoly,npoly)=da(1:npoly)
-  !  enddo ! npoly
-  !  write(6,'(1x,59("-"))')
-  !  write(6,*)
-
-  !  ! Find best choice.
-  !  npoly_best=0
-  !  best_f=0.d0
-  !  best_df=0.d0
-  !  rnxy_best=0
-  !  do ipoly=1,ntest
-  !    if(list_rnxy(ipoly)==0)cycle
-  !    do jpoly=ipoly+1,ntest
-  !      if(list_rnxy(jpoly)==0)cycle
-  !      if(list_gof(jpoly)>list_gof(ipoly))cycle
-  !      if(abs(list_f(ipoly)-list_f(jpoly))>&
-  !         &1.0d0*sqrt(list_df(ipoly)**2+list_df(jpoly)**2))exit
-  !    enddo ! jpoly
-  !    if(jpoly>ntest)then
-  !      npoly_best=ipoly
-  !      best_f=list_f(ipoly)
-  !      best_df=list_df(ipoly)
-  !      rnxy_best=list_rnxy(ipoly)
-  !      exit
-  !    endif
-  !  enddo ! ipoly
-
-  !  if(npoly_best==0)then
-  !    write(6,*)'Test found no good choice.'
-  !  else
-  !    write(6,*)'Best ('//trim(i2s(npoly_best-1))//','//&
-  !       &trim(i2s(rnxy_best))//'):',best_f,'+/-',best_df
-  !  endif
-  !  write(6,*)
-
-  !  ! Allow user to choose one of the above expansion orders.
-  !  do
-  !    if(npoly_best==0)then
-  !      write(6,*)'Type ''plot'' to plot, empty to skip:'
-  !    else
-  !      write(6,*)'Type ''y'' to accept fit form and mask, ''plot'' to plot, &
-  !         &empty to skip:'
-  !    endif
-  !    read(5,'(a)',iostat=ierr)char2048
-  !    if(ierr/=0)exit
-  !    write(6,*)
-  !    select case(trim(char2048))
-  !    case('')
-  !      exit
-  !    case('plot')
-  !      ! Prepare to write plot.
-  !      txrange=maxval(tx)-minval(tx)
-  !      dtxplot=(txrange*2.d0)/dble(npoint)
-  !      open(unit=io,file='poly_dual.dat',status='replace')
-  !      ! Plot original data.
-  !      if(have_dx.and.have_dy)then
-  !        write(io,'(a)')'@type xydxdy'
-  !        do i=1,nxy
-  !          write(io,*)tx(i),ty(i),dtx(i),dty(i)
-  !        enddo ! i
-  !      elseif(have_dx)then
-  !        write(io,'(a)')'@type xydx'
-  !        do i=1,nxy
-  !          write(io,*)tx(i),ty(i),dtx(i)
-  !        enddo ! i
-  !      elseif(have_dy)then
-  !        write(io,'(a)')'@type xydy'
-  !        do i=1,nxy
-  !          write(io,*)tx(i),ty(i),dty(i)
-  !        enddo ! i
-  !      else
-  !        write(io,'(a)')'@type xy'
-  !        do i=1,nxy
-  !          write(io,*)tx(i),ty(i)
-  !        enddo ! i
-  !      endif
-  !      write(io,'(a)')'&'
-  !      ! Loop over expansion orders.
-  !      do npoly=2,ntest
-  !        write(io,'(a)')'@type xy'
-  !        ! Dump plot.
-  !        txplot=minval(tx)-0.5d0*txrange
-  !        do i=0,npoint
-  !          write(io,*)txplot+tx0,eval_poly(npoly,pow,list_a(1,npoly),txplot)
-  !          txplot=txplot+dtxplot
-  !        enddo ! i
-  !        write(io,'(a)')'&'
-  !      enddo ! npoly
-  !      close(io)
-  !      write(6,*)'Data written to poly_dual.dat.'
-  !      write(6,*)
-  !    case('y')
-  !      if(npoly_best>0)then
-  !        npoly_out=npoly_best
-  !        pow_out(1:npoly_out)=(/(i,i=0,npoly_out-1)/)
-  !        rnxy=rnxy_best
-  !        mask_out=.false.
-  !        select case(trim(drop_criterion))
-  !        case('smallest')
-  !          mask_out(indx(nxy-rnxy+1:nxy))=.true.
-  !        case('largest')
-  !          mask_out(indx(1:rnxy))=.true.
-  !        end select
-  !      endif
-  !      exit
-  !    case default
-  !      exit
-  !    end select
-  !  enddo
-
-  !END SUBROUTINE show_dual_assessment
-
-
   ! COMPUTATION ROUTINES
 
 
@@ -3052,37 +2809,35 @@ CONTAINS
 
 
   SUBROUTINE read_file(fname,icol_x,icol_y,icol_dx,icol_dy,nsearch,fsearch,&
-     &search,xy,ierr)
+     &search,ndiscr,fdiscr,ndataset,datasets,ierr)
     !-------------------------------------!
     ! Read in the data in the input file. !
     !-------------------------------------!
     IMPLICIT NONE
-    INTEGER,INTENT(in) :: icol_x,icol_y,icol_dx,icol_dy,nsearch,&
-       &fsearch(nsearch)
-    CHARACTER(*),INTENT(in) :: search(nsearch)
-    TYPE(xydata),POINTER :: xy
     CHARACTER(*),INTENT(in) :: fname
-    INTEGER,INTENT(inout) :: ierr
+    INTEGER,INTENT(in) :: icol_x,icol_y,icol_dx,icol_dy,nsearch,&
+       &fsearch(nsearch),ndiscr,fdiscr(ndiscr)
+    CHARACTER(*),INTENT(in) :: search(nsearch)
+    INTEGER,INTENT(inout) :: ndataset,ierr
+    TYPE(dataset),POINTER :: datasets(:)
     CHARACTER(8192) line
-    INTEGER i,ipos,isearch,jerr
-    DOUBLE PRECISION t1,t2
+    CHARACTER(8192),POINTER :: discr(:,:)=>null()
+    INTEGER i,ipos,isearch,iset,idiscr
     ! Constants.
     INTEGER, PARAMETER :: io=10
 
     ! Open file.
     open(unit=io,file=trim(fname),status='old',iostat=ierr)
     if(ierr/=0)then
-      ierr=-1 ! flag problem opening file
+      write(6,'(a)')'Problem opening "'//trim(fname)//'".'
+      write(6,'()')
       return
     endif
 
     ! Initialize.
-    xy%nxy=0
-    xy%have_dx=icol_dx>0
-    xy%have_dy=icol_dy>0
+    ndataset=0
 
     ! Loop over lines.
-    i=0
     do
       read(io,'(a)',iostat=ierr)line
       if(ierr<0)then
@@ -3090,7 +2845,8 @@ CONTAINS
         exit
       endif
       if(ierr>0)then
-        ierr=-3 ! flag reading error (should not happen)
+        write(6,'(a)')'Problem getting line from "'//trim(fname)//'".'
+        write(6,'()')
         exit
       endif
       line=adjustl(line)
@@ -3102,45 +2858,82 @@ CONTAINS
       if(len_trim(line)==0)cycle
       ! Verify that this line contains all search strings.
       do isearch=1,nsearch
-        ! Test for string equality.
-        if(trim(field(fsearch(isearch),line))==trim(search(isearch)))cycle
-        ! Test for numerical equality.
-        read(search(isearch),*,iostat=jerr)t1
-        if(jerr/=0)exit
-        t2=dble_field(fsearch(isearch),line,jerr)
-        if(jerr/=0)exit
-        if(.not.are_equal(t1,t2))exit
+        if(.not.are_equal_string(trim(field(fsearch(isearch),line)),&
+          &trim(search(isearch))))exit
       enddo ! isearch
       if(isearch<=nsearch)cycle
+      ! Decide which dataset this goes in.
+      do iset=1,ndataset
+        do idiscr=1,ndiscr
+          if(.not.are_equal_string(trim(field(fdiscr(idiscr),line)),&
+             &trim(discr(idiscr,iset))))exit
+        enddo ! idiscr
+        if(idiscr>ndiscr)exit
+      enddo ! iset
+      if(iset>ndataset)then
+        ! Create new dataset.
+        ndataset=ndataset+1
+        call resize_dataset(ndataset,datasets)
+        iset=ndataset
+        ! Store discriminators.
+        call resize_pointer_char2(8192,(/ndiscr,ndataset/),discr)
+        do idiscr=1,ndiscr
+          discr(idiscr,iset)=trim(field(fdiscr(idiscr),line))
+        enddo ! idiscr
+      endif
       ! Enlarge arrays.
-      i=i+1
-      xy%nxy=i
-      call resize_pointer_dble1((/i/),xy%x,init=dble(i))
-      call resize_pointer_dble1((/i/),xy%y,init=dble(i))
-      call resize_pointer_dble1((/i/),xy%dx,init=0.d0)
-      call resize_pointer_dble1((/i/),xy%dy,init=0.d0)
+      if(.not.associated(datasets(iset)%xy))then
+        i=1
+      else
+        i=datasets(iset)%xy%nxy+1
+      endif
+      call enlarge_xydata(i,icol_dx>0,icol_dy>0,datasets(iset)%xy)
       ! Read data point from string.
       if(icol_x>0)then
-        xy%x(i)=dble_field(icol_x,line,ierr)
-        if(ierr/=0)exit
+        datasets(iset)%xy%x(i)=dble_field(icol_x,line,ierr)
+        if(ierr/=0)then
+          write(6,'(a)')'Failed to parse value of x in "'//trim(fname)//'".'
+          write(6,'()')
+          exit
+        endif
+      else
+        datasets(iset)%xy%x(i)=dble(i)
       endif
       if(icol_y>0)then
-        xy%y(i)=dble_field(icol_y,line,ierr)
-        if(ierr/=0)exit
+        datasets(iset)%xy%y(i)=dble_field(icol_y,line,ierr)
+        if(ierr/=0)then
+          write(6,'(a)')'Failed to parse value of y in "'//trim(fname)//'".'
+          write(6,'()')
+          exit
+        endif
+      else
+        datasets(iset)%xy%y(i)=dble(i)
       endif
       if(icol_dx>0)then
-        xy%dx(i)=dble_field(icol_dx,line,ierr)
-        if(ierr/=0)exit
-        if(xy%dx(i)<=0.d0)then
-          ierr=-5 ! flag non-positive dx
+        datasets(iset)%xy%dx(i)=dble_field(icol_dx,line,ierr)
+        if(ierr/=0)then
+          write(6,'(a)')'Failed to parse value of dx in "'//trim(fname)//'".'
+          write(6,'()')
+          exit
+        endif
+        if(datasets(iset)%xy%dx(i)<=0.d0)then
+          write(6,'(a)')'Found non-positive dx in "'//trim(fname)//'".'
+          write(6,'()')
+          ierr=-5
           exit
         endif
       endif ! have_dx
       if(icol_dy>0)then
-        xy%dy(i)=dble_field(icol_dy,line,ierr)
-        if(ierr/=0)exit
-        if(xy%dy(i)<=0.d0)then
-          ierr=-6 ! flag non-poistive dy
+        datasets(iset)%xy%dy(i)=dble_field(icol_dy,line,ierr)
+        if(ierr/=0)then
+          write(6,'(a)')'Failed to parse value of dx in "'//trim(fname)//'".'
+          write(6,'()')
+          exit
+        endif
+        if(datasets(iset)%xy%dy(i)<=0.d0)then
+          write(6,'(a)')'Found non-positive dy in "'//trim(fname)//'".'
+          write(6,'()')
+          ierr=-6
           exit
         endif
       endif ! have_dy
@@ -3391,6 +3184,112 @@ CONTAINS
       endif
     enddo ! ipoly
   END FUNCTION eval_poly
+
+
+  ! DERIVED-TYPE TOOLS
+
+
+  SUBROUTINE enlarge_xydata(nxy,have_dx,have_dy,xy)
+    !--------------------------------------------!
+    ! Enlarge an xydata-type pointer to (1:nxy), !
+    ! preserving any existing data.              !
+    !--------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: nxy
+    LOGICAL,INTENT(in) :: have_dx,have_dy
+    TYPE(xydata),POINTER :: xy
+    INTEGER i
+    if(.not.associated(xy))then
+      allocate(xy)
+      xy%nxy=0
+      xy%have_dx=have_dx
+      xy%have_dy=have_dy
+      nullify(xy%x)
+      nullify(xy%y)
+      nullify(xy%dx)
+      nullify(xy%dy)
+    endif
+    ! Enlarge arrays.
+    call resize_pointer_dble1((/nxy/),xy%x)
+    call resize_pointer_dble1((/nxy/),xy%y)
+    call resize_pointer_dble1((/nxy/),xy%dx)
+    call resize_pointer_dble1((/nxy/),xy%dy)
+    ! Initialize x and y.
+    do i=xy%nxy+1,nxy
+      xy%x(i)=dble(i)
+      xy%y(i)=dble(i)
+    enddo ! i
+    ! Store dataset length.
+    xy%nxy=nxy
+  END SUBROUTINE enlarge_xydata
+
+
+  SUBROUTINE kill_xydata(xy)
+    !---------------------------------!
+    ! Destroy an xydata-type pointer. !
+    !---------------------------------!
+    IMPLICIT NONE
+    TYPE(xydata),POINTER :: xy
+    if(associated(xy))then
+      if(associated(xy%x))deallocate(xy%x)
+      if(associated(xy%y))deallocate(xy%y)
+      if(associated(xy%dx))deallocate(xy%dx)
+      if(associated(xy%dy))deallocate(xy%dy)
+      deallocate(xy)
+      nullify(xy)
+    endif
+  END SUBROUTINE kill_xydata
+
+
+  SUBROUTINE resize_dataset(ndataset,datasets)
+    !------------------------------------------------!
+    ! Resize a dataset-type pointer to (1:ndataset), !
+    ! preserving any existing data.                  !
+    !------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: ndataset
+    TYPE(dataset),POINTER :: datasets(:)
+    TYPE(dataset),POINTER :: tdatasets(:)
+    INTEGER old_ndataset,i
+
+    ! Backup original vector of pointers to datasets and destroy original.
+    old_ndataset=0
+    if(associated(datasets))then
+      old_ndataset=size(datasets)
+      if(ndataset>0)then
+        allocate(tdatasets(min(old_ndataset,ndataset)))
+        do i=1,min(old_ndataset,ndataset)
+          tdatasets(i)=datasets(i)
+        enddo ! i
+      endif
+      deallocate(datasets)
+      if(ndataset<old_ndataset)then
+        do i=ndataset+1,old_ndataset
+          call kill_xydata(datasets(i)%xy)
+          call kill_xydata(datasets(i)%txy)
+          call kill_xydata(datasets(i)%rtxy)
+        enddo ! i
+      endif
+    endif
+
+    ! Create new vector of pointers to datasets.
+    if(ndataset>0)allocate(datasets(ndataset))
+
+    ! Copy vector of pointers to datasets from backup and destroy backup.
+    if(old_ndataset>0)then
+      if(ndataset>0)then
+        do i=1,min(old_ndataset,ndataset)
+          datasets(i)=tdatasets(i)
+        enddo ! i
+        deallocate(tdatasets)
+        nullify(tdatasets)
+      endif
+    endif
+
+    ! Nullify pointer if empty.
+    if(ndataset==0)nullify(datasets)
+
+  END SUBROUTINE resize_dataset
 
 
   ! GENERIC NUMERICAL UTILITIES.
@@ -3667,126 +3566,27 @@ CONTAINS
   END FUNCTION are_equal
 
 
-  ! MISC UTILITIES.
-
-
-  FUNCTION field(n,line)
-    !---------------------------------------------------------!
-    ! Return the N-th field in string LINE, where the fields  !
-    ! are separated by one or more spaces.  If N is negative, !
-    ! return the |N|-th-to-last field in LINE.                !
-    !---------------------------------------------------------!
+  LOGICAL FUNCTION are_equal_string(cx,cy,tol)
+    !-------------------------------------------------------!
+    ! Check if two strings are equal, or if their numerical !
+    ! values are equal within a reasonable tolerance.       !
+    !-------------------------------------------------------!
     IMPLICIT NONE
-    INTEGER,INTENT(in) :: n
-    CHARACTER(*),INTENT(in) :: line
-    CHARACTER(len(line)) :: field
-    CHARACTER(len(line)) tline
-    INTEGER i,k,absn
-    LOGICAL back
-    ! FIXME - should honour and strip quotes.
-    ! Initialize.
-    field=''
-    if(n==0)return
-    absn=abs(n)
-    tline=adjustl(line)
-    back=(n<0)
-    ! Loop over fields.
-    do i=1,absn-1
-      k=scan(trim(tline),' ',back)
-      if(k==0)return
-      if(back)then
-        tline=adjustl(tline(1:k-1))
-      else
-        tline=adjustl(tline(k+1:))
-      endif
-    enddo
-    ! Return nth field.
-    k=scan(trim(tline),' ',back)
-    if(k==0)then
-      field=adjustl(tline)
-    elseif(back)then
-      field=adjustl(tline(k+1:))
-    else
-      field=adjustl(tline(1:k-1))
-    endif
-  END FUNCTION field
+    CHARACTER(*),INTENT(in) :: cx,cy
+    DOUBLE PRECISION,OPTIONAL,INTENT(in) :: tol
+    DOUBLE PRECISION x,y
+    INTEGER ierr
+    are_equal_string=trim(cx)==trim(cy)
+    if(are_equal_string)return
+    read(cx,*,iostat=ierr)x
+    if(ierr/=0)return
+    read(cy,*,iostat=ierr)y
+    if(ierr/=0)return
+    are_equal_string=are_equal(x,y,tol)
+  END FUNCTION are_equal_string
 
 
-  INTEGER FUNCTION nfield(line)
-    !--------------------------------------!
-    ! Return the number of fields in LINE. !
-    !--------------------------------------!
-    IMPLICIT NONE
-    CHARACTER(*),INTENT(in) :: line
-    nfield=0
-    do
-      if(len_trim(field(nfield+1,line))==0)exit
-      nfield=nfield+1
-    enddo
-  END FUNCTION nfield
-
-
-  INTEGER FUNCTION int_field(ifield,command,ierr)
-    IMPLICIT NONE
-    INTEGER,INTENT(in) :: ifield
-    CHARACTER(*),INTENT(in) :: command
-    INTEGER,INTENT(inout) :: ierr
-    CHARACTER(len(command)) f
-    ierr=0
-    f=field(ifield,command)
-    read(f,*,iostat=ierr)int_field
-  END FUNCTION int_field
-
-
-  DOUBLE PRECISION FUNCTION dble_field(ifield,command,ierr)
-    IMPLICIT NONE
-    INTEGER,INTENT(in) :: ifield
-    CHARACTER(*),INTENT(in) :: command
-    INTEGER,INTENT(inout) :: ierr
-    CHARACTER(len(command)) f
-    ierr=0
-    f=field(ifield,command)
-    read(f,*,iostat=ierr)dble_field
-  END FUNCTION dble_field
-
-
-  CHARACTER(12) FUNCTION i2s(n)
-    !-----------------------------------------------------------------------!
-    ! Convert integers to left justified strings that can be printed in the !
-    ! middle of a sentence without introducing large amounts of white space.!
-    !-----------------------------------------------------------------------!
-    IMPLICIT NONE
-    INTEGER,INTENT(in) :: n
-    INTEGER i,j
-    INTEGER,PARAMETER :: ichar0=ichar('0')
-    i2s=''
-    i=abs(n)
-    do j=len(i2s),1,-1
-      i2s(j:j)=achar(ichar0+mod(i,10))
-      i=i/10
-      if(i==0)exit
-    enddo ! j
-    if(n<0)then
-      i2s='-'//adjustl(i2s(2:12))
-    else
-      i2s=adjustl(i2s)
-    endif ! n<0
-  END FUNCTION i2s
-
-
-  SUBROUTINE quit (msg)
-    !---------------------!
-    ! Quit with an error. !
-    !---------------------!
-    IMPLICIT NONE
-    CHARACTER(*), INTENT(in), OPTIONAL :: msg
-    if (present(msg)) then
-      write(6,'(a)')'ERROR : '//msg
-    else
-      write(6,'(a)')'Quitting.'
-    endif
-    stop
-  END SUBROUTINE quit
+  ! POINTER RESIZING TOOLS.
 
 
   SUBROUTINE resize_pointer_char1(sz,dims,pt,init)
@@ -3825,6 +3625,45 @@ CONTAINS
     pt=>pt_new
     nullify(pt_new)
   END SUBROUTINE resize_pointer_char1
+
+
+  SUBROUTINE resize_pointer_char2(sz,dims,pt,init)
+    !-------------------------------------------------------!
+    ! Allocate or resize a second-rank character pointer PT !
+    ! to size DIMS, keeping any existing data untouched.    !
+    ! New elements initialized to empty string.             !
+    !----------------------------------------------------- -!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: sz,dims(2)
+    CHARACTER(sz),INTENT(in),OPTIONAL :: init
+    INTEGER old_dims(2)
+    CHARACTER(0),PARAMETER :: init_default=''
+    CHARACTER(sz),POINTER :: pt(:,:),pt_new(:,:)
+    if(.not.associated(pt))then
+      allocate(pt(dims(1),dims(2)))
+      if(present(init))then
+        pt=init
+      else
+        pt=init_default
+      endif
+      return
+    endif
+    old_dims=shape(pt)
+    if(all(old_dims==dims))return
+    allocate(pt_new(dims(1),dims(2)))
+    if(any(old_dims<dims))then
+      if(present(init))then
+        pt_new=init
+      else
+        pt_new=init_default
+      endif
+    endif
+    pt_new(1:min(old_dims(1),dims(1)),1:min(old_dims(2),dims(2)))=&
+       &pt(1:min(old_dims(1),dims(1)),1:min(old_dims(2),dims(2)))
+    deallocate(pt)
+    pt=>pt_new
+    nullify(pt_new)
+  END SUBROUTINE resize_pointer_char2
 
 
   SUBROUTINE resize_pointer_int1(dims,pt,init)
@@ -3901,6 +3740,141 @@ CONTAINS
     pt=>pt_new
     nullify(pt_new)
   END SUBROUTINE resize_pointer_dble1
+
+
+  ! STRING UTILITIES.
+
+
+  FUNCTION field(n,line)
+    !---------------------------------------------------------!
+    ! Return the N-th field in string LINE, where the fields  !
+    ! are separated by one or more spaces.  If N is negative, !
+    ! return the |N|-th-to-last field in LINE.                !
+    !---------------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: n
+    CHARACTER(*),INTENT(in) :: line
+    CHARACTER(len(line)) :: field
+    CHARACTER(len(line)) tline
+    INTEGER i,k,absn
+    LOGICAL back
+    ! FIXME - should honour and strip quotes.
+    ! Initialize.
+    field=''
+    if(n==0)return
+    absn=abs(n)
+    tline=adjustl(line)
+    back=(n<0)
+    ! Loop over fields.
+    do i=1,absn-1
+      k=scan(trim(tline),' ',back)
+      if(k==0)return
+      if(back)then
+        tline=adjustl(tline(1:k-1))
+      else
+        tline=adjustl(tline(k+1:))
+      endif
+    enddo
+    ! Return nth field.
+    k=scan(trim(tline),' ',back)
+    if(k==0)then
+      field=adjustl(tline)
+    elseif(back)then
+      field=adjustl(tline(k+1:))
+    else
+      field=adjustl(tline(1:k-1))
+    endif
+  END FUNCTION field
+
+
+  INTEGER FUNCTION nfield(line)
+    !--------------------------------------!
+    ! Return the number of fields in LINE. !
+    !--------------------------------------!
+    IMPLICIT NONE
+    CHARACTER(*),INTENT(in) :: line
+    nfield=0
+    do
+      if(len_trim(field(nfield+1,line))==0)exit
+      nfield=nfield+1
+    enddo
+  END FUNCTION nfield
+
+
+  INTEGER FUNCTION int_field(ifield,command,ierr)
+    !----------------------------------------------------!
+    ! Like field, but returning the value as an integer. !
+    ! ierr is set to a non-zero value if the requested   !
+    ! field could not be parsed as an integer.           !
+    !----------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: ifield
+    CHARACTER(*),INTENT(in) :: command
+    INTEGER,INTENT(inout) :: ierr
+    CHARACTER(len(command)) f
+    ierr=0
+    f=field(ifield,command)
+    read(f,*,iostat=ierr)int_field
+  END FUNCTION int_field
+
+
+  DOUBLE PRECISION FUNCTION dble_field(ifield,command,ierr)
+    !--------------------------------------------------------!
+    ! Like field, but returning the value as an real number. !
+    ! ierr is set to a non-zero value if the requested field !
+    ! could not be parsed as a real number.                  !
+    !--------------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: ifield
+    CHARACTER(*),INTENT(in) :: command
+    INTEGER,INTENT(inout) :: ierr
+    CHARACTER(len(command)) f
+    ierr=0
+    f=field(ifield,command)
+    read(f,*,iostat=ierr)dble_field
+  END FUNCTION dble_field
+
+
+  CHARACTER(12) FUNCTION i2s(n)
+    !-----------------------------------------------------------------------!
+    ! Convert integers to left justified strings that can be printed in the !
+    ! middle of a sentence without introducing large amounts of white space.!
+    !-----------------------------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: n
+    INTEGER i,j
+    INTEGER,PARAMETER :: ichar0=ichar('0')
+    i2s=''
+    i=abs(n)
+    do j=len(i2s),1,-1
+      i2s(j:j)=achar(ichar0+mod(i,10))
+      i=i/10
+      if(i==0)exit
+    enddo ! j
+    if(n<0)then
+      i2s='-'//adjustl(i2s(2:12))
+    else
+      i2s=adjustl(i2s)
+    endif ! n<0
+  END FUNCTION i2s
+
+
+  ! QUIT ROUTINE.
+
+
+  SUBROUTINE quit (msg)
+    !---------------------!
+    ! Quit with an error. !
+    !---------------------!
+    IMPLICIT NONE
+    CHARACTER(*), INTENT(in), OPTIONAL :: msg
+    if (present(msg)) then
+      write(6,'(a)')'ERROR : '//msg
+    else
+      write(6,'(a)')'Quitting.'
+    endif
+    stop
+  END SUBROUTINE quit
 
 
 END PROGRAM polyfit
