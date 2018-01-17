@@ -3913,26 +3913,49 @@ CONTAINS
     INTEGER,INTENT(in) :: n
     CHARACTER(*),INTENT(in) :: line
     CHARACTER(len(line)) :: field
-    CHARACTER(len(line)) tline
+    CHARACTER(len(line)) remainder
     INTEGER i,k
-    ! FIXME - should honour and strip quotes.
     ! Initialize.
     field=''
     if(n<1)return
-    tline=adjustl(line)
+    remainder=adjustl(line)
     ! Loop over fields.
-    do i=1,n-1
-      k=scan(trim(tline),' ')
-      if(k==0)return
-      tline=adjustl(tline(k+1:))
+    i=0
+    do
+      i=i+1
+      if(remainder(1:1)=='"')then
+        ! Potentially start of a multi-word field.
+        ! Locate end of field (quote followed by <space> or <EOL>).
+        k=index(trim(remainder(2:)),'" ')+1
+        if(k==1)then
+          ! quote-space not found, so see if there is a quote at EOL.
+          k=len_trim(remainder)
+          if(remainder(k:k)/='"')k=1
+        endif
+        if(k>1)then
+          ! Found end of field.
+          if(i==n)then
+            field=trim(remainder(2:k-1))
+          else
+            remainder=adjustl(remainder(k+1:))
+          endif
+          cycle
+        endif
+      endif
+      ! Single-word field.
+      ! Locate end of field.
+      k=scan(trim(remainder),' ')
+      if(k==0)then
+        ! End is EOL.
+        if(i==n)field=trim(remainder)
+        return
+      elseif(i==n)then
+        field=trim(remainder(1:k-1))
+        return
+      else
+        remainder=adjustl(remainder(k:))
+      endif
     enddo
-    ! Return nth field.
-    k=scan(trim(tline),' ')
-    if(k==0)then
-      field=adjustl(tline)
-    else
-      field=adjustl(tline(1:k-1))
-    endif
   END FUNCTION field
 
 
