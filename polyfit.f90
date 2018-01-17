@@ -841,14 +841,14 @@ CONTAINS
             endif
             i1=0
             if(ipos>1)then
-              read(token(1:ipos-1),*,iostat=ierr)i1
+              i1=parse_int(token(1:ipos-1),ierr)
               if(ierr/=0)then
                 write(6,'(a)')'Syntax error: could not parse range.'
                 write(6,'()')
                 cycle user_loop
               endif
             endif
-            read(token(ipos+1:),*,iostat=ierr)i2
+            i2=parse_int(token(ipos+1:),ierr)
             if(ierr/=0)then
               write(6,'(a)')'Syntax error: could not parse range.'
               write(6,'()')
@@ -988,7 +988,7 @@ CONTAINS
               endif
               i1=1
               if(ipos>1)then
-                read(token(1:ipos-1),*,iostat=ierr)i1
+                i1=parse_int(token(1:ipos-1),ierr)
                 if(ierr/=0)then
                   write(6,'(a)')'Syntax error: could not parse range.'
                   write(6,'()')
@@ -997,7 +997,7 @@ CONTAINS
               endif
               i2=npoly
               if(ipos<len_trim(token))then
-                read(token(ipos+1:),*,iostat=ierr)i2
+                i2=parse_int(token(ipos+1:),ierr)
                 if(ierr/=0)then
                   write(6,'(a)')'Syntax error: could not parse range.'
                   write(6,'()')
@@ -1565,7 +1565,7 @@ CONTAINS
     INTEGER,INTENT(in) :: ndataset
     TYPE(dataset),INTENT(in) :: datasets(ndataset)
     TYPE(fit_params),POINTER :: fit
-    INTEGER iset,tot_nxy,ixy
+    INTEGER iset,tot_nxy,ixy,ierr
     DOUBLE PRECISION t1,tx0
     DOUBLE PRECISION,ALLOCATABLE :: x(:),y(:)
 
@@ -1625,7 +1625,7 @@ CONTAINS
 
     case default
       ! Parse real number.
-      read(fit%x0_string,*)t1
+      t1=parse_dble(fit%x0_string,ierr)
       tx0=t1
     end select
 
@@ -3724,26 +3724,6 @@ CONTAINS
   END FUNCTION are_equal
 
 
-  LOGICAL FUNCTION are_equal_string(cx,cy,tol)
-    !-------------------------------------------------------!
-    ! Check if two strings are equal, or if their numerical !
-    ! values are equal within a reasonable tolerance.       !
-    !-------------------------------------------------------!
-    IMPLICIT NONE
-    CHARACTER(*),INTENT(in) :: cx,cy
-    DOUBLE PRECISION,OPTIONAL,INTENT(in) :: tol
-    DOUBLE PRECISION x,y
-    INTEGER ierr
-    are_equal_string=trim(cx)==trim(cy)
-    if(are_equal_string)return
-    read(cx,*,iostat=ierr)x
-    if(ierr/=0)return
-    read(cy,*,iostat=ierr)y
-    if(ierr/=0)return
-    are_equal_string=are_equal(x,y,tol)
-  END FUNCTION are_equal_string
-
-
   ! POINTER RESIZING TOOLS.
 
 
@@ -3983,11 +3963,19 @@ CONTAINS
     INTEGER,INTENT(in) :: ifield
     CHARACTER(*),INTENT(in) :: command
     INTEGER,INTENT(inout) :: ierr
-    CHARACTER(len(command)) f
-    ierr=0
-    f=field(ifield,command)
-    read(f,*,iostat=ierr)int_field
+    int_field=parse_int(field(ifield,command),ierr)
   END FUNCTION int_field
+
+
+  INTEGER FUNCTION parse_int(string,ierr)
+    !--------------------------------------!
+    ! Parse a string to obtain an integer. !
+    !--------------------------------------!
+    IMPLICIT NONE
+    CHARACTER(*),INTENT(in) :: string
+    INTEGER,INTENT(inout) :: ierr
+    read(string,*,iostat=ierr)parse_int
+  END FUNCTION parse_int
 
 
   DOUBLE PRECISION FUNCTION dble_field(ifield,command,ierr)
@@ -4000,11 +3988,58 @@ CONTAINS
     INTEGER,INTENT(in) :: ifield
     CHARACTER(*),INTENT(in) :: command
     INTEGER,INTENT(inout) :: ierr
-    CHARACTER(len(command)) f
-    ierr=0
-    f=field(ifield,command)
-    read(f,*,iostat=ierr)dble_field
+    dble_field=parse_dble(field(ifield,command),ierr)
   END FUNCTION dble_field
+
+
+  DOUBLE PRECISION FUNCTION parse_dble(string,ierr)
+    !-----------------------------------------------------!
+    ! Parse a string to obtain a double-precision number. !
+    ! Supports fractions, e.g., string="1/3".             !
+    !-----------------------------------------------------!
+    IMPLICIT NONE
+    CHARACTER(*),INTENT(in) :: string
+    INTEGER,INTENT(inout) :: ierr
+    INTEGER ipos
+    DOUBLE PRECISION t1,t2
+    ipos=scan(string,'/')
+    if(ipos==0)then
+      read(string,*,iostat=ierr)parse_dble
+    else
+      ierr=-1
+      if(ipos<2)return
+      if(ipos>=len_trim(string))return
+      read(string(1:ipos-1),*,iostat=ierr)t1
+      if(ierr/=0)return
+      read(string(ipos+1:),*,iostat=ierr)t2
+      if(ierr/=0)return
+      if(are_equal(t2,0.d0))then
+        ierr=-1
+        return
+      endif
+      parse_dble=t1/t2
+    endif
+  END FUNCTION parse_dble
+
+
+  LOGICAL FUNCTION are_equal_string(cx,cy,tol)
+    !-------------------------------------------------------!
+    ! Check if two strings are equal, or if their numerical !
+    ! values are equal within a reasonable tolerance.       !
+    !-------------------------------------------------------!
+    IMPLICIT NONE
+    CHARACTER(*),INTENT(in) :: cx,cy
+    DOUBLE PRECISION,OPTIONAL,INTENT(in) :: tol
+    DOUBLE PRECISION x,y
+    INTEGER ierr
+    are_equal_string=trim(cx)==trim(cy)
+    if(are_equal_string)return
+    x=parse_dble(cx,ierr)
+    if(ierr/=0)return
+    y=parse_dble(cy,ierr)
+    if(ierr/=0)return
+    are_equal_string=are_equal(x,y,tol)
+  END FUNCTION are_equal_string
 
 
   CHARACTER(12) FUNCTION i2s(n)
