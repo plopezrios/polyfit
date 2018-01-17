@@ -1032,6 +1032,25 @@ CONTAINS
           endif
           write(6,'()')
 
+        case('centre')
+          ! Check value.
+          select case(field(3,command))
+          case('left','right','max','min','centre','mean','median')
+            continue
+          case default
+            t1=dble_field(3,command,ierr)
+            if(ierr/=0)then
+              write(6,'(a)')'Invalid value "'//trim(field(3,command))//'" for &
+                 &variable "'//trim(field(2,command))//'".'
+              write(6,'()')
+              cycle user_loop
+            endif
+          end select
+          ! Set value.
+          fit%x0_string=field(3,command)
+          ! Update X0.
+          call refresh_fit(ndataset,datasets,fit)
+
         case('weights')
           select case(trim(field(3,command)))
           case('yes','YES','y','Y','true','TRUE','t','T')
@@ -1051,25 +1070,6 @@ CONTAINS
             write(6,'(a)')'no'
           endif
           write(6,'()')
-
-        case('centre')
-          ! Check value.
-          select case(field(3,command))
-          case('left','right','max','min','centre','mean','median')
-            continue
-          case default
-            t1=dble_field(3,command,ierr)
-            if(ierr/=0)then
-              write(6,'(a)')'Invalid value "'//trim(field(3,command))//'" for &
-                 &variable "'//trim(field(2,command))//'".'
-              write(6,'()')
-              cycle user_loop
-            endif
-          end select
-          ! Set value.
-          fit%x0_string=field(3,command)
-          ! Update X0.
-          call refresh_fit(ndataset,datasets,fit)
 
         case('nsample')
           ! Check value.
@@ -1168,185 +1168,284 @@ CONTAINS
       case('help')
         select case(trim(field(2,command)))
         case('')
-          call pretty_print('')
-          call pretty_print('POLYFIT is a toolbox for performing polynomial &
-             &fits on one or more sets of data.  It handles non-integer &
-             &exponents, a few common data transformations and data with &
-             &statistical errorbars.  Its most useful feature is the ability &
-             &to provide confidence intervals for values and derivatives of a &
-             &fit.')
-          call pretty_print('')
-          call pretty_print('POLYFIT uses a rudimentary command-line &
-             &interface.  The list of available commands is:')
-          call pretty_print('')
-          call pretty_print('* inspect <file>',0,2)
-          call pretty_print('* load <file> [type <type> using <columns>]',0,2)
-          call pretty_print('* set <variable> <value> [for <set-list>]',0,2)
-          call pretty_print('* status',0,2)
-          call pretty_print('* fit',0,2)
-          call pretty_print('* assess <variable> [using <function> at <X> &
-             &[for <set-list>]]',0,2)
-          call pretty_print('* help [<command> | set <variable>]',0,2)
-          call pretty_print('')
-          call pretty_print('Type help <command> for detailed information.')
-          call pretty_print('')
+          call pprint('')
+          call pprint('POLYFIT is a toolbox for performing polynomial fits on &
+             &one or more sets of data.  It handles non-integer exponents, a &
+             &few common data transformations and data with statistical &
+             &errorbars.  POLYFIT can provide confidence intervals for values &
+             &and derivatives of a fit, can perform fits to multiple &
+             &datasets simultaneously with shared parameters, and provides &
+             &useful tools for assessing quality of fits and automatically &
+             &setting the fit form and data ranges.')
+          call pprint('')
+          call pprint('POLYFIT uses a command-line interface.  The list &
+             &of available commands is:')
+          call pprint('')
+          call pprint('* inspect <file>',0,2)
+          call pprint('* load <file> [type <type> using <columns>] &
+             &[where <column> <value>] [by <column]',0,2)
+          call pprint('* set <variable> <value> [for <set-list>]',0,2)
+          call pprint('* status',0,2)
+          call pprint('* assess <variables> [using <function> at X <X> &
+             &[for <set>]]',0,2)
+          call pprint('* report <report>',0,2)
+          call pprint('* fit',0,2)
+          call pprint('* plot',0,2)
+          call pprint('* evaluate <function> at X <X>',0,2)
+          call pprint('* help [<command> | set <variable>]',0,2)
+          call pprint('')
+          call pprint('Type help <command> for detailed information.')
+          call pprint('')
         case('inspect')
-          call pretty_print('')
-          call pretty_print('Command: inspect <file>',0,9)
-          call pretty_print('')
-          call pretty_print('Reports the number of data lines and columns &
-             &detected in <file>.',2,2)
-          call pretty_print('')
+          call pprint('')
+          call pprint('Command: inspect <file>',0,9)
+          call pprint('')
+          call pprint('Reports the number of data lines and columns detected &
+             &in <file>.',2,2)
+          call pprint('')
         case('load')
-          call pretty_print('')
-          call pretty_print('Command: load <file> [type <type> using &
-             &<columns>]',0,9)
-          call pretty_print('')
-          call pretty_print('Loads data from <file> into a new dataset.  By &
+          call pprint('')
+          call pprint('Command: load <file> [type <type> using <columns>]',0,9)
+          call pprint('')
+          call pprint('Loads data from <file> into a new dataset.  By &
              &default:',2,2)
-          call pretty_print('* 1-column files are of type xy, with &
-             &(x,y)=(index,1)',2,4)
-          call pretty_print('* 2-column files are of type xy, with &
-             &(x,y)=(1,2)',2,4)
-          call pretty_print('* 3-column files are of type xydy, with &
+          call pprint('* 1-column files are of type xy, with (x,y)=(index,1)',&
+             &2,4)
+          call pprint('* 2-column files are of type xy, with (x,y)=(1,2)',2,4)
+          call pprint('* 3-column files are of type xydy, with &
              &(x,y,dy)=(1,2,3)',2,4)
-          call pretty_print('* 4- or more-column files are of type xdxydy, &
-             &with (x,dx,y,dy)=(1,2,3,4)',2,4)
-          call pretty_print('Other column selections can be specified with an &
+          call pprint('* 4- or more-column files are of type xdxydy, with &
+             &(x,dx,y,dy)=(1,2,3,4)',2,4)
+          call pprint('Other column selections can be specified with an &
              &explicity type/using clause, e.g., "type xydy using 3 5 7".  A &
              &column index of zero refers to the line index.',2,2)
-          call pretty_print('')
+          call pprint('')
+        case('status')
+          call pprint('')
+          call pprint('Command: status',0,9)
+          call pprint('')
+          call pprint('Report currently loaded datasets and values of &
+             &internal variables.',2,2)
+          call pprint('')
+        case('assess')
+          call pprint('')
+          call pprint('Command: assess <variables> [using <function> at X <X> &
+             &[for <set>]]',0,9)
+          call pprint('')
+          call pprint('Assess the convergence of the fit with the specified &
+             &variables.  The assessment is carried out based on the value &
+             &chi^2/Ndf and on the value (f), first (f''), or second &
+             &derivative (f'''') of the fit at the specified (transformed) &
+             &coordinate X=<X> for all sets or a specific set <set>.  The &
+             &following <variables> can be specified:',2,2)
+          call pprint('* fit : assess convergence with choice of fit form.',&
+             &2,4)
+          call pprint('* range : assess convergence with data range.',2,4)
+          call pprint('* fit,range : assess convergence with choice of fit &
+             &form and data range',2,4)
+          call pprint('')
+        case('report')
+          call pprint('')
+          call pprint('Command: report <report>',0,9)
+          call pprint('')
+          call pprint('Produce the requested report of the loaded datasets.  &
+             &Available reports are:',2,2)
+          call pprint('* range : report basic range statistics of the data.',&
+             &2,4)
+          call pprint('')
+        case('fit')
+          call pprint('')
+          call pprint('Command: fit',0,9)
+          call pprint('')
+          call pprint('Perform fit of currently loaded datasets.',2,2)
+          call pprint('')
+        case('plot')
+          call pprint('')
+          call pprint('Command: plot',0,9)
+          call pprint('')
+          call pprint('Plot the data and fit to "fit.plot".  If multiple &
+             &datasets are loaded and the fit contains shared parameters, the &
+             &fit function is split into a shared part and an independent &
+             &set-specific part -- data points are offset by the value of the &
+             &independent fit, and the shared part of the fit is plotted.',2,2)
+          call pprint('')
+        case('evaluate')
+          call pprint('')
+          call pprint('Command: evaluate <function> at X <X>',0,9)
+          call pprint('')
+          call pprint('Evaluate the value (f), first (f'') or second &
+             &derivative (f'''') of the fit at the specified (transformed) &
+             &coordinate X=<X> for all datasets.',2,2)
+          call pprint('')
         case('set')
           if(nfield(command)==2)then
-            call pretty_print('')
-            call pretty_print('Command: set <variable> <value> [for &
-               &<set-list>]',0,9)
-            call pretty_print('')
-            call pretty_print('Sets <variable> to <value>, either globally or &
-               &for selected sets (for certain variables).  The list of &
-               &available variables is:',2,2)
-            call pretty_print('')
-            call pretty_print('* xscale',2,4)
-            call pretty_print('* yscale',2,4)
-            call pretty_print('* fit',2,4)
-            call pretty_print('* range',2,4)
-            call pretty_print('* shared',2,4)
-            call pretty_print('')
-            call pretty_print('Type "help set <variable>" for detailed &
+            call pprint('')
+            call pprint('Command: set <variable> <value> [for <set-list>]',0,9)
+            call pprint('')
+            call pprint('Sets <variable> to <value>, either globally or for &
+               &selected sets (for certain variables).  The list of available &
+               &variables is:',2,2)
+            call pprint('')
+            call pprint('* xscale',2,4)
+            call pprint('* yscale',2,4)
+            call pprint('* fit',2,4)
+            call pprint('* range',2,4)
+            call pprint('* shared',2,4)
+            call pprint('* centre',2,4)
+            call pprint('* weights',2,4)
+            call pprint('* nsample',2,4)
+            call pprint('')
+            call pprint('Type "help set <variable>" for detailed &
                &information.',2,2)
-            call pretty_print('')
+            call pprint('')
           else
             select case(field(3,command))
             case('xscale','yscale')
-              call pretty_print('')
-              call pretty_print('Variable: xscale, yscale',0,10)
-              call pretty_print('')
-              call pretty_print('These set scale transformations for the &
-                 &independent x variable and for the dependent y variable, &
-                 &respectively.  In POLYFIT notation, the original variables &
-                 &are called x and y, and the transformed variables are &
-                 &called X and Y.',2,2)
-              call pretty_print('')
-              call pretty_print('Possible values are:',2,2)
-              call pretty_print('* "linear" : X = x [default]',2,4)
-              call pretty_print('* "reciprocal" : X = 1/x [x=0 forbidden]',2,4)
-              call pretty_print('* "logarithmic" : X = log(x) [x<=0 &
-                 &forbidden]',2,4)
-              call pretty_print('* "exponential" : X = exp(x)',2,4)
-              call pretty_print('')
-              call pretty_print('These variables can be set in a per-set &
-                 &manner or globally.  Note that the global value applies to &
-                 &all loaded datasets and becomes the default for new &
-                 &datasets.',2,2)
-              call pretty_print('')
+              call pprint('')
+              call pprint('Variable: xscale, yscale',0,10)
+              call pprint('')
+              call pprint('"xscale" and "yscale" set scale transformations &
+                 &for the independent x variable and for the dependent y &
+                 &variable, respectively.  In POLYFIT notation, the original &
+                 &variables are called x and y, and the transformed variables &
+                 &are called X and Y.',2,2)
+              call pprint('')
+              call pprint('The allowed values for "xscale" and "yscale" are:',&
+                 &2,2)
+              call pprint('* "linear" : X = x',2,4)
+              call pprint('* "reciprocal" : X = 1/x [x=0 forbidden]',2,4)
+              call pprint('* "logarithmic" : X = log(x) [x<=0 forbidden]',2,4)
+              call pprint('* "exponential" : X = exp(x)',2,4)
+              call pprint('')
+              call pprint('These variables can be set in a per-set manner or &
+                 &globally.  Note that the global value applies to all loaded &
+                 &datasets and becomes the default for new datasets.  POLYFIT &
+                 &will refuse to apply a transformation to datasets &
+                 &containing incompatible data, e.g., "set xscale logarithmic &
+                 &for 1" is not allowed if dataset #1 contains negative x &
+                 &values.',2,2)
+              call pprint('')
+              call pprint('The default value of "xscale" and "yscale" &
+                 &is "linear".',2,2)
+              call pprint('')
             case('fit')
-              call pretty_print('')
-              call pretty_print('Variable: fit',0,10)
-              call pretty_print('')
-              call pretty_print('This sets the exponents to be used in the &
-                 &fitting function.  The value can be specified as a list, &
-                 &e.g., "set fit 0 1.5 3", or as an integer range, e.g., "set &
-                 &fit 0:2".  Note that the form of the fitting function is &
-                 &global, so the "for <set-list>" syntax does not apply to &
-                 &this variable.',2,2)
-              call pretty_print('')
-            case('range')
-              call pretty_print('')
-              call pretty_print('Variable: range',0,10)
-              call pretty_print('')
-              call pretty_print('This sets the data mask to apply to all &
-                 &datasets.  The value can be specified as "<variable> &
-                 &<selector>", where:',2,2)
-              call pretty_print('* <variable> is one of x, y, X, or Y &
-                 &(lowercase for original and uppercase for transformed &
-                 &values).',2,4)
-              call pretty_print('* <selector> is one of:',2,4)
-              call pretty_print('- <  <threshold>',4,6)
-              call pretty_print('- <= <threshold>',4,6)
-              call pretty_print('- >= <threshold>',4,6)
-              call pretty_print('- >  <threshold>',4,6)
-              call pretty_print('- first <number>',4,6)
-              call pretty_print('- last <number>',4,6)
-              call pretty_print('Note that "range" is a global variable, so &
+              call pprint('')
+              call pprint('Variable: fit',0,10)
+              call pprint('')
+              call pprint('"fit" sets the exponents to be used in the fit &
+                 &function.  The value can be specified as a list, e.g., "set &
+                 &fit 0 1.5 3", or as an integer range, e.g., "set fit 0:2".  &
+                 &Note that the form of the fitting function is global, so &
                  &the "for <set-list>" syntax does not apply to this &
                  &variable.',2,2)
-              call pretty_print('')
+              call pprint('')
+              call pprint('The default value of "fit" is "0 1", &
+                 &corresponding to a linear fit.',2,2)
+              call pprint('')
+            case('range')
+              call pprint('')
+              call pprint('Variable: range',0,10)
+              call pprint('')
+              call pprint('"range" sets the data mask to apply to all &
+                 &datasets.  The value can be specified as "<variable> &
+                 &<selector>", where:',2,2)
+              call pprint('* <variable> is one of x, y, X, or Y (lowercase &
+                 &for original and uppercase for transformed values).',2,4)
+              call pprint('* <selector> is one of:',2,4)
+              call pprint('- <  <threshold>',4,6)
+              call pprint('- <= <threshold>',4,6)
+              call pprint('- >= <threshold>',4,6)
+              call pprint('- >  <threshold>',4,6)
+              call pprint('- first <number>',4,6)
+              call pprint('- last <number>',4,6)
+              call pprint('Note that "range" is a global variable, so the &
+                 &"for <set-list>" syntax does not apply to this variable.',&
+                 &2,2)
+              call pprint('')
+              call pprint('The default value of "range" is <unset>, which &
+                 &selects all data.',2,2)
+              call pprint('')
             case('shared')
-              call pretty_print('')
-              call pretty_print('Variable: shared',0,10)
-              call pretty_print('')
-              call pretty_print('This specifies which coefficients are to be &
-                 &shared among datasets.  The value is a list of coefficient &
-                 &indices, or "all".  Coefficients not flagged as shared take &
-                 &different values for each dataset.',2,2)
-              call pretty_print('')
+              call pprint('')
+              call pprint('Variable: shared',0,10)
+              call pprint('')
+              call pprint('"shared" specifies which coefficients in the fit &
+                 &are shared among datasets.  The value can be specified as a &
+                 &list of coefficient indices (e.g. "set shared 2 3 4"), or &
+                 &as a range (e.g., "set shared 2:4"), or using the special &
+                 &values "none" or "all".  Coefficients not flagged as shared &
+                 &take different values for each dataset.',2,2)
+              call pprint('')
+              call pprint('The default value of "shared" is "none".',2,2)
+              call pprint('')
+            case('centre')
+              call pprint('')
+              call pprint('Variable: centre',0,10)
+              call pprint('')
+              call pprint('"centre" determines the X offset to be used in &
+                 &fitting.  While polynomial fits are analytically identical &
+                 &irrespective of the offset, numerical fits might benefit &
+                 &from choosing, e.g., an X offset in the middle of the data &
+                 &range, close to the data minimum, etc.',2,2)
+              call pprint('')
+              call pprint('Allowed values are:',2,2)
+              call pprint('* left : smallest X in datasets',2,4)
+              call pprint('* right : largest X in datasets',2,4)
+              call pprint('* centre : midpoint between "left" and &
+                 &"right"',2,4)
+              call pprint('* mean : mean value of X in datasets',2,4)
+              call pprint('* median : median value of X in datasets',2,4)
+              call pprint('* min : X of the smallest Y in datasets',2,4)
+              call pprint('* max : X of the largest Y in datasets',2,4)
+              call pprint('* <X> : user-specified value',2,4)
+              call pprint('')
+              call pprint('Note that if "centre" is set to a named value &
+                 &(i.e., all of the above except "<X>"), the X offset &
+                 &dynamically adapts to changes in other variables, e.g., if &
+                 &data are loaded/unloaded, if the x/y scales are redefined, &
+                 &if data ranges are modified, etc.',2,2)
+              call pprint('')
+              call pprint('The default value of "centre" is "0".',2,2)
+              call pprint('')
+            case('weights')
+              call pprint('')
+              call pprint('Variable: weights',0,10)
+              call pprint('')
+              call pprint('"weights" determines whether the fits performed &
+                 &during the Monte Carlo process use weights of the form w=1, &
+                 &w=dX^-2, w=dY^-2, or w=(dXdY)^-2 respectively for xy, xdxy, &
+                 &xydy, and xdxydy datasets.',2,2)
+              call pprint('')
+              call pprint('This type of weighting is common practice, but &
+                 &results in the underestimation of uncertainties due to &
+                 &double counting, breaks the ability to mix xy datasets with &
+                 &xdxy/xydy/xdxydy datasets, and is in general discouraged.',&
+                 &2,2)
+              call pprint('')
+              call pprint('The value of "weights" is Boolean, and can be set &
+                 &to "yes" or "no".  The default value of "weights" is "no".',&
+                 &2,2)
+              call pprint('')
+            case('nsample')
+              call pprint('')
+              call pprint('Variable: nsample',0,10)
+              call pprint('')
+              call pprint('"nsample" is an integer which determines the &
+                 &number of Monte Carlo samples to use in the evaluation of &
+                 &uncertainties. Note that the uncertainty ddY in an &
+                 &uncertainty dY is ddY = dY/sqrt(nsample).',2,2)
+              call pprint('')
+              call pprint('The default value of "nsample" is 10000, which &
+                 &yields an uncertainty in the estimated uncertainty of 1% of &
+                 &its value.',2,2)
+              call pprint('')
             case default
-              call pretty_print('No help for variable "'//&
-                 &trim(field(2,command))//'".')
+              call pprint('No help for variable "'//trim(field(3,command))//&
+                 &'".')
             end select
           endif
-        case('status')
-          call pretty_print('')
-          call pretty_print('Command: status',0,9)
-          call pretty_print('')
-          call pretty_print('Report currently loaded datasets and values of &
-             &internal variables.',2,2)
-          call pretty_print('')
-        case('fit')
-          call pretty_print('')
-          call pretty_print('Command: fit',0,9)
-          call pretty_print('')
-          call pretty_print('Perform fit of currently loaded datasets.',2,2)
-          call pretty_print('')
-        case('assess')
-          call pretty_print('')
-          call pretty_print('Command: assess <variables> [using <function> at &
-             &<X> [for <sets>]]',0,9)
-          call pretty_print('')
-          call pretty_print('Assess the convergence of the fit with the &
-             &specified variables.  The assessment is carried out based on &
-             &the value chi^2/Ndf and on the value of the value or derivative &
-             &of the fit at the specified position.  The following &
-             &<variables> can be specified:',2,2)
-          call pretty_print('* fit : assess convergence with choice of fit &
-             &form.',2,4)
-          call pretty_print('* range : assess convergence with data range.',&
-             &2,4)
-          call pretty_print('* fit,range : assess convergence with choice of &
-             &fit form and data range',2,4)
-          call pretty_print('')
-        case('report')
-          call pretty_print('')
-          call pretty_print('Command: report <report>',0,9)
-          call pretty_print('')
-          call pretty_print('Produce the requested report of the loaded &
-             &datasets.  Available reports are:',2,2)
-          call pretty_print('* range : report basic range statistics of the &
-             &data.',2,4)
-          call pretty_print('')
         case default
-          call pretty_print('No help for command "'//trim(field(2,command))//&
-             &'".',0,0)
+          call pprint('No help for command "'//trim(field(2,command))//'".')
         end select
 
       case('quit','exit')
@@ -3922,7 +4021,7 @@ CONTAINS
   ! QUIT ROUTINE.
 
 
-  SUBROUTINE pretty_print(text,indent1,indent)
+  SUBROUTINE pprint(text,indent1,indent)
     !-------------------------------------------------------------!
     ! Print TEXT to stdout, folding lines at column 79 and using  !
     ! an indentation of INDENT1 spaces on the first line and      !
@@ -3932,17 +4031,19 @@ CONTAINS
     IMPLICIT NONE
     CHARACTER(*),INTENT(in) :: text
     INTEGER,INTENT(in),OPTIONAL :: indent1,indent
-    CHARACTER(len(text)) remainder,line,word
-    INTEGER ind1,ind,ipos
     INTEGER,PARAMETER :: line_width=79
+    CHARACTER(line_width) line
+    CHARACTER(len(text)) remainder,word
+    INTEGER ind1,indn,ind,ipos
     if(len_trim(text)==0)then
       write(6,'()')
       return
     endif
-    ind=0
-    if(present(indent))ind=max(indent,0)
-    ind1=ind
+    indn=0
+    if(present(indent))indn=max(indent,0)
+    ind1=indn
     if(present(indent1))ind1=max(indent1,0)
+    ind=ind1
     line=''
     remainder=adjustl(text)
     do while(len_trim(remainder)>0)
@@ -3956,19 +4057,36 @@ CONTAINS
         remainder=adjustl(remainder(ipos:))
       endif
       if(len_trim(line)==0)then
-        ! Only happens first time around.
-        line=repeat(' ',ind1)//trim(word)
+        ! Ensure overlong words get flushed without passing through buffer.
+        do while(ind+len_trim(word)>line_width)
+          write(6,'(a)')repeat(' ',ind)//word(1:line_width-ind)
+          word=word(line_width-ind+1:)
+          ind=indn
+        enddo
+        ! Start new line buffer.
+        line=repeat(' ',ind)//trim(word)
+        ind=indn
       else
         if(len_trim(line)+1+len_trim(word)>line_width)then
+          ! Flush current line buffer.
           write(6,'(a)')trim(line)
+          ! Ensure overlong words get flushed without passing through buffer.
+          do while(ind+len_trim(word)>line_width)
+            write(6,'(a)')repeat(' ',ind)//word(1:line_width-ind)
+            word=word(line_width-ind+1:)
+            ind=indn
+          enddo
+          ! Start new line buffer.
           line=repeat(' ',ind)//trim(word)
+          ind=indn
         else
+          ! Add line to buffer.
           line=trim(line)//' '//trim(word)
         endif
       endif
     enddo
     if(len_trim(line)>0)write(6,'(a)')trim(line)
-  END SUBROUTINE pretty_print
+  END SUBROUTINE pprint
 
 
   SUBROUTINE quit (msg)
