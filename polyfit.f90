@@ -450,13 +450,14 @@ CONTAINS
           write(6,'()')
           cycle user_loop
         endif
-        if(nfield(command)>1)then
-          write(6,'(a)')'Syntax error: subcommand "'//&
-             &trim(field(2,command))//'" not recognized.'
+        if(nfield(command)/=2)then
+          write(6,'(a)')'Syntax error: wrong number of arguments to "'//&
+             &trim(field(2,command))//'" command.'
           write(6,'()')
           cycle user_loop
         endif ! nfield>1
-        call plot_multipoly(ndataset,datasets,drange,fit,mcparams)
+        fname=field(2,command)
+        call plot_multipoly(ndataset,datasets,drange,fit,mcparams,trim(fname))
 
       case('assess')
         if(ndataset<1)then
@@ -1190,7 +1191,7 @@ CONTAINS
              &[for <set>]]',0,2)
           call pprint('* report <report>',0,2)
           call pprint('* fit',0,2)
-          call pprint('* plot',0,2)
+          call pprint('* plot <file-name>',0,2)
           call pprint('* evaluate <function> at X <X>',0,2)
           call pprint('* help [<command> | set <variable>]',0,2)
           call pprint('')
@@ -1261,9 +1262,9 @@ CONTAINS
           call pprint('')
         case('plot')
           call pprint('')
-          call pprint('Command: plot',0,9)
+          call pprint('Command: plot <file-name>',0,9)
           call pprint('')
-          call pprint('Plot the data and fit to "fit.plot".  If multiple &
+          call pprint('Plot the data and fit to <file-name>.  If multiple &
              &datasets are loaded and the fit contains shared parameters, the &
              &fit function is split into a shared part and an independent &
              &set-specific part -- data points are offset by the value of the &
@@ -1695,7 +1696,7 @@ CONTAINS
   END SUBROUTINE show_multipoly
 
 
-  SUBROUTINE plot_multipoly(ndataset,datasets,drange,fit,mcparams)
+  SUBROUTINE plot_multipoly(ndataset,datasets,drange,fit,mcparams,fname)
     !--------------------------------!
     ! Perform chosen fit and report. !
     !--------------------------------!
@@ -1705,6 +1706,7 @@ CONTAINS
     TYPE(range_def),INTENT(in) :: drange
     TYPE(fit_params),INTENT(in) :: fit
     TYPE(monte_carlo_params),INTENT(in) :: mcparams
+    CHARACTER(*),INTENT(in) :: fname
     TYPE(eval_def) deval
     INTEGER tot_nparam,tot_nxy,iset,i,nplot,ierr
     DOUBLE PRECISION chi2,chi2err,a(fit%npoly,ndataset),&
@@ -1727,7 +1729,7 @@ CONTAINS
        &deval,chi2=chi2,chi2err=chi2err,amean=a,aerr=da)
 
     ! Plot.
-    open(unit=io,file='fit.plot',status='replace',iostat=ierr)
+    open(unit=io,file=fname,status='replace',iostat=ierr)
     if(ierr/=0)then
       write(6,'(a)')'Problem opening file.'
       write(6,'()')
@@ -1830,7 +1832,7 @@ CONTAINS
     close(io)
 
     ! Report.
-    write(6,'(a)')'Plot saved to fit.plot.'
+    write(6,'(a)')'Plot saved to "'//trim(fname)//'".'
     write(6,'()')
 
   END SUBROUTINE plot_multipoly
