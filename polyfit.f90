@@ -1109,11 +1109,11 @@ CONTAINS
           write(6,'(a,es11.4)')'  Data range: '//trim(drange%var)//' '//&
              &trim(drange%op)//' ',drange%thres
         end select
-        write(6,'(a)',advance='no')'  Use 1/dy^2 weights in Monte Carlo: '
+        write(6,'(a)',advance='no')'  Use stderr-based weights in fits: '
         if(mcparams%weighted)then
-          write(6,'(a)')'yes'
+          write(6,'(a)')'yes [not recommended]'
         else
-          write(6,'(a)')'no'
+          write(6,'(a)')'no [recommended]'
         endif
         write(6,'(a)')'  Number of Monte Carlo samples: '//&
            &trim(i2s(mcparams%nsample))
@@ -1411,10 +1411,9 @@ CONTAINS
               call pprint('')
               call pprint('Variable: weights',0,10)
               call pprint('')
-              call pprint('"weights" determines whether the fits performed &
-                 &during the Monte Carlo process use weights of the form w=1, &
-                 &w=dX^-2, w=dY^-2, or w=(dXdY)^-2 respectively for xy, xdxy, &
-                 &xydy, and xdxydy datasets.',2,2)
+              call pprint('"weights" determines whether to use fit weights &
+                 &of the form w=1, w=dX^-2, w=dY^-2, or w=(dXdY)^-2 &
+                 &respectively for xy, xdxy, xydy, and xdxydy datasets.',2,2)
               call pprint('')
               call pprint('This type of weighting is common practice, but &
                  &results in the underestimation of uncertainties due to &
@@ -3905,41 +3904,32 @@ CONTAINS
 
 
   FUNCTION field(n,line)
-    !---------------------------------------------------------!
-    ! Return the N-th field in string LINE, where the fields  !
-    ! are separated by one or more spaces.  If N is negative, !
-    ! return the |N|-th-to-last field in LINE.                !
-    !---------------------------------------------------------!
+    !--------------------------------------------------------!
+    ! Return the N-th field in string LINE, where the fields !
+    ! are separated by one or more spaces.  An empty string  !
+    ! is returned if N<1.                                    !
+    !--------------------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: n
     CHARACTER(*),INTENT(in) :: line
     CHARACTER(len(line)) :: field
     CHARACTER(len(line)) tline
-    INTEGER i,k,absn
-    LOGICAL back
+    INTEGER i,k
     ! FIXME - should honour and strip quotes.
     ! Initialize.
     field=''
-    if(n==0)return
-    absn=abs(n)
+    if(n<1)return
     tline=adjustl(line)
-    back=(n<0)
     ! Loop over fields.
-    do i=1,absn-1
-      k=scan(trim(tline),' ',back)
+    do i=1,n-1
+      k=scan(trim(tline),' ')
       if(k==0)return
-      if(back)then
-        tline=adjustl(tline(1:k-1))
-      else
-        tline=adjustl(tline(k+1:))
-      endif
+      tline=adjustl(tline(k+1:))
     enddo
     ! Return nth field.
-    k=scan(trim(tline),' ',back)
+    k=scan(trim(tline),' ')
     if(k==0)then
       field=adjustl(tline)
-    elseif(back)then
-      field=adjustl(tline(k+1:))
     else
       field=adjustl(tline(1:k-1))
     endif
