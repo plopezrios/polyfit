@@ -52,7 +52,7 @@ PROGRAM polyfit
     CHARACTER :: var='X'
     LOGICAL :: rel=.false.
     INTEGER :: nderiv=0,n=0
-    DOUBLE PRECISION,ALLOCATABLE :: x(:)
+    DOUBLE PRECISION,POINTER :: x(:)=>null()
   END TYPE eval_def
   TYPE monte_carlo_params
     LOGICAL :: weighted=.true.
@@ -119,6 +119,16 @@ CONTAINS
 
     ! Loop over user actions.
     user_loop: do
+
+      ! Clean up any mess from previous loops.
+      if(associated(search))deallocate(search)
+      if(associated(fsearch))deallocate(fsearch)
+      if(associated(fdiscr))deallocate(fdiscr)
+      if(associated(deval%x))deallocate(deval%x)
+      nullify(search)
+      nullify(fsearch)
+      nullify(fdiscr)
+      nullify(deval%x)
 
       ! Read user command.
       write(6,'(a)',advance='no')'polyfit> '
@@ -220,7 +230,6 @@ CONTAINS
               write(6,'(a)')'Syntax error in load command: "type" without &
                  &"using".'
               write(6,'()')
-              if(associated(search))deallocate(fsearch,search)
               cycle user_loop
             endif
             icol_x=0
@@ -256,8 +265,6 @@ CONTAINS
               write(6,'(a)')'Syntax error in load command: unknown type "'//&
                  &trim(field(ifield+1,command))//'".'
               write(6,'()')
-              if(associated(search))deallocate(fsearch,search)
-              if(associated(fdiscr))deallocate(fdiscr)
               cycle user_loop
             end select
           case('where')
@@ -266,8 +273,6 @@ CONTAINS
               write(6,'(a)')'Syntax error in load command: too few arguments &
                  &for "where" subcommand"'
               write(6,'()')
-              if(associated(search))deallocate(fsearch,search)
-              if(associated(fdiscr))deallocate(fdiscr)
               cycle user_loop
             endif
             i=int_field(ifield+1,command,ierr)
@@ -275,15 +280,11 @@ CONTAINS
               write(6,'(a)')'Syntax error in load command: invalid column &
                  &index for "where".'
               write(6,'()')
-              if(associated(search))deallocate(fsearch,search)
-              if(associated(fdiscr))deallocate(fdiscr)
               cycle user_loop
             endif
             if(i<1.or.i>ncolumn)then
               write(6,'(a)')'Column index out of range in "where" subcommand.'
               write(6,'()')
-              if(associated(search))deallocate(fsearch,search)
-              if(associated(fdiscr))deallocate(fdiscr)
               cycle user_loop
             endif
             nsearch=nsearch+1
@@ -298,8 +299,6 @@ CONTAINS
               write(6,'(a)')'Syntax error in load command: too few arguments &
                  &for "by" subcommand"'
               write(6,'()')
-              if(associated(search))deallocate(fsearch,search)
-              if(associated(fdiscr))deallocate(fdiscr)
               cycle user_loop
             endif
             i=int_field(ifield+1,command,ierr)
@@ -307,15 +306,11 @@ CONTAINS
               write(6,'(a)')'Syntax error in load command: invalid column &
                  &index for "by".'
               write(6,'()')
-              if(associated(search))deallocate(fsearch,search)
-              if(associated(fdiscr))deallocate(fdiscr)
               cycle user_loop
             endif
             if(i<1.or.i>ncolumn)then
               write(6,'(a)')'Column index out of range in "by" subcommand.'
               write(6,'()')
-              if(associated(search))deallocate(fsearch,search)
-              if(associated(fdiscr))deallocate(fdiscr)
               cycle user_loop
             endif
             ndiscr=ndiscr+1
@@ -328,8 +323,6 @@ CONTAINS
             write(6,'(a)')'Syntax error in load command: unknown subcommand "'&
                &//trim(field(ifield,command))//'".'
             write(6,'()')
-            if(associated(search))deallocate(fsearch,search)
-            if(associated(fdiscr))deallocate(fdiscr)
             cycle user_loop
           end select
         enddo ! ifield
@@ -338,16 +331,12 @@ CONTAINS
         if(ierr1/=0.or.ierr2/=0.or.ierr3/=0.or.ierr4/=0)then
           write(6,'(a)')'Problem parsing column indices.'
           write(6,'()')
-          if(associated(search))deallocate(fsearch,search)
-          if(associated(fdiscr))deallocate(fdiscr)
           cycle user_loop
         endif
         if(icol_x>ncolumn.or.icol_x<0.or.icol_y>ncolumn.or.icol_y<0.or.&
            &icol_dx>ncolumn.or.icol_dx<0.or.icol_dy>ncolumn.or.icol_dy<0)then
           write(6,'(a)')'Column indices out of range.'
           write(6,'()')
-          if(associated(search))deallocate(fsearch,search)
-          if(associated(fdiscr))deallocate(fdiscr)
           cycle user_loop
         endif
 
@@ -356,8 +345,6 @@ CONTAINS
         if(.not.associated(fdiscr))allocate(fdiscr(ndiscr))
         call read_file(fname,icol_x,icol_y,icol_dx,icol_dy,nsearch,fsearch,&
            &search,ndiscr,fdiscr,tndataset,tdatasets,ierr)
-        deallocate(fsearch,search)
-        deallocate(fdiscr)
         if(ierr/=0)cycle user_loop
         if(tndataset<1)then
           write(6,'(a)')'No data loaded.'
@@ -450,14 +437,61 @@ CONTAINS
           write(6,'()')
           cycle user_loop
         endif
-        if(nfield(command)/=2)then
-          write(6,'(a)')'Syntax error: wrong number of arguments to "'//&
-             &trim(field(2,command))//'" command.'
+        ! Initialize unused components.
+        deval%rel=.false.
+        ! Get object to evaluate.
+        select case(field(2,command))
+        case("f")
+          deval%nderiv=0
+        case("f'")
+          deval%nderiv=1
+        case("f''")
+          deval%nderiv=2
+        case default
+          write(6,'(a)')'Syntax error: unknown function "'//&
+             &trim(field(2,command))//'".'
           write(6,'()')
           cycle user_loop
-        endif ! nfield>1
-        fname=field(2,command)
-        call plot_multipoly(ndataset,datasets,drange,fit,mcparams,trim(fname))
+        end select
+        ! Parse sub-commands.
+        fname='fit.plot'
+        ifield=2
+        do
+          ifield=ifield+1
+          if(ifield>nfield(command))exit
+          select case(trim(field(ifield,command)))
+          case('to')
+            if(nfield(command)<ifield+1)then
+              write(6,'(a)')'Syntax error: "to" subcommand must be followed &
+                 &by a filename.'
+              write(6,'()')
+              cycle user_loop
+            endif
+            fname=field(ifield+1,command)
+            ifield=ifield+1
+          case('at')
+            if(nfield(command)<ifield+1)then
+              write(6,'(a)')'Syntax error: "at" subcommand must be followed &
+                 &by a data range.'
+              write(6,'()')
+              cycle user_loop
+            endif
+            call parse_range(trim(field(ifield+1,command)),deval)
+            if(.not.associated(deval%x))then
+              write(6,'(a)')'Syntax error: could not parse range.'
+              write(6,'()')
+              cycle user_loop
+            endif
+            ifield=ifield+1
+          case default
+            write(6,'(a)')'Syntax error: unknown subcommand "'//&
+               &trim(field(ifield,command))//'".'
+            write(6,'()')
+            cycle user_loop
+          end select
+        enddo
+        call plot_multipoly(ndataset,datasets,drange,fit,deval,mcparams,&
+           &trim(fname))
 
       case('assess')
         if(ndataset<1)then
@@ -563,7 +597,6 @@ CONTAINS
              &trim(field(2,command))//'".'
           write(6,'()')
         end select
-        deallocate(deval%x)
 
       case('report')
         if(ndataset<1)then
@@ -611,38 +644,14 @@ CONTAINS
           write(6,'()')
           cycle user_loop
         endif
-        select case(trim(field(4,command)))
-        case('X')
-          deval%var='X'
-        case default
-          write(6,'(a)')'Syntax error: unknown variable "'//&
-             &trim(field(4,command))//'".'
-          write(6,'()')
-          cycle user_loop
-        end select
-        if(nfield(command)<5)then
-          write(6,'(a)')'Syntax error: no values of "'//&
-             &trim(field(4,command))//'" specified.'
+        call parse_range(field(4,command),deval)
+        if(.not.associated(deval%x))then
+          write(6,'(a)')'Syntax error: could not parse range.'
           write(6,'()')
           cycle user_loop
         endif
-        do ifield=5,nfield(command)
-          t1=dble_field(ifield,command,ierr)
-          if(ierr/=0)then
-            write(6,'(a)')'Syntax error: invalid value of "'//&
-               &trim(field(4,command))//'" specified.'
-            write(6,'()')
-            cycle user_loop
-          endif
-        enddo ! ifield
-        deval%n=nfield(command)-4
-        allocate(deval%x(deval%n))
-        do ifield=5,nfield(command)
-          deval%x(ifield-4)=dble_field(ifield,command,ierr)
-        enddo ! ifield
         ! Perform evaluation.
         call evaluate_fit(ndataset,datasets,fit,mcparams,drange,deval)
-        deallocate(deval%x)
 
       case('set')
 
@@ -1262,21 +1271,38 @@ CONTAINS
           call pprint('')
         case('plot')
           call pprint('')
-          call pprint('Command: plot <file-name>',0,9)
+          call pprint('Command: plot <function> [at <range>] &
+             &[to <filename>]',0,9)
           call pprint('')
-          call pprint('Plot the data and fit to <file-name>.  If multiple &
-             &datasets are loaded and the fit contains shared parameters, the &
-             &fit function is split into a shared part and an independent &
-             &set-specific part -- data points are offset by the value of the &
-             &independent fit, and the shared part of the fit is plotted.',2,2)
+          call pprint('Plot a function of the fit to <filename>.',2,2)
+          call pprint('')
+          call pprint('<function> can be f, f'', or f'''' for the value, &
+             &first, and second derivative, respectively.  If <function> is &
+             &f, the original data are also plotted.',2,2)
+          call pprint('')
+          call pprint('<range> is specified as &
+             &"<variable>=<comma-separated-list>" (e.g., "X=0,1,2,3") or as &
+             &"<variable>=<first>:<last>:<count>" (e.g., "X=0:3:4").',2,2)
+          call pprint('')
+          call pprint('If any fit parameters are shared among datasets, the &
+             &fit function is split into a shared part and a set-specific &
+             &part -- data points are offset by the value of the set-specific &
+             &part, and the shared part of the fit is plotted.',2,2)
           call pprint('')
         case('evaluate')
           call pprint('')
-          call pprint('Command: evaluate <function> at X <X>',0,9)
+          call pprint('Command: evaluate <function> at <range>',0,9)
           call pprint('')
-          call pprint('Evaluate the value (f), first (f'') or second &
-             &derivative (f'''') of the fit at the specified (transformed) &
-             &coordinate X=<X> for all datasets.',2,2)
+          call pprint('Evaluate a function of the fit and print the value.',&
+             &2,2)
+          call pprint('')
+          call pprint('<function> can be f, f'', or f'''' for the value, &
+             &first, and second derivative, respectively.  If <function> is &
+             &f, the original data are also plotted.',2,2)
+          call pprint('')
+          call pprint('<range> is specified as &
+             &"<variable>=<comma-separated-list>" (e.g., "X=0,1,2,3") or as &
+             &"<variable>=<first>:<last>:<count>" (e.g., "X=0:3:4").',2,2)
           call pprint('')
         case('set')
           if(nfield(command)==2)then
@@ -1663,7 +1689,7 @@ CONTAINS
     deval%var='X'
     deval%n=0
     call eval_multifit_monte_carlo(ndataset,datasets,drange,fit,mcparams,&
-       &deval,chi2=chi2,chi2err=chi2err,amean=a,aerr=da)
+       &deval,chi2mean=chi2,chi2err=chi2err,amean=a,aerr=da)
 
     ! Print fit coefficients.
     do iset=1,ndataset
@@ -1696,7 +1722,7 @@ CONTAINS
   END SUBROUTINE show_multipoly
 
 
-  SUBROUTINE plot_multipoly(ndataset,datasets,drange,fit,mcparams,fname)
+  SUBROUTINE plot_multipoly(ndataset,datasets,drange,fit,deval,mcparams,fname)
     !--------------------------------!
     ! Perform chosen fit and report. !
     !--------------------------------!
@@ -1705,13 +1731,22 @@ CONTAINS
     TYPE(dataset),INTENT(in) :: datasets(ndataset)
     TYPE(range_def),INTENT(in) :: drange
     TYPE(fit_params),INTENT(in) :: fit
+    TYPE(eval_def),INTENT(inout) :: deval
     TYPE(monte_carlo_params),INTENT(in) :: mcparams
     CHARACTER(*),INTENT(in) :: fname
-    TYPE(eval_def) deval
-    INTEGER tot_nparam,tot_nxy,iset,i,nplot,ierr
-    DOUBLE PRECISION chi2,chi2err,a(fit%npoly,ndataset),&
-       &da(fit%npoly,ndataset),atilde(fit%npoly),tx0,tx1,tx
+    TYPE(xydata),POINTER :: xy=>null()
+    INTEGER tot_nparam,tot_nxy,iset,i,ierr,op_npoly
+    DOUBLE PRECISION op_a(fit%npoly),op_pow(fit%npoly),tx0,tx1,t1
+    DOUBLE PRECISION,ALLOCATABLE :: fmean(:,:),ferr(:,:),a(:,:)
     INTEGER,PARAMETER :: io=10
+
+    ! Open plot file.
+    open(unit=io,file=fname,status='replace',iostat=ierr)
+    if(ierr/=0)then
+      write(6,'(a)')'Problem opening file.'
+      write(6,'()')
+      return
+    endif
 
     ! Initialize.
     tot_nparam=count(fit%share)+ndataset*count(.not.fit%share)
@@ -1720,113 +1755,128 @@ CONTAINS
       tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
     enddo ! iset
 
-    ! Perform fit.
-    deval%nderiv=0
-    deval%rel=.false.
-    deval%var='X'
-    deval%n=0
-    call eval_multifit_monte_carlo(ndataset,datasets,drange,fit,mcparams,&
-       &deval,chi2=chi2,chi2err=chi2err,amean=a,aerr=da)
-
-    ! Plot.
-    open(unit=io,file=fname,status='replace',iostat=ierr)
-    if(ierr/=0)then
-      write(6,'(a)')'Problem opening file.'
-      write(6,'()')
-      return
+    ! Define plot range if not provided.
+    if(.not.associated(deval%x))then
+      deval%nderiv=0
+      deval%rel=.false.
+      deval%var='X'
+      deval%n=101
+      allocate(deval%x(deval%n))
+      ! Get data range.
+      tx0=minval(datasets(1)%rtxy%x)
+      tx1=maxval(datasets(1)%rtxy%x)
+      do iset=2,ndataset
+        tx0=min(tx0,minval(datasets(iset)%rtxy%x))
+        tx1=max(tx1,maxval(datasets(iset)%rtxy%x))
+      enddo ! iset
+      ! Extend range past far end and ensure we get to zero on near end.
+      t1=tx1-tx0
+      if(tx0>=0.d0)then
+        tx0=0.d0
+      else
+        tx0=tx0-0.25d0*t1
+      endif
+      if(tx1<=0.d0)then
+        tx1=0.d0
+      else
+        tx1=tx1+0.25d0*t1
+      endif
+      ! Generate grid.
+      do i=1,deval%n
+        deval%x(i)=tx0+(tx1-tx0)*dble(i-1)/dble(deval%n-1)
+      enddo ! i
     endif
 
-    ! Find plot range.
-    nplot=100
-    tx0=minval(datasets(1)%rtxy%x)
-    tx1=maxval(datasets(1)%rtxy%x)
-    do iset=2,ndataset
-      tx0=min(tx0,minval(datasets(iset)%rtxy%x))
-      tx1=max(tx1,maxval(datasets(iset)%rtxy%x))
-    enddo ! iset
-
+    ! Perform fit and plot
+    allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset),&
+       &a(fit%npoly,ndataset))
     if(all(.not.fit%share))then
-      ! Plot data.
-      do iset=1,ndataset
-        if(datasets(iset)%rtxy%have_dx.and.datasets(iset)%rtxy%have_dy)then
-          write(io,'(a)')'@type xydxdy'
-          do i=1,datasets(iset)%rtxy%nxy
-            write(io,*)datasets(iset)%rtxy%x(i),datasets(iset)%rtxy%y(i),&
-               &datasets(iset)%rtxy%dx(i),datasets(iset)%rtxy%dy(i)
-          enddo ! i
-        elseif(datasets(iset)%rtxy%have_dx)then
-          write(io,'(a)')'@type xydx'
-          do i=1,datasets(iset)%rtxy%nxy
-            write(io,*)datasets(iset)%rtxy%x(i),datasets(iset)%rtxy%y(i),&
-               &datasets(iset)%rtxy%dx(i)
-          enddo ! i
-        elseif(datasets(iset)%rtxy%have_dy)then
-          write(io,'(a)')'@type xydy'
-          do i=1,datasets(iset)%rtxy%nxy
-            write(io,*)datasets(iset)%rtxy%x(i),datasets(iset)%rtxy%y(i),&
-               &datasets(iset)%rtxy%dy(i)
-          enddo ! i
-        else
-          write(io,'(a)')'@type xy'
-          do i=1,datasets(iset)%rtxy%nxy
-            write(io,*)datasets(iset)%rtxy%x(i),datasets(iset)%rtxy%y(i)
-          enddo ! i
-        endif
-        write(io,'(a)')'&'
-      enddo ! iset
+      call eval_multifit_monte_carlo(ndataset,datasets,drange,fit,mcparams,&
+         &deval,fmean=fmean,amean=a)
+      if(deval%nderiv==0)then
+        ! Plot data.
+        do iset=1,ndataset
+          xy=>datasets(iset)%rtxy
+          if(xy%have_dx.and.xy%have_dy)then
+            write(io,'(a)')'@type xydxdy'
+            do i=1,xy%nxy
+              write(io,*)xy%x(i),xy%y(i),xy%dx(i),xy%dy(i)
+            enddo ! i
+          elseif(xy%have_dx)then
+            write(io,'(a)')'@type xydx'
+            do i=1,xy%nxy
+              write(io,*)xy%x(i),xy%y(i),xy%dx(i)
+            enddo ! i
+          elseif(xy%have_dy)then
+            write(io,'(a)')'@type xydy'
+            do i=1,xy%nxy
+              write(io,*)xy%x(i),xy%y(i),xy%dy(i)
+            enddo ! i
+          else
+            write(io,'(a)')'@type xy'
+            do i=1,xy%nxy
+              write(io,*)xy%x(i),xy%y(i)
+            enddo ! i
+          endif
+          write(io,'(a)')'&'
+        enddo ! iset
+      endif
       ! Plot fit functions.
       do iset=1,ndataset
-        write(io,'(a)')'@type xy'
-        do i=0,nplot
-          tx=tx0+(tx1-tx0)*dble(i)/dble(nplot)
-          write(io,*)tx,eval_poly(fit%npoly,fit%pow,a(1,iset),tx)
+        write(io,'(a)')'@type xydy'
+        do i=1,deval%n
+          write(io,*)deval%x(i),fmean(i,iset),ferr(i,iset)
         enddo ! i
         write(io,'(a)')'&'
       enddo ! iset
     else
+      call eval_multifit_monte_carlo(ndataset,datasets,drange,fit,mcparams,&
+         &deval,fmean=fmean,ferr=ferr,amean=a,eval_fshared=.true.)
       ! Plot data minus independent bit.
-      do iset=1,ndataset
-        atilde(1:fit%npoly)=a(1:fit%npoly,iset)
-        where(fit%share)atilde=0.d0
-        if(datasets(iset)%rtxy%have_dx.and.datasets(iset)%rtxy%have_dy)then
-          write(io,'(a)')'@type xydxdy'
-          do i=1,datasets(iset)%rtxy%nxy
-            write(io,*)datasets(iset)%rtxy%x(i),datasets(iset)%rtxy%y(i)-&
-               &eval_poly(fit%npoly,fit%pow,atilde,datasets(iset)%rtxy%x(i)),&
-               &datasets(iset)%rtxy%dx(i),datasets(iset)%rtxy%dy(i)
-          enddo ! i
-        elseif(datasets(iset)%rtxy%have_dx)then
-          write(io,'(a)')'@type xydx'
-          do i=1,datasets(iset)%rtxy%nxy
-            write(io,*)datasets(iset)%rtxy%x(i),datasets(iset)%rtxy%y(i)-&
-               &eval_poly(fit%npoly,fit%pow,atilde,datasets(iset)%rtxy%x(i)),&
-               &datasets(iset)%rtxy%dx(i)
-          enddo ! i
-        elseif(datasets(iset)%rtxy%have_dy)then
-          write(io,'(a)')'@type xydy'
-          do i=1,datasets(iset)%rtxy%nxy
-            write(io,*)datasets(iset)%rtxy%x(i),datasets(iset)%rtxy%y(i)-&
-               &eval_poly(fit%npoly,fit%pow,atilde,datasets(iset)%rtxy%x(i)),&
-               &datasets(iset)%rtxy%dy(i)
-          enddo ! i
-        else
-          write(io,'(a)')'@type xy'
-          do i=1,datasets(iset)%rtxy%nxy
-            write(io,*)datasets(iset)%rtxy%x(i),datasets(iset)%rtxy%y(i)-&
-               &eval_poly(fit%npoly,fit%pow,atilde,datasets(iset)%rtxy%x(i))
-          enddo ! i
-        endif
-        write(io,'(a)')'&'
-      enddo ! iset
+      if(deval%nderiv==0)then
+        op_npoly=fit%npoly
+        op_pow=fit%pow
+        do iset=1,ndataset
+          xy=>datasets(iset)%rtxy
+          op_a(1:op_npoly)=a(1:fit%npoly,iset)
+          where(fit%share)op_a=0.d0
+          if(xy%have_dx.and.xy%have_dy)then
+            write(io,'(a)')'@type xydxdy'
+            do i=1,xy%nxy
+              write(io,*)xy%x(i),&
+                 &xy%y(i)-eval_poly(op_npoly,op_pow,op_a,xy%x(i)),xy%dx(i),&
+                 &xy%dy(i)
+            enddo ! i
+          elseif(xy%have_dx)then
+            write(io,'(a)')'@type xydx'
+            do i=1,xy%nxy
+              write(io,*)xy%x(i),&
+                 &xy%y(i)-eval_poly(op_npoly,op_pow,op_a,xy%x(i)),xy%dx(i)
+            enddo ! i
+          elseif(xy%have_dy)then
+            write(io,'(a)')'@type xydy'
+            do i=1,xy%nxy
+              write(io,*)xy%x(i),&
+                 &xy%y(i)-eval_poly(op_npoly,op_pow,op_a,xy%x(i)),xy%dy(i)
+            enddo ! i
+          else
+            write(io,'(a)')'@type xy'
+            do i=1,xy%nxy
+              write(io,*)xy%x(i),&
+                 &xy%y(i)-eval_poly(op_npoly,op_pow,op_a,xy%x(i))
+            enddo ! i
+          endif
+          write(io,'(a)')'&'
+        enddo ! iset
+      endif
       ! Plot shared part of fit functions.
-      atilde(1:fit%npoly)=a(1:fit%npoly,1)
-      where(.not.fit%share)atilde=0.d0
-      write(io,'(a)')'@type xy'
-      do i=0,nplot
-        tx=tx0+(tx1-tx0)*dble(i)/dble(nplot)
-        write(io,*)tx,eval_poly(fit%npoly,fit%pow,atilde,tx)
+      write(io,'(a)')'@type xydy'
+      do i=1,deval%n
+        write(io,*)deval%x(i),fmean(i,1),ferr(i,1)
       enddo ! i
     endif
+    deallocate(fmean,ferr,a)
+    nullify(xy)
 
     ! Close file.
     close(io)
@@ -2751,8 +2801,8 @@ CONTAINS
 
 
   SUBROUTINE eval_multifit_monte_carlo(ndataset,datasets,drange,fit,mcparams,&
-     &deval,fmean,ferr,chi2,chi2err,amean,aerr,fmean_1s,ferr_1s,fmean_2s,&
-     &ferr_2s,fmed,fskew,fkurt)
+     &deval,fmean,ferr,chi2mean,chi2err,amean,aerr,fmean_1s,ferr_1s,fmean_2s,&
+     &ferr_2s,fmed,fskew,fkurt,eval_fshared)
     !------------------------------------------------------!
     ! Perform Monte Carlo sampling of data space to obtain !
     ! fit values or derivatives at specified points with   !
@@ -2763,16 +2813,17 @@ CONTAINS
     TYPE(dataset),INTENT(in) :: datasets(ndataset)
     TYPE(range_def),INTENT(in) :: drange
     TYPE(fit_params),INTENT(in) :: fit
-    TYPE(eval_def),INTENT(in) :: deval
     TYPE(monte_carlo_params),INTENT(in) :: mcparams
+    TYPE(eval_def),INTENT(in) :: deval
     DOUBLE PRECISION,INTENT(inout),OPTIONAL :: &
        &fmean(deval%n,ndataset),ferr(deval%n,ndataset),&
-       &chi2,chi2err,&
+       &chi2mean,chi2err,&
        &amean(fit%npoly,ndataset),aerr(fit%npoly,ndataset),&
        &fmean_1s(deval%n,ndataset),ferr_1s(deval%n,ndataset),&
        &fmean_2s(deval%n,ndataset),ferr_2s(deval%n,ndataset),&
        &fmed(deval%n,ndataset),fskew(deval%n,ndataset),&
        &fkurt(deval%n,ndataset)
+    LOGICAL,INTENT(in),OPTIONAL :: eval_fshared
     ! Pointers.
     TYPE(dataset),POINTER :: tdatasets(:)=>null()
     TYPE(xydata),POINTER :: xy=>null()
@@ -2780,16 +2831,14 @@ CONTAINS
     INTEGER op_npoly
     DOUBLE PRECISION op_pow(fit%npoly),op_a(fit%npoly)
     ! Random sampling arrays.
-    DOUBLE PRECISION f_array(mcparams%nsample,deval%n,ndataset),&
-       &w_vector(mcparams%nsample),&
-       &a_array(mcparams%nsample,fit%npoly,ndataset),&
-       &chi2_array(mcparams%nsample)
+    DOUBLE PRECISION w_vector(mcparams%nsample)
+    DOUBLE PRECISION,ALLOCATABLE :: f_array(:,:,:),a_array(:,:,:),chi2_array(:)
     ! Distribution analysis.
     DOUBLE PRECISION var,skew,kurt,f2s_lo,f1s_lo,f1s_hi,f2s_hi
     ! Misc.
-    LOGICAL weighted
+    LOGICAL weighted,need_f,need_a,need_chi2,fshared,fsplit
     INTEGER nsample,ipoly,ideriv,irandom,ix,iset
-    DOUBLE PRECISION t1,a(fit%npoly,ndataset),da(fit%npoly,ndataset),f0
+    DOUBLE PRECISION chi2,t1,a(fit%npoly,ndataset),da(fit%npoly,ndataset),f0
 
     ! Make copy of datasets.
     allocate(tdatasets(ndataset))
@@ -2811,6 +2860,29 @@ CONTAINS
       nullify(xy)
     enddo ! iset
 
+    ! Figure out what we need and allocate arrays.
+    need_f=present(fmean).or.present(ferr).or.present(fmean_1s).or.&
+       &present(ferr_1s).or.present(fmean_2s).or.present(ferr_2s).or.&
+       &present(fmed).or.present(fskew).or.present(fkurt)
+    need_f=need_f.and.deval%n>0
+    need_chi2=present(chi2mean).or.present(chi2err)
+    need_a=present(amean).or.present(aerr)
+    fsplit=.false.
+    fshared=.false.
+    if(present(eval_fshared))then
+      fsplit=.true.
+      fshared=eval_fshared
+    endif
+    if(need_f)then
+      if(fshared)then
+        allocate(f_array(mcparams%nsample,deval%n,1))
+      else
+        allocate(f_array(mcparams%nsample,deval%n,ndataset))
+      endif
+    endif
+    if(need_a)allocate(a_array(mcparams%nsample,fit%npoly,ndataset))
+    if(need_chi2)allocate(chi2_array(mcparams%nsample))
+
     ! Override weights if not all sets have stderrs.
     weighted=mcparams%weighted
     do iset=1,ndataset
@@ -2831,76 +2903,113 @@ CONTAINS
            &datasets(iset)%xy%y+gaussian_random_number(datasets(iset)%xy%dy)
         call refresh_dataset(tdatasets(iset),drange)
       enddo ! iset
-      call perform_multifit(ndataset,tdatasets,fit,weighted,&
-         &chi2_array(irandom),a,da)
-      a_array(irandom,1:fit%npoly,1:ndataset)=a(1:fit%npoly,1:ndataset)
+      call perform_multifit(ndataset,tdatasets,fit,weighted,chi2,a,da)
       w_vector(irandom)=1.d0
-      do iset=1,ndataset
-        op_npoly=fit%npoly
-        op_pow=fit%pow
-        op_a=a(:,iset)
-        do ideriv=1,deval%nderiv
-          call deriv_poly(op_npoly,op_pow,op_a)
-        enddo ! ideriv
-        if(deval%rel)f0=eval_poly(op_npoly,op_pow,op_a,-fit%X0)
-        do ix=1,deval%n
-          t1=eval_poly(op_npoly,op_pow,op_a,deval%x(ix)-fit%X0)
-          f_array(irandom,ix,iset)=t1-f0
-        enddo ! ix
-      enddo ! iset
+      if(need_chi2)chi2_array(irandom)=chi2
+      if(need_a)a_array(irandom,1:fit%npoly,1:ndataset)=&
+         &a(1:fit%npoly,1:ndataset)
+      ! Evaluate requested function.
+      if(need_f)then
+        if(.not.fshared)then
+          do iset=1,ndataset
+            op_npoly=fit%npoly
+            op_pow=fit%pow
+            op_a=a(:,iset)
+            if(fsplit)then
+              where(fit%share)op_a=0.d0
+            endif
+            do ideriv=1,deval%nderiv
+              call deriv_poly(op_npoly,op_pow,op_a)
+            enddo ! ideriv
+            if(deval%rel)f0=eval_poly(op_npoly,op_pow,op_a,-fit%X0)
+            do ix=1,deval%n
+              t1=eval_poly(op_npoly,op_pow,op_a,deval%x(ix)-fit%X0)
+              f_array(irandom,ix,iset)=t1-f0
+            enddo ! ix
+          enddo ! iset
+        else ! .not.fshared (implies fsplit)
+          ! Evaluate shared component of requested function.
+          op_npoly=fit%npoly
+          op_pow=fit%pow
+          op_a=a(:,1)
+          where(.not.fit%share)op_a=0.d0
+          do ideriv=1,deval%nderiv
+            call deriv_poly(op_npoly,op_pow,op_a)
+          enddo ! ideriv
+          if(deval%rel)f0=eval_poly(op_npoly,op_pow,op_a,-fit%X0)
+          do ix=1,deval%n
+            t1=eval_poly(op_npoly,op_pow,op_a,deval%x(ix)-fit%X0)
+            f_array(irandom,ix,1)=t1-f0
+          enddo ! ix
+        endif ! fshared or not
+      endif ! need_f
     enddo ! irandom
 
     ! Return coefficients and statistical properties of requested function
     ! of fit.
-    if(present(chi2).or.present(chi2err))then
+    if(need_chi2)then
       call characterize_dist(nsample,chi2_array,w_vector,mean=t1,var=var)
-      if(present(chi2))chi2=t1
+      if(present(chi2mean))chi2mean=t1
       if(present(chi2err))chi2err=sqrt(var)
     endif
     do iset=1,ndataset
-      do ipoly=1,fit%npoly
-        call characterize_dist(nsample,a_array(:,ipoly,iset),w_vector,mean=t1,&
-           &var=var)
-        if(present(amean))amean(ipoly,iset)=t1
-        if(present(aerr))aerr(ipoly,iset)=sqrt(var)
-      enddo ! ipoly
-      do ix=1,deval%n
-        call characterize_dist(nsample,f_array(:,ix,iset),w_vector,mean=t1,&
-           &var=var,skew=skew,kurt=kurt)
-        if(present(fmean))fmean(ix,iset)=t1
-        if(present(ferr))ferr(ix,iset)=sqrt(var)
-        if(present(fskew))fskew(ix,iset)=skew
-        if(present(fkurt))fkurt(ix,iset)=kurt
-        if(present(fmed))fmed(ix,iset)=median(nsample,f_array(:,ix,iset))
-        if(present(fmean_1s).or.present(ferr_1s))then
-          f1s_lo=find_pth_smallest(nint(dble(nsample)*0.158655254d0),&
-             &nsample,f_array(:,ix,iset))
-          f1s_hi=find_pth_smallest(nint(dble(nsample)*0.841344746d0),&
-             &nsample,f_array(:,ix,iset))
-          if(present(fmean_1s))fmean_1s(ix,iset)=0.5d0*(f1s_lo+f1s_hi)
-          if(present(ferr_1s))ferr_1s(ix,iset)=0.5d0*(f1s_hi-f1s_lo)
-        endif
-        if(present(fmean_2s).or.present(ferr_2s))then
-          f2s_lo=find_pth_smallest(nint(dble(nsample)*0.022750131948d0),&
-             &nsample,f_array(:,ix,iset))
-          f2s_hi=find_pth_smallest(nint(dble(nsample)*0.977249868052d0),&
-             &nsample,f_array(:,ix,iset))
-          if(present(fmean_2s))fmean_2s(ix,iset)=0.5d0*(f2s_lo+f2s_hi)
-          if(present(ferr_2s))ferr_2s(ix,iset)=0.25d0*(f2s_hi-f2s_lo)
-        endif
-      enddo ! ix
+      if(need_a)then
+        do ipoly=1,fit%npoly
+          call characterize_dist(nsample,a_array(:,ipoly,iset),w_vector,&
+             &mean=t1,var=var)
+          if(present(amean))amean(ipoly,iset)=t1
+          if(present(aerr))aerr(ipoly,iset)=sqrt(var)
+        enddo ! ipoly
+      endif ! need_a
+      if(need_f)then
+        if(fshared.and.iset>1)then
+          if(present(fmean))fmean(:,iset)=fmean(:,1)
+          if(present(ferr))ferr(:,iset)=ferr(:,1)
+          if(present(fskew))fskew(:,iset)=fskew(:,1)
+          if(present(fkurt))fkurt(:,iset)=fkurt(:,1)
+          if(present(fmed))fmed(:,iset)=fmed(:,1)
+          if(present(fmean_1s))fmean_1s(:,iset)=fmean_1s(:,1)
+          if(present(ferr_1s))ferr_1s(:,iset)=ferr_1s(:,1)
+          if(present(fmean_2s))fmean_2s(:,iset)=fmean_2s(:,1)
+          if(present(ferr_2s))ferr_2s(:,iset)=ferr_2s(:,1)
+        else ! .not.fshared or iset==1
+          do ix=1,deval%n
+            call characterize_dist(nsample,f_array(:,ix,iset),w_vector,mean=t1,&
+               &var=var,skew=skew,kurt=kurt)
+            if(present(fmean))fmean(ix,iset)=t1
+            if(present(ferr))ferr(ix,iset)=sqrt(var)
+            if(present(fskew))fskew(ix,iset)=skew
+            if(present(fkurt))fkurt(ix,iset)=kurt
+            if(present(fmed))fmed(ix,iset)=median(nsample,f_array(:,ix,iset))
+            if(present(fmean_1s).or.present(ferr_1s))then
+              f1s_lo=find_pth_smallest(nint(dble(nsample)*0.158655254d0),&
+                 &nsample,f_array(:,ix,iset))
+              f1s_hi=find_pth_smallest(nint(dble(nsample)*0.841344746d0),&
+                 &nsample,f_array(:,ix,iset))
+              if(present(fmean_1s))fmean_1s(ix,iset)=0.5d0*(f1s_lo+f1s_hi)
+              if(present(ferr_1s))ferr_1s(ix,iset)=0.5d0*(f1s_hi-f1s_lo)
+            endif
+            if(present(fmean_2s).or.present(ferr_2s))then
+              f2s_lo=find_pth_smallest(nint(dble(nsample)*0.022750131948d0),&
+                 &nsample,f_array(:,ix,iset))
+              f2s_hi=find_pth_smallest(nint(dble(nsample)*0.977249868052d0),&
+                 &nsample,f_array(:,ix,iset))
+              if(present(fmean_2s))fmean_2s(ix,iset)=0.5d0*(f2s_lo+f2s_hi)
+              if(present(ferr_2s))ferr_2s(ix,iset)=0.25d0*(f2s_hi-f2s_lo)
+            endif
+          enddo ! ix
+        endif ! fshared.and.iset>1 or not
+      endif ! need_f
     enddo ! iset
 
+    ! Clean up.
+    if(allocated(f_array))deallocate(f_array)
+    if(allocated(a_array))deallocate(a_array)
+    if(allocated(chi2_array))deallocate(chi2_array)
     do iset=1,ndataset
-      deallocate(tdatasets(iset)%xy%x,tdatasets(iset)%xy%dx,&
-         &tdatasets(iset)%xy%y,tdatasets(iset)%xy%dy)
-      deallocate(tdatasets(iset)%txy%x,tdatasets(iset)%txy%dx,&
-         &tdatasets(iset)%txy%y,tdatasets(iset)%txy%dy)
-      deallocate(tdatasets(iset)%rtxy%x,tdatasets(iset)%rtxy%dx,&
-         &tdatasets(iset)%rtxy%y,tdatasets(iset)%rtxy%dy)
-      deallocate(tdatasets(iset)%xy)
-      deallocate(tdatasets(iset)%txy)
-      deallocate(tdatasets(iset)%rtxy)
+      call kill_xydata(tdatasets(iset)%xy)
+      call kill_xydata(tdatasets(iset)%txy)
+      call kill_xydata(tdatasets(iset)%rtxy)
     enddo ! iset
     deallocate(tdatasets)
     nullify(tdatasets)
@@ -4042,6 +4151,91 @@ CONTAINS
     if(ierr/=0)return
     are_equal_string=are_equal(x,y,tol)
   END FUNCTION are_equal_string
+
+
+  SUBROUTINE parse_range(string,deval)
+    !------------------------------------------------!
+    ! Parse a data range out of a string. The string !
+    ! can take the form:                             ! 
+    ! * <variable>=<comma-separated-list>, e.g.,     !
+    !   X=1,2,3  gives  X={1,2,3}                    !
+    ! * <variable>=<first>:<last>:<count>, e.g.,     !
+    !   X=1:2:3  gives  X={1,1.5,2}                  !
+    !------------------------------------------------!
+    IMPLICIT NONE
+    CHARACTER(*),INTENT(in) :: string
+    TYPE(eval_def),INTENT(inout) :: deval
+    CHARACTER(len_trim(string)) remainder
+    INTEGER ipos,it1,i,ierr
+    DOUBLE PRECISION t1,t2
+
+    ! Initialize.
+    if(associated(deval%x))deallocate(deval%x)
+    nullify(deval%x)
+    deval%var='X'
+    deval%n=0
+    remainder=trim(adjustl(string))
+
+    ! Extract variable.
+    select case(remainder(1:1))
+    case('X') ! FIXME - 'x' too?
+      deval%var=remainder(1:1)
+    case default
+      return
+    end select
+    remainder=remainder(2:)
+
+    ! Verify = sign.
+    select case(remainder(1:1))
+    case('=')
+    case default
+     return
+    end select
+    remainder=remainder(2:)
+
+    ! Get whether this is a list or a range.
+    ipos=scan(remainder,':')
+    if(ipos>0)then
+      t1=parse_dble(remainder(1:ipos-1),ierr)
+      if(ierr/=0)return
+      remainder=remainder(ipos+1:)
+      ipos=scan(remainder,':')
+      if(ipos<1)return
+      t2=parse_dble(remainder(1:ipos-1),ierr)
+      if(ierr/=0)return
+      remainder=remainder(ipos+1:)
+      it1=parse_int(remainder,ierr)
+      if(ierr/=0)return
+      if(it1<1)return
+      if(it1==1.and..not.are_equal(t1,t2))return
+      deval%n=it1
+      allocate(deval%x(deval%n))
+      if(deval%n==1)then
+        deval%x(1)=t1
+      else
+        do i=1,deval%n
+          deval%x(i)=t1+(t2-t1)*(dble(i-1)/dble(deval%n-1))
+        enddo ! i
+      endif
+    else
+      ! Assume comma-separated list.
+      do while(len_trim(remainder)>0)
+        ipos=scan(remainder,',')
+        if(ipos<1)ipos=len_trim(remainder)+1
+        t1=parse_dble(remainder(1:ipos-1),ierr)
+        if(ierr/=0)then
+          deallocate(deval%x)
+          nullify(deval%x)
+          return
+        endif
+        deval%n=deval%n+1
+        call resize_pointer_dble1((/deval%n/),deval%x)
+        deval%x(deval%n)=t1
+        remainder=remainder(ipos+1:)
+      enddo
+    endif
+
+  END SUBROUTINE parse_range
 
 
   CHARACTER(12) FUNCTION i2s(n)
