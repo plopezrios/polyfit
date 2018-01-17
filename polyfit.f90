@@ -1168,203 +1168,185 @@ CONTAINS
       case('help')
         select case(trim(field(2,command)))
         case('')
-          write(6,'()')
-          write(6,'(a)')'POLYFIT is a toolbox for performing polynomial fits &
-             &on one or more sets of'
-          write(6,'(a)')'data.  It handles non-integer exponents, a few common &
-             &data transformations and'
-          write(6,'(a)')'data with statistical errorbars.  Its most useful &
-             &feature is the ability to'
-          write(6,'(a)')'provide confidence intervals for values and &
-             &derivatives of a fit.'
-          write(6,'()')
-          write(6,'(a)')'POLYFIT uses a rudimentary command-line interface.  &
-             &The list of available'
-          write(6,'(a)')'commands is:'
-          write(6,'()')
-          write(6,'(a)')'* inspect <file>'
-          write(6,'(a)')'* load <file> [type <type> using <columns>]'
-          write(6,'(a)')'* set <variable> <value> [for <set-list>]'
-          write(6,'(a)')'* status'
-          write(6,'(a)')'* fit'
-          write(6,'(a)')'* assess <variable> [using <function> at <X> [for &
-             &<set-list>]]'
-          write(6,'(a)')'* help [<command> | set <variable>]'
-          write(6,'()')
-          write(6,'(a)')'Type help <command> for detailed information.'
-          write(6,'()')
+          call pretty_print('')
+          call pretty_print('POLYFIT is a toolbox for performing polynomial &
+             &fits on one or more sets of data.  It handles non-integer &
+             &exponents, a few common data transformations and data with &
+             &statistical errorbars.  Its most useful feature is the ability &
+             &to provide confidence intervals for values and derivatives of a &
+             &fit.')
+          call pretty_print('')
+          call pretty_print('POLYFIT uses a rudimentary command-line &
+             &interface.  The list of available commands is:')
+          call pretty_print('')
+          call pretty_print('* inspect <file>',0,2)
+          call pretty_print('* load <file> [type <type> using <columns>]',0,2)
+          call pretty_print('* set <variable> <value> [for <set-list>]',0,2)
+          call pretty_print('* status',0,2)
+          call pretty_print('* fit',0,2)
+          call pretty_print('* assess <variable> [using <function> at <X> &
+             &[for <set-list>]]',0,2)
+          call pretty_print('* help [<command> | set <variable>]',0,2)
+          call pretty_print('')
+          call pretty_print('Type help <command> for detailed information.')
+          call pretty_print('')
         case('inspect')
-          write(6,'()')
-          write(6,'(a)')'Command: inspect <file>'
-          write(6,'()')
-          write(6,'(a)')'  Reports the number of data lines and columns &
-             &detected in <file>.'
-          write(6,'()')
+          call pretty_print('')
+          call pretty_print('Command: inspect <file>',0,9)
+          call pretty_print('')
+          call pretty_print('Reports the number of data lines and columns &
+             &detected in <file>.',2,2)
+          call pretty_print('')
         case('load')
-          write(6,'()')
-          write(6,'(a)')'Command: load <file> [type <type> using <columns>]'
-          write(6,'()')
-          write(6,'(a)')'  Loads data from <file> into a new dataset.  By &
-             &default:'
-          write(6,'(a)')'  * 1-column files are of type xy, with &
-             &(x,y)=(index,1)'
-          write(6,'(a)')'  * 2-column files are of type xy, with &
-             &(x,y)=(1,2)'
-          write(6,'(a)')'  * 3-column files are of type xydy, with &
-             &(x,y,dy)=(1,2,3)'
-          write(6,'(a)')'  * 4- or more-column files are of type xdxydy, with &
-             &(x,dx,y,dy)=(1,2,3,4)'
-          write(6,'(a)')'  Other column selections can be specified with an &
-             &explicity type/using clause,'
-          write(6,'(a)')'  e.g., "type xydy using 3 5 7".  A column index of &
-             &zero refers to the line'
-          write(6,'(a)')'  index.'
-          write(6,'()')
+          call pretty_print('')
+          call pretty_print('Command: load <file> [type <type> using &
+             &<columns>]',0,9)
+          call pretty_print('')
+          call pretty_print('Loads data from <file> into a new dataset.  By &
+             &default:',2,2)
+          call pretty_print('* 1-column files are of type xy, with &
+             &(x,y)=(index,1)',2,4)
+          call pretty_print('* 2-column files are of type xy, with &
+             &(x,y)=(1,2)',2,4)
+          call pretty_print('* 3-column files are of type xydy, with &
+             &(x,y,dy)=(1,2,3)',2,4)
+          call pretty_print('* 4- or more-column files are of type xdxydy, &
+             &with (x,dx,y,dy)=(1,2,3,4)',2,4)
+          call pretty_print('Other column selections can be specified with an &
+             &explicity type/using clause, e.g., "type xydy using 3 5 7".  A &
+             &column index of zero refers to the line index.',2,2)
+          call pretty_print('')
         case('set')
           if(nfield(command)==2)then
-            write(6,'()')
-            write(6,'(a)')'Command: set <variable> <value> [for <set-list>]'
-            write(6,'()')
-            write(6,'(a)')'  Sets <variable> to <value>, either globally or for &
-               &selected sets (for'
-            write(6,'(a)')'  certain variables).  The list of available &
-               &variables is:'
-            write(6,'()')
-            write(6,'(a)')'  * xscale'
-            write(6,'(a)')'  * yscale'
-            write(6,'(a)')'  * fit'
-            write(6,'(a)')'  * range'
-            write(6,'(a)')'  * shared'
-            write(6,'()')
-            write(6,'(a)')'Type help set <variable> for detailed information.'
-            write(6,'()')
+            call pretty_print('')
+            call pretty_print('Command: set <variable> <value> [for &
+               &<set-list>]',0,9)
+            call pretty_print('')
+            call pretty_print('Sets <variable> to <value>, either globally or &
+               &for selected sets (for certain variables).  The list of &
+               &available variables is:',2,2)
+            call pretty_print('')
+            call pretty_print('* xscale',2,4)
+            call pretty_print('* yscale',2,4)
+            call pretty_print('* fit',2,4)
+            call pretty_print('* range',2,4)
+            call pretty_print('* shared',2,4)
+            call pretty_print('')
+            call pretty_print('Type "help set <variable>" for detailed &
+               &information.',2,2)
+            call pretty_print('')
           else
             select case(field(3,command))
             case('xscale','yscale')
-              write(6,'()')
-              write(6,'(a)')'Variable: xscale, yscale'
-              write(6,'()')
-              write(6,'(a)')'  These set scale transformations for the &
-                 &independent x variable and for the'
-              write(6,'(a)')'  dependent y variable, respectively.  In &
-                 &POLYFIT notation, the original'
-              write(6,'(a)')'  variables are called x and y, and the &
-                 &transformed variables are called X and'
-              write(6,'(a)')'  Y.'
-              write(6,'()')
-              write(6,'(a)')'  Possible values are:'
-              write(6,'(a)')'  * "linear"      : X = x       [default]'
-              write(6,'(a)')'  * "reciprocal"  : X = 1/x     [x=0 forbidden]'
-              write(6,'(a)')'  * "logarithmic" : X = log(x)  [x<=0 forbidden]'
-              write(6,'(a)')'  * "exponential" : X = exp(x)'
-              write(6,'()')
-              write(6,'(a)')'  These variables can be set in a per-set manner &
-                 &or globally.  Note that the'
-              write(6,'(a)')'  global value applies to all loaded datasets &
-                 &and becomes the default for new'
-              write(6,'(a)')'  datasets.'
-              write(6,'()')
+              call pretty_print('')
+              call pretty_print('Variable: xscale, yscale',0,10)
+              call pretty_print('')
+              call pretty_print('These set scale transformations for the &
+                 &independent x variable and for the dependent y variable, &
+                 &respectively.  In POLYFIT notation, the original variables &
+                 &are called x and y, and the transformed variables are &
+                 &called X and Y.',2,2)
+              call pretty_print('')
+              call pretty_print('Possible values are:',2,2)
+              call pretty_print('* "linear" : X = x [default]',2,4)
+              call pretty_print('* "reciprocal" : X = 1/x [x=0 forbidden]',2,4)
+              call pretty_print('* "logarithmic" : X = log(x) [x<=0 &
+                 &forbidden]',2,4)
+              call pretty_print('* "exponential" : X = exp(x)',2,4)
+              call pretty_print('')
+              call pretty_print('These variables can be set in a per-set &
+                 &manner or globally.  Note that the global value applies to &
+                 &all loaded datasets and becomes the default for new &
+                 &datasets.',2,2)
+              call pretty_print('')
             case('fit')
-              write(6,'()')
-              write(6,'(a)')'Variable: fit'
-              write(6,'()')
-              write(6,'(a)')'  This sets the exponents to be used in the &
-                 &fitting function.  The value can be'
-              write(6,'(a)')'  specified as a list, e.g., "set fit 0 &
-                 &1.5 3", or as an integer range,'
-              write(6,'(a)')'  e.g., "set fit 0:2".  Note that the form &
-                 &of the fitting function is'
-              write(6,'(a)')'  global, so the "for <set-list>" syntax does &
-                 &not apply to this variable.'
-              write(6,'()')
+              call pretty_print('')
+              call pretty_print('Variable: fit',0,10)
+              call pretty_print('')
+              call pretty_print('This sets the exponents to be used in the &
+                 &fitting function.  The value can be specified as a list, &
+                 &e.g., "set fit 0 1.5 3", or as an integer range, e.g., "set &
+                 &fit 0:2".  Note that the form of the fitting function is &
+                 &global, so the "for <set-list>" syntax does not apply to &
+                 &this variable.',2,2)
+              call pretty_print('')
             case('range')
-              write(6,'()')
-              write(6,'(a)')'Variable: range'
-              write(6,'()')
-              write(6,'(a)')'  This sets the data mask to apply to all &
-                 &datasets.  The value can be specified'
-              write(6,'(a)')'  as <variable> <selector> where:'
-              write(6,'(a)')'  * <variable> is one of x, y, X, or Y &
-                 &(lowercase for original and uppercase'
-              write(6,'(a)')'    for transformed values).'
-              write(6,'(a)')'  * <selector> is one of:'
-              write(6,'(a)')'    - <  <threshold>'
-              write(6,'(a)')'    - <= <threshold>'
-              write(6,'(a)')'    - >= <threshold>'
-              write(6,'(a)')'    - >  <threshold>'
-              write(6,'(a)')'    - first <number>'
-              write(6,'(a)')'    - last <number>'
-              write(6,'(a)')'  Note that "range" is a global variable, so the &
-                 &"for <set-list>" syntax'
-              write(6,'(a)')'  does not apply to this variable.'
-              write(6,'()')
+              call pretty_print('')
+              call pretty_print('Variable: range',0,10)
+              call pretty_print('')
+              call pretty_print('This sets the data mask to apply to all &
+                 &datasets.  The value can be specified as "<variable> &
+                 &<selector>", where:',2,2)
+              call pretty_print('* <variable> is one of x, y, X, or Y &
+                 &(lowercase for original and uppercase for transformed &
+                 &values).',2,4)
+              call pretty_print('* <selector> is one of:',2,4)
+              call pretty_print('- <  <threshold>',4,6)
+              call pretty_print('- <= <threshold>',4,6)
+              call pretty_print('- >= <threshold>',4,6)
+              call pretty_print('- >  <threshold>',4,6)
+              call pretty_print('- first <number>',4,6)
+              call pretty_print('- last <number>',4,6)
+              call pretty_print('Note that "range" is a global variable, so &
+                 &the "for <set-list>" syntax does not apply to this &
+                 &variable.',2,2)
+              call pretty_print('')
             case('shared')
-              write(6,'()')
-              write(6,'(a)')'Variable: shared'
-              write(6,'()')
-              write(6,'(a)')'  This specifies which coefficients are to be &
-                 &shared among datasets.  The value'
-              write(6,'(a)')'  is a list of coefficient indices, or "all".  &
-                 &Coefficients not flagged'
-              write(6,'(a)')'  as shared take different values for each &
-                 &dataset.'
-              write(6,'()')
+              call pretty_print('')
+              call pretty_print('Variable: shared',0,10)
+              call pretty_print('')
+              call pretty_print('This specifies which coefficients are to be &
+                 &shared among datasets.  The value is a list of coefficient &
+                 &indices, or "all".  Coefficients not flagged as shared take &
+                 &different values for each dataset.',2,2)
+              call pretty_print('')
             case default
-              write(6,'(a)')'No help for variable "'//&
-                 &trim(field(2,command))//'".'
+              call pretty_print('No help for variable "'//&
+                 &trim(field(2,command))//'".')
             end select
           endif
         case('status')
-          write(6,'()')
-          write(6,'(a)')'Command: status'
-          write(6,'()')
-          write(6,'(a)')'  Report currently loaded datasets and values of &
-             &internal variables.'
-          write(6,'()')
+          call pretty_print('')
+          call pretty_print('Command: status',0,9)
+          call pretty_print('')
+          call pretty_print('Report currently loaded datasets and values of &
+             &internal variables.',2,2)
+          call pretty_print('')
         case('fit')
-          write(6,'()')
-          write(6,'(a)')'Command: fit'
-          write(6,'()')
-          write(6,'(a)')'  Perform fit of currently loaded datasets.'
-          write(6,'()')
+          call pretty_print('')
+          call pretty_print('Command: fit',0,9)
+          call pretty_print('')
+          call pretty_print('Perform fit of currently loaded datasets.',2,2)
+          call pretty_print('')
         case('assess')
-          write(6,'()')
-          write(6,'(a)')'Command: assess <variables> [using <function> at <X> &
-             &[for <sets>]]'
-          write(6,'()')
-          write(6,'(a)')'  Assess the convergence of the fit with the &
-             &specified variables.'
-          write(6,'(a)')'  The assessment is carried out based on the value &
-             &chi^2/Ndf and on the'
-          write(6,'(a)')'  value of the value or derivative of the fit at the &
-             &specified position.'
-          write(6,'(a)')'  The following <variables> can be specified:'
-          write(6,'(a)')'  * fit       : assess convergence with &
-             &choice of fit form.'
-          write(6,'(a)')'  * range     : assess convergence with &
-             &data range.'
-          write(6,'(a)')'  * fit,range : assess convergence with choice of &
-             &fit form and data range'
-          write(6,'()')
+          call pretty_print('')
+          call pretty_print('Command: assess <variables> [using <function> at &
+             &<X> [for <sets>]]',0,9)
+          call pretty_print('')
+          call pretty_print('Assess the convergence of the fit with the &
+             &specified variables.  The assessment is carried out based on &
+             &the value chi^2/Ndf and on the value of the value or derivative &
+             &of the fit at the specified position.  The following &
+             &<variables> can be specified:',2,2)
+          call pretty_print('* fit : assess convergence with choice of fit &
+             &form.',2,4)
+          call pretty_print('* range : assess convergence with data range.',&
+             &2,4)
+          call pretty_print('* fit,range : assess convergence with choice of &
+             &fit form and data range',2,4)
+          call pretty_print('')
         case('report')
-          write(6,'()')
-          write(6,'(a)')'Command: report <report>'
-          write(6,'()')
-          write(6,'(a)')'  Produce the requested report of the loaded &
-             &datasets.'
-          write(6,'(a)')'  Available reports are:'
-          write(6,'(a)')'  * order : report convergence of f(0) with number &
-             &of parameters.'
-          write(6,'(a)')'  * size  : report convergence of f(0) with number &
-             &of data points.'
-          write(6,'(a)')'  * dual  : report convergence of f(0) with number &
-             &of parameters and'
-          write(6,'(a)')'    data points.'
-          write(6,'(a)')'  * range : report basic range statistics of the &
-             &data.'
-          write(6,'()')
+          call pretty_print('')
+          call pretty_print('Command: report <report>',0,9)
+          call pretty_print('')
+          call pretty_print('Produce the requested report of the loaded &
+             &datasets.  Available reports are:',2,2)
+          call pretty_print('* range : report basic range statistics of the &
+             &data.',2,4)
+          call pretty_print('')
         case default
-          write(6,'(a)')'No help for command "'//trim(field(2,command))//'".'
+          call pretty_print('No help for command "'//trim(field(2,command))//&
+             &'".',0,0)
         end select
 
       case('quit','exit')
@@ -1607,6 +1589,9 @@ CONTAINS
     if(tot_nxy>tot_nparam)write(6,'(a,es20.12," +/- ",es20.12)')&
        &'  chi^2/Ndf = ',chi2/dble(tot_nxy-tot_nparam),&
        &chi2err/dble(tot_nxy-tot_nparam)
+    write(6,'(a,es20.12," +/- ",es20.12)')'  RMS(Y-f)  = ',&
+       &sqrt(chi2/dble(tot_nxy)),&
+       &sqrt(chi2err/dble(tot_nxy))
     write(6,'()')
 
   END SUBROUTINE show_multipoly
@@ -3935,6 +3920,55 @@ CONTAINS
 
 
   ! QUIT ROUTINE.
+
+
+  SUBROUTINE pretty_print(text,indent1,indent)
+    !-------------------------------------------------------------!
+    ! Print TEXT to stdout, folding lines at column 79 and using  !
+    ! an indentation of INDENT1 spaces on the first line and      !
+    ! INDENT on the rest.  INDENT1 defaults to INDENT, and INDENT !
+    ! defaults to zero.                                           !
+    !-------------------------------------------------------------!
+    IMPLICIT NONE
+    CHARACTER(*),INTENT(in) :: text
+    INTEGER,INTENT(in),OPTIONAL :: indent1,indent
+    CHARACTER(len(text)) remainder,line,word
+    INTEGER ind1,ind,ipos
+    INTEGER,PARAMETER :: line_width=79
+    if(len_trim(text)==0)then
+      write(6,'()')
+      return
+    endif
+    ind=0
+    if(present(indent))ind=max(indent,0)
+    ind1=ind
+    if(present(indent1))ind1=max(indent1,0)
+    line=''
+    remainder=adjustl(text)
+    do while(len_trim(remainder)>0)
+      ipos=scan(trim(remainder),' ')
+      if(ipos==0)then
+        ipos=len_trim(remainder)+1
+        word=trim(remainder)
+        remainder=''
+      else
+        word=remainder(1:ipos-1)
+        remainder=adjustl(remainder(ipos:))
+      endif
+      if(len_trim(line)==0)then
+        ! Only happens first time around.
+        line=repeat(' ',ind1)//trim(word)
+      else
+        if(len_trim(line)+1+len_trim(word)>line_width)then
+          write(6,'(a)')trim(line)
+          line=repeat(' ',ind)//trim(word)
+        else
+          line=trim(line)//' '//trim(word)
+        endif
+      endif
+    enddo
+    if(len_trim(line)>0)write(6,'(a)')trim(line)
+  END SUBROUTINE pretty_print
 
 
   SUBROUTINE quit (msg)
