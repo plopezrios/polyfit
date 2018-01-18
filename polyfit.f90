@@ -1691,34 +1691,100 @@ CONTAINS
     call eval_multifit_monte_carlo(ndataset,datasets,drange,fit,mcparams,&
        &deval,chi2mean=chi2,chi2err=chi2err,amean=a,aerr=da)
 
-    ! Print fit coefficients.
+    ! Print table header.
+    write(6,'()')
+    write(6,'(a)')'Fit parameters:'
+    write(6,'()')
+    write(6,'(a)',advance='no')'   '
+    write(6,'(2x,a5,2x,a5,1x,2(1x,a20))')'Set','i','ki       ','dki       '
+    write(6,'(a)',advance='no')'   '
+    write(6,'(2x,'//trim(i2s(55))//'("-"))')
+    ! Print table.
     do iset=1,ndataset
-      write(6,'(a)')'Set #'//trim(i2s(iset))//':'
-      write(6,'(a)')'  Fit parameters:'
       do i=1,fit%npoly
-        write(6,'(4x,a," = ",es24.16," +/- ",es24.16)')'k'//trim(i2s(i)),&
-           &a(i,iset),da(i,iset)
+        write(6,'(a)',advance='no')'FIT'
+        write(6,'(2x,i5,2x,i5,1x,2(1x,es20.12))')iset,i,a(i,iset),da(i,iset)
       enddo ! i
-      ! Write out fitted polynomial.
-      ! NB, this is good for pasting into xmgrace, but xmgrace has a string
-      ! length limit of 256 characters.
-      write(6,'(a)')'  Fitted polynomial:'
-      write(6,'(a)')'    '//trim(print_poly_num(fit,a(:,iset)))
-      write(6,'()')
     enddo ! iset
+    ! Print table footer.
+    write(6,'(a)',advance='no')'   '
+    write(6,'(2x,'//trim(i2s(55))//'("-"))')
+    write(6,'()')
 
     ! Report chi-squared.
     write(6,'(a)')'Fit assessment:'
-    write(6,'(a,es20.12," +/- ",es20.12)')'  chi^2     = ',chi2,chi2err
-    if(tot_nxy>tot_nparam)write(6,'(a,es20.12," +/- ",es20.12)')&
-       &'  chi^2/Ndf = ',chi2/dble(tot_nxy-tot_nparam),&
-       &chi2err/dble(tot_nxy-tot_nparam)
-    write(6,'(a,es20.12," +/- ",es20.12)')'  RMS(Y-f)  = ',&
+    write(6,'()')
+    write(6,'(a)',advance='no')'   '
+    write(6,'(2x,a12,1x,2(1x,a20))')'Measure','Value     ','Stderr    '
+    write(6,'(a)',advance='no')'   '
+    write(6,'(2x,'//trim(i2s(55))//'("-"))')
+    write(6,'(a)',advance='no')'FIT'
+    write(6,'(2x,a12,1x,2(1x,es20.12))')'chi^2    ',chi2,chi2err
+    if(tot_nxy>tot_nparam)then
+      write(6,'(a)',advance='no')'FIT'
+      write(6,'(2x,a12,1x,2(1x,es20.12))')'chi^2/Ndf',&
+         &chi2/dble(tot_nxy-tot_nparam),chi2err/dble(tot_nxy-tot_nparam)
+    endif
+    write(6,'(a)',advance='no')'FIT'
+    write(6,'(2x,a12,1x,2(1x,es20.12))')'RMS(Y-f) ',&
        &sqrt(chi2/dble(tot_nxy)),&
        &sqrt(chi2err/dble(tot_nxy))
+    write(6,'(a)',advance='no')'   '
+    write(6,'(2x,'//trim(i2s(55))//'("-"))')
+    write(6,'()')
+
+    ! Write out fit in XMGRACE format.
+    ! NB, xmgrace has a string length limit of 256 characters, so this may not
+    ! be very useful in some cases.
+    write(6,'(a)')'Fit in XMGRACE format:'
+    do iset=1,ndataset
+      write(6,'(a)')'  Set #'//trim(i2s(iset))//': '//&
+         &trim(print_poly_num(fit,a(:,iset)))
+    enddo ! iset
     write(6,'()')
 
   END SUBROUTINE show_multipoly
+
+
+  SUBROUTINE evaluate_fit(ndataset,datasets,fit,mcparams,drange,deval)
+    !-------------------------------------------------!
+    ! Evaluate value or derivative of fit at provided !
+    ! points.                                         !
+    !-------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: ndataset
+    TYPE(dataset),INTENT(in) :: datasets(ndataset)
+    TYPE(fit_params),INTENT(in) :: fit
+    TYPE(monte_carlo_params),INTENT(in) :: mcparams
+    TYPE(range_def),INTENT(in) :: drange
+    TYPE(eval_def),INTENT(in) :: deval
+    INTEGER iset,ix
+    DOUBLE PRECISION,ALLOCATABLE :: fmean(:,:),ferr(:,:)
+
+    ! Evaluate.
+    allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset))
+    call eval_multifit_monte_carlo(ndataset,datasets,drange,fit,mcparams,&
+       &deval,fmean,ferr)
+
+    ! Report.
+    write(6,'()')
+    write(6,'(4x)',advance='no')
+    write(6,'(2x,a4,1x,3(1x,a16))')'set','X       ','f       ','df       '
+    write(6,'(4x)',advance='no')
+    write(6,'(2x,56("-"))')
+    do iset=1,ndataset
+      do ix=1,deval%n
+        write(6,'(a4)',advance='no')'EVAL'
+        write(6,'(2x,i4,1x,3(1x,f16.12))')iset,deval%x(ix),&
+           &fmean(ix,iset),ferr(ix,iset)
+      enddo ! ix
+    enddo ! iset
+    write(6,'(4x)',advance='no')
+    write(6,'(2x,56("-"))')
+    write(6,'()')
+    deallocate(fmean,ferr)
+
+  END SUBROUTINE evaluate_fit
 
 
   SUBROUTINE plot_multipoly(ndataset,datasets,drange,fit,deval,mcparams,fname)
@@ -2044,7 +2110,7 @@ CONTAINS
     TYPE(dataset),POINTER :: tdatasets(:)
     TYPE(xydata),POINTER :: xy=>null()
     INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,ix,prev_igrid
-    INTEGER,ALLOCATABLE :: indx(:),tngrid(:)
+    INTEGER,ALLOCATABLE :: indx(:),tngrid(:),tot_nxy_grid(:)
     DOUBLE PRECISION chi2,chi2err,fmean(deval%n,ndataset),&
        &ferr(deval%n,ndataset),t1,t2,min_chi2
     DOUBLE PRECISION,ALLOCATABLE :: chi2_all(:),chi2err_all(:),&
@@ -2057,17 +2123,18 @@ CONTAINS
     ! Compute grid.
     tot_nxy=0
     do iset=1,ndataset
-      tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
+      tot_nxy=tot_nxy+datasets(iset)%txy%nxy
     enddo ! iset
+    allocate(tot_nxy_grid(tot_nxy))
     select case(drange%op(1:1))
     case('<','>')
       allocate(txall(tot_nxy),indx(tot_nxy),txgrid(tot_nxy),tngrid(tot_nxy))
       tngrid=0
       tot_nxy=0
       do iset=1,ndataset
-        txall(tot_nxy+1:tot_nxy+datasets(iset)%rtxy%nxy)=&
-           &datasets(iset)%rtxy%x(1:datasets(iset)%rtxy%nxy)
-        tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
+        txall(tot_nxy+1:tot_nxy+datasets(iset)%txy%nxy)=&
+           &datasets(iset)%txy%x(1:datasets(iset)%txy%nxy)
+        tot_nxy=tot_nxy+datasets(iset)%txy%nxy
       enddo ! iset
       call isort(tot_nxy,txall,indx)
       if(drange%op(1:1)=='>')then
@@ -2087,8 +2154,8 @@ CONTAINS
     case('[',']')
       ngrid=0
       do iset=1,ndataset
-        if(iset==1.or.datasets(iset)%rtxy%nxy<ngrid)&
-           &ngrid=datasets(iset)%rtxy%nxy
+        if(iset==1.or.datasets(iset)%txy%nxy<ngrid)&
+           &ngrid=datasets(iset)%txy%nxy
       enddo ! iset
       allocate(txgrid(ngrid),tngrid(ngrid))
       txgrid=0.d0
@@ -2156,6 +2223,7 @@ CONTAINS
         call refresh_dataset(tdatasets(iset),drange)
         tot_nxy=tot_nxy+tdatasets(iset)%rtxy%nxy
       enddo ! iset
+      tot_nxy_grid(igrid)=tot_nxy
       if(tot_nparam<tot_nxy)then
         ! Perform fit and report.
         call eval_multifit_monte_carlo(ndataset,tdatasets,drange,fit,mcparams,&
@@ -2217,7 +2285,8 @@ CONTAINS
       prev_igrid=igrid
     enddo ! igrid
     if(igrid>=1)then
-      write(6,'(a)')'Suggested grid point: '//trim(i2s(prev_igrid))
+      write(6,'(a)')'Suggested grid point: '//&
+         &trim(i2s(tot_nxy_grid(prev_igrid)))
     else
       write(6,'(a)')'Could not find optimal range by criteria.'
     endif
@@ -2225,15 +2294,9 @@ CONTAINS
 
     ! Clean up.
     do iset=1,ndataset
-      deallocate(tdatasets(iset)%xy%x,tdatasets(iset)%xy%dx,&
-         &tdatasets(iset)%xy%y,tdatasets(iset)%xy%dy)
-      deallocate(tdatasets(iset)%txy%x,tdatasets(iset)%txy%dx,&
-         &tdatasets(iset)%txy%y,tdatasets(iset)%txy%dy)
-      deallocate(tdatasets(iset)%rtxy%x,tdatasets(iset)%rtxy%dx,&
-         &tdatasets(iset)%rtxy%y,tdatasets(iset)%rtxy%dy)
-      deallocate(tdatasets(iset)%xy)
-      deallocate(tdatasets(iset)%txy)
-      deallocate(tdatasets(iset)%rtxy)
+      call kill_xydata(tdatasets(iset)%xy)
+      call kill_xydata(tdatasets(iset)%txy)
+      call kill_xydata(tdatasets(iset)%rtxy)
     enddo ! iset
     deallocate(tdatasets)
     nullify(tdatasets)
@@ -2271,7 +2334,7 @@ CONTAINS
     ! Compute grid.
     tot_nxy=0
     do iset=1,ndataset
-      tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
+      tot_nxy=tot_nxy+datasets(iset)%txy%nxy
     enddo ! iset
     allocate(tot_nxy_grid(tot_nxy))
     select case(drange%op(1:1))
@@ -2280,9 +2343,9 @@ CONTAINS
       tngrid=0
       tot_nxy=0
       do iset=1,ndataset
-        txall(tot_nxy+1:tot_nxy+datasets(iset)%rtxy%nxy)=&
-           &datasets(iset)%rtxy%x(1:datasets(iset)%rtxy%nxy)
-        tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
+        txall(tot_nxy+1:tot_nxy+datasets(iset)%txy%nxy)=&
+           &datasets(iset)%txy%x(1:datasets(iset)%txy%nxy)
+        tot_nxy=tot_nxy+datasets(iset)%txy%nxy
       enddo ! iset
       call isort(tot_nxy,txall,indx)
       if(drange%op(1:1)=='>')then
@@ -2302,8 +2365,8 @@ CONTAINS
     case('[',']')
       ngrid=0
       do iset=1,ndataset
-        if(iset==1.or.datasets(iset)%rtxy%nxy<ngrid)&
-           &ngrid=datasets(iset)%rtxy%nxy
+        if(iset==1.or.datasets(iset)%txy%nxy<ngrid)&
+           &ngrid=datasets(iset)%txy%nxy
       enddo ! iset
       allocate(txgrid(ngrid),tngrid(ngrid))
       txgrid=0.d0
@@ -2530,15 +2593,9 @@ CONTAINS
 
     ! Clean up.
     do iset=1,ndataset
-      deallocate(tdatasets(iset)%xy%x,tdatasets(iset)%xy%dx,&
-         &tdatasets(iset)%xy%y,tdatasets(iset)%xy%dy)
-      deallocate(tdatasets(iset)%txy%x,tdatasets(iset)%txy%dx,&
-         &tdatasets(iset)%txy%y,tdatasets(iset)%txy%dy)
-      deallocate(tdatasets(iset)%rtxy%x,tdatasets(iset)%rtxy%dx,&
-         &tdatasets(iset)%rtxy%y,tdatasets(iset)%rtxy%dy)
-      deallocate(tdatasets(iset)%xy)
-      deallocate(tdatasets(iset)%txy)
-      deallocate(tdatasets(iset)%rtxy)
+      call kill_xydata(tdatasets(iset)%xy)
+      call kill_xydata(tdatasets(iset)%txy)
+      call kill_xydata(tdatasets(iset)%rtxy)
     enddo ! iset
     deallocate(tdatasets)
     nullify(tdatasets)
@@ -2610,43 +2667,6 @@ CONTAINS
     write(6,'()')
 
   END SUBROUTINE report_statistics
-
-
-  SUBROUTINE evaluate_fit(ndataset,datasets,fit,mcparams,drange,deval)
-    !-------------------------------------------------!
-    ! Evaluate value or derivative of fit at provided !
-    ! points.                                         !
-    !-------------------------------------------------!
-    IMPLICIT NONE
-    INTEGER,INTENT(in) :: ndataset
-    TYPE(dataset),INTENT(in) :: datasets(ndataset)
-    TYPE(fit_params),INTENT(in) :: fit
-    TYPE(monte_carlo_params),INTENT(in) :: mcparams
-    TYPE(range_def),INTENT(in) :: drange
-    TYPE(eval_def),INTENT(in) :: deval
-    INTEGER iset,ix
-    DOUBLE PRECISION,ALLOCATABLE :: fmean(:,:),ferr(:,:)
-
-    ! Evaluate.
-    allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset))
-    call eval_multifit_monte_carlo(ndataset,datasets,drange,fit,mcparams,&
-       &deval,fmean,ferr)
-
-    ! Report.
-    write(6,'()')
-    write(6,'(2x,a4,1x,3(1x,a16))')'set','X       ','f       ','df       '
-    write(6,'(2x,56("-"))')
-    do iset=1,ndataset
-      do ix=1,deval%n
-        write(6,'(2x,i4,1x,3(1x,f16.12))')iset,deval%x(ix),&
-           &fmean(ix,iset),ferr(ix,iset)
-      enddo ! ix
-    enddo ! iset
-    write(6,'(2x,56("-"))')
-    write(6,'()')
-    deallocate(fmean,ferr)
-
-  END SUBROUTINE evaluate_fit
 
 
   SUBROUTINE scale_transform(nxy,itransfx,x,tx,have_dx,dx,dtx)
