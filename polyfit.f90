@@ -94,7 +94,8 @@ CONTAINS
     CHARACTER(search_size),POINTER :: search(:)=>null()
     ! Misc variables.
     CHARACTER(8192) command,token
-    INTEGER i,ifield,ierr,ierr1,ierr2,ierr3,ierr4
+    LOGICAL,ALLOCATABLE :: smask(:)
+    INTEGER i,j,ifield,ierr,ierr1,ierr2,ierr3,ierr4
     INTEGER nxy,itransf,iset,i1,i2,ipos,npoly
     DOUBLE PRECISION t1
 
@@ -415,6 +416,56 @@ CONTAINS
         ndataset=ndataset+tndataset
         call refresh_fit(ndataset,datasets,fit)
         write(6,'()')
+
+      case('unload')
+        write(6,'()')
+        if(ndataset<1)then
+          write(6,'(a)')'No datasets loaded.'
+          write(6,'()')
+          cycle user_loop
+        endif
+        allocate(smask(ndataset))
+        if(nfield(command)==1)then
+          ! Unload all.
+          smask=.true.
+        else
+          ! Unload specified sets.
+          smask=.false.
+          ifield=1
+          do
+            ifield=ifield+1
+            if(ifield>nfield(command))exit
+            i=parse_int(field(ifield,command),ierr)
+            if(ierr/=0)then
+              write(6,'(a)')'Invalid dataset index.'
+              deallocate(smask)
+              cycle user_loop
+            endif
+            if(i<1.or.i>ndataset)then
+              write(6,'(a)')'Dataset index out of range.'
+              deallocate(smask)
+              cycle user_loop
+            endif
+            smask(i)=.true.
+          enddo
+        endif
+        ! Delete datasets backwards.
+        do i=ndataset,1,-1
+          if(.not.smask(i))cycle
+          call kill_xydata(datasets(i)%xy)
+          call kill_xydata(datasets(i)%txy)
+          call kill_xydata(datasets(i)%rtxy)
+          do j=i,ndataset-1
+            datasets(j)=datasets(j+1)
+          enddo ! j
+          nullify(datasets(ndataset)%xy)
+          nullify(datasets(ndataset)%txy)
+          nullify(datasets(ndataset)%rtxy)
+          ndataset=ndataset-1
+          call resize_dataset(ndataset,datasets)
+        enddo ! i
+        call refresh_fit(ndataset,datasets,fit)
+        deallocate(smask)
 
       case('fit')
         write(6,'()')
@@ -1197,6 +1248,13 @@ CONTAINS
           call pprint('Other column selections can be specified with an &
              &explicity type/using clause, e.g., "type xydy using 3 5 7".  A &
              &column index of zero refers to the line index.',2,2)
+          call pprint('')
+        case('unload')
+          call pprint('')
+          call pprint('Command: unload [<set1> [<set2> [...]]]',0,9)
+          call pprint('')
+          call pprint('Unload datasets from memory.  If no sets are &
+             &specified, all datasets are unloaded.',2,2)
           call pprint('')
         case('status')
           call pprint('')
@@ -3630,28 +3688,24 @@ CONTAINS
           tdatasets(i)=datasets(i)
         enddo ! i
       endif
+      do i=ndataset+1,old_ndataset
+        call kill_xydata(datasets(i)%xy)
+        call kill_xydata(datasets(i)%txy)
+        call kill_xydata(datasets(i)%rtxy)
+      enddo ! i
       deallocate(datasets)
-      if(ndataset<old_ndataset)then
-        do i=ndataset+1,old_ndataset
-          call kill_xydata(datasets(i)%xy)
-          call kill_xydata(datasets(i)%txy)
-          call kill_xydata(datasets(i)%rtxy)
-        enddo ! i
-      endif
     endif
 
     ! Create new vector of pointers to datasets.
     if(ndataset>0)allocate(datasets(ndataset))
 
     ! Copy vector of pointers to datasets from backup and destroy backup.
-    if(old_ndataset>0)then
-      if(ndataset>0)then
-        do i=1,min(old_ndataset,ndataset)
-          datasets(i)=tdatasets(i)
-        enddo ! i
-        deallocate(tdatasets)
-        nullify(tdatasets)
-      endif
+    if(old_ndataset>0.and.ndataset>0)then
+      do i=1,min(old_ndataset,ndataset)
+        datasets(i)=tdatasets(i)
+      enddo ! i
+      deallocate(tdatasets)
+      nullify(tdatasets)
     endif
 
     ! Nullify pointer if empty.
