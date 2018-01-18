@@ -890,7 +890,7 @@ CONTAINS
           fit%share(1:npoly)=.false.
           ! Report.
           write(6,'(a)')'Fit form set to:'
-          write(6,'(2x,a)')trim(print_poly_sym(fit%npoly,fit%pow,fit%X0))
+          write(6,'(2x,a)')trim(print_poly_sym(fit))
           write(6,'(2x,a)')'Shared coefficients reset to: none'
           write(6,'()')
 
@@ -1132,7 +1132,7 @@ CONTAINS
         enddo ! i
         write(6,'()')
         write(6,'(a)')'Fit function:'
-        write(6,'(2x,a)')trim(print_poly_sym(fit%npoly,fit%pow,fit%X0))
+        write(6,'(2x,a)')trim(print_poly_sym(fit))
         write(6,'(a)',advance='no')'  Shared coefficients:'
         if(.not.any(fit%share))then
           write(6,'(a)')' none'
@@ -1705,8 +1705,7 @@ CONTAINS
       ! NB, this is good for pasting into xmgrace, but xmgrace has a string
       ! length limit of 256 characters.
       write(6,'(a)')'  Fitted polynomial:'
-      write(6,'(a)')'    '//trim(print_poly_num(fit%npoly,fit%pow,a(:,iset),&
-         &fit%X0))
+      write(6,'(a)')'    '//trim(print_poly_num(fit,a(:,iset)))
       write(6,'()')
     enddo ! iset
 
@@ -3252,36 +3251,35 @@ CONTAINS
   ! POLYNOMIAL HANDLING UTILITIES.
 
 
-  FUNCTION print_poly_sym(npoly,pow,X0) RESULT(polystr)
+  FUNCTION print_poly_sym(fit) RESULT(polystr)
     !---------------------------------------------------!
     ! Returns a string with the symbolic version of the !
     ! fitted polynomial.                                !
     !---------------------------------------------------!
     IMPLICIT NONE
-    INTEGER,INTENT(in) :: npoly
-    DOUBLE PRECISION,INTENT(in) :: pow(npoly),X0
-    CHARACTER(3+npoly*54) :: polystr
+    TYPE(fit_params),INTENT(in) :: fit
+    CHARACTER(3+fit%npoly*54) :: polystr
     INTEGER j,ipow
     CHARACTER(40) pwstr
     CHARACTER(6) xstr
-    if(abs(X0)<tol_zero)then
+    if(abs(fit%X0)<tol_zero)then
       xstr='X'
     else
       xstr='(X-X0)'
     endif
     polystr='Y ='
-    do j=1,npoly
-      ipow=nint(pow(j))
-      if(abs(dble(ipow)-pow(j))<tol_zero)then
+    do j=1,fit%npoly
+      ipow=nint(fit%pow(j))
+      if(abs(dble(ipow)-fit%pow(j))<tol_zero)then
         if(ipow==0)then
           pwstr=''
         elseif(ipow==1)then
           pwstr='*'//trim(xstr)
         else
           pwstr='*'//trim(xstr)//'^'//trim(i2s(ipow))
-        endif ! pow=0
+        endif ! fit%pow=0
       else
-        write(pwstr,*)pow(j)
+        write(pwstr,*)fit%pow(j)
         pwstr='*'//trim(xstr)//'^'//trim(adjustl(pwstr))
       endif ! Power is an integer
       if(j>1)then
@@ -3297,40 +3295,40 @@ CONTAINS
   END FUNCTION print_poly_sym
 
 
-  FUNCTION print_poly_num(npoly,pow,a,X0) RESULT(polystr)
+  FUNCTION print_poly_num(fit,a) RESULT(polystr)
     !----------------------------------------------------!
     ! Returns a string with the numerical version of the !
     ! fitted polynomial in a suitable format for pasting !
     ! into xmgrace.                                      !
     !----------------------------------------------------!
     IMPLICIT NONE
-    INTEGER,INTENT(in) :: npoly
-    DOUBLE PRECISION,INTENT(in) :: pow(npoly),a(npoly),X0
-    CHARACTER(2+npoly*105) :: polystr
+    TYPE(fit_params),INTENT(in) :: fit
+    DOUBLE PRECISION,INTENT(in) :: a(fit%npoly)
+    CHARACTER(2+fit%npoly*105) :: polystr
     INTEGER j,ipow
     CHARACTER(1) plusstr
     CHARACTER(32) coeffstr
     CHARACTER(72) pwstr
     CHARACTER(36) xstr
-    if(abs(X0)<tol_zero)then
+    if(abs(fit%X0)<tol_zero)then
       xstr='x'
     else
-      write(xstr,*)X0
+      write(xstr,*)fit%X0
       xstr='(x-'//trim(adjustl(xstr))//')'
     endif
     polystr='y='
-    do j=1,npoly
-      ipow=nint(pow(j))
-      if(abs(dble(ipow)-pow(j))<tol_zero)then
+    do j=1,fit%npoly
+      ipow=nint(fit%pow(j))
+      if(abs(dble(ipow)-fit%pow(j))<tol_zero)then
         if(ipow==0)then
           pwstr=''
         elseif(ipow==1)then
           pwstr='*'//trim(xstr)
         else
           pwstr='*'//trim(xstr)//'^'//trim(i2s(ipow))
-        endif ! pow=0
+        endif ! fit%pow=0
       else
-        write(pwstr,*)pow(j)
+        write(pwstr,*)fit%pow(j)
         pwstr='*'//trim(xstr)//'^'//trim(adjustl(pwstr))
       endif ! Power is an integer
       if(j>1.and.a(j)>=0.d0)then
