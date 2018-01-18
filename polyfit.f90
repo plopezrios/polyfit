@@ -45,6 +45,7 @@ PROGRAM polyfit
   TYPE range_def
     CHARACTER :: var='X'
     CHARACTER(2) :: op=''
+    LOGICAL :: no_rhs=.false.
     DOUBLE PRECISION :: thres=0.d0
     INTEGER :: size=0
   END TYPE range_def
@@ -77,7 +78,7 @@ CONTAINS
     TYPE(fit_params),POINTER :: fit=>null()
     ! All-set settings.
     INTEGER itransfx_default,itransfy_default
-    TYPE(range_def) drange
+    TYPE(range_def) drange,tdrange
     ! Function evaluation.
     INTEGER eval_iset
     TYPE(eval_def) deval
@@ -476,7 +477,7 @@ CONTAINS
               write(6,'()')
               cycle user_loop
             endif
-            call parse_range(trim(field(ifield+1,command)),deval)
+            call parse_xeval(trim(field(ifield+1,command)),deval)
             if(.not.associated(deval%x))then
               write(6,'(a)')'Syntax error: could not parse range.'
               write(6,'()')
@@ -512,6 +513,11 @@ CONTAINS
         ! Initialize.
         deval%n=0
         eval_iset=0
+        tdrange%var='X'
+        tdrange%op='<='
+        tdrange%thres=0.d0
+        tdrange%size=0
+        tdrange%no_rhs=.true.
         ! Loop over subcommands.
         ifield=2
         do
@@ -539,24 +545,21 @@ CONTAINS
               write(6,'()')
               cycle user_loop
             endif
-            select case(trim(field(ifield+3,command)))
-            case('X')
-              deval%var='X'
-            case default
-              write(6,'(a)')'Syntax error: unknown variable "'//&
-                 &trim(field(ifield+3,command))//'".'
-              write(6,'()')
-              cycle user_loop
-            end select
-            t1=dble_field(ifield+4,command,ierr)
-            if(ierr/=0)then
-              write(6,'(a)')'Syntax error: invalid value of "'//&
-                 &trim(field(ifield+3,command))//'" specified.'
+            call parse_xeval(field(ifield+3,command),deval)
+            if(.not.associated(deval%x))then
+              write(6,'(a)')'Syntax error: problem parsing list of X values.'
               write(6,'()')
               cycle user_loop
             endif
-            deval%n=1
-            ifield=ifield+4
+            ifield=ifield+3
+          case('by')
+            call parse_range(field(ifield+1,command),tdrange)
+            if(tdrange%op=='')then
+              write(6,'(a)')'Syntax error: problem parsing "by" argument.'
+              write(6,'()')
+              cycle user_loop
+            endif
+            ifield=ifield+1
           case('for')
             i=int_field(ifield+1,command,ierr)
             if(ierr/=0)then
@@ -588,9 +591,11 @@ CONTAINS
           call assess_fit(ndataset,datasets,drange,fit,mcparams,deval,&
              &eval_iset)
         case('range')
-          call assess_range(ndataset,datasets,fit,mcparams,deval,eval_iset)
+          call assess_range(ndataset,datasets,tdrange,fit,mcparams,deval,&
+             &eval_iset)
         case('range,fit','fit,range')
-          call assess_fit_range(ndataset,datasets,fit,mcparams,deval,eval_iset)
+          call assess_fit_range(ndataset,datasets,tdrange,fit,mcparams,deval,&
+             &eval_iset)
         case default
           write(6,'()')
           write(6,'(a)')'Unknown variable to assess "'//&
@@ -644,7 +649,7 @@ CONTAINS
           write(6,'()')
           cycle user_loop
         endif
-        call parse_range(field(4,command),deval)
+        call parse_xeval(field(4,command),deval)
         if(.not.associated(deval%x))then
           write(6,'(a)')'Syntax error: could not parse range.'
           write(6,'()')
@@ -892,63 +897,28 @@ CONTAINS
         case('range')
           ! Set fit range.
           ! Check sort variable.
-          select case(trim(field(3,command)))
-          case('x','y','X','Y')
-            continue
-          case default
-            write(6,'(a)')'Syntax error parsing range: unknown sort variable &
-               &"'//trim(field(3,command))//'".'
+          call parse_range(trim(field(3,command)),drange)
+          if(drange%op=='')then
+            write(6,'(a)')'Syntax error parsing range string.'
             write(6,'()')
             cycle user_loop
-          end select
-          ! Check sort operation and set range parameters.
-          select case(trim(field(4,command)))
-          case('<','<=','>','>=')
-            t1=dble_field(5,command,ierr)
-            if(ierr/=0)then
-              write(6,'(a)')'Syntax error parsing range: could not parse &
-                 &threshold.'
-              write(6,'()')
-              cycle user_loop
-            endif
-            drange%thres=t1
-            drange%op=field(4,command)
-          case('first','last')
-            i=int_field(5,command,ierr)
-            if(ierr/=0)then
-              write(6,'(a)')'Syntax error parsing range: could not parse &
-                 &range size.'
-              write(6,'()')
-              cycle user_loop
-            endif
-            if(i<0)then
-              write(6,'(a)')'Syntax error parsing range: range size < 0.'
-              write(6,'()')
-              cycle user_loop
-            endif
-            drange%size=i
-            select case(trim(field(4,command)))
-            case('first')
-              drange%op='f'
-            case('last')
-              drange%op='l'
-            end select
-          case default
-            write(6,'(a)')'Syntax error parsing range: unknown sort criterion &
-               &"'//trim(field(4,command))//'".'
+          endif
+          if(drange%no_rhs)then
+            write(6,'(a)')'Syntax error parsing right-hand side of range.'
             write(6,'()')
+            drange%op=''
+            drange%no_rhs=.false.
             cycle user_loop
-          end select
-          ! Set remaining range parameters.
-          drange%var=field(3,command)
-          write(6,'(a)')'Range set.'
-          write(6,'()')
+          endif
           ! Apply transformations.
           do iset=1,ndataset
             call refresh_dataset(datasets(iset),drange)
           enddo ! iset
           ! Update X0.
           call refresh_fit(ndataset,datasets,fit)
+          ! Report.
+          write(6,'(a)')'Range set.'
+          write(6,'()')
 
         case('shared')
           ! Set shared coefficients.
@@ -1109,10 +1079,10 @@ CONTAINS
         select case(drange%op)
         case('')
           write(6,'(a,es11.4)')'  Data range: all data'
-        case('f')
+        case('[')
           write(6,'(a,es11.4)')'  Data range: first '//&
              &trim(i2s(drange%size))//' data by '//trim(drange%var)//' value'
-        case('l')
+        case(']')
           write(6,'(a,es11.4)')'  Data range: last '//&
              &trim(i2s(drange%size))//' data by '//trim(drange%var)//' value'
         case default
@@ -1239,20 +1209,48 @@ CONTAINS
           call pprint('')
         case('assess')
           call pprint('')
-          call pprint('Command: assess <variables> [using <function> at X <X> &
-             &[for <set>]]',0,9)
+          call pprint('Command: assess <variables> [by <criterion>] [using &
+             &<function> at <x-values> [for <set>]]',0,9)
           call pprint('')
           call pprint('Assess the convergence of the fit with the specified &
-             &variables.  The assessment is carried out based on the value &
-             &chi^2/Ndf and on the value (f), first (f''), or second &
-             &derivative (f'''') of the fit at the specified (transformed) &
-             &coordinate X=<X> for all sets or a specific set <set>.  The &
-             &following <variables> can be specified:',2,2)
+             &variables.',2,2)
+          call pprint('')
+          call pprint('The assessment is carried out based on the value of &
+             &chi^2/Ndf and, if specified, on the value of a function of the &
+             &fit.',2,2)
+          call pprint('')
+          call pprint('The following <variables> can be specified:',2,2)
           call pprint('* fit : assess convergence with choice of fit form.',&
              &2,4)
           call pprint('* range : assess convergence with data range.',2,4)
           call pprint('* fit,range : assess convergence with choice of fit &
              &form and data range',2,4)
+          call pprint('')
+          call pprint('The "fit" assessment is carried out by successively &
+             &introducing terms of the currently-defined fit in the order &
+             &they were given.',2,2)
+          call pprint('')
+          call pprint('The "range" assessment is performed by successively &
+             &restricting the data range according to <criterion>.  &
+             &<criterion> has the form "<variable><selector>", where &
+             &<variable> is one of x, y, X, or Y (lowercase for original and &
+             &uppercase for transformed values), and <selector> is one of:',&
+             &2,2)
+          call pprint('* <T',2,4)
+          call pprint('* <=T',2,4)
+          call pprint('* >=T',2,4)
+          call pprint('* >T',2,4)
+          call pprint('* [N (first N)',2,4)
+          call pprint('* ]N (last N)',2,4)
+          call pprint('Note that in the above, T and N are a literal "T" &
+             &and a literal "N", respectively.',2,2)
+          call pprint('')
+          call pprint('<function> can be f, f'', or f'''' for the value, &
+             &first, and second derivative, respectively.',2,2)
+          call pprint('')
+          call pprint('<xvalues> is specified as &
+             &"<variable>=<comma-separated-list>" (e.g., "X=0,1,2,3") or as &
+             &"<variable>=<first>:<last>:<count>" (e.g., "X=0:3:4").',2,2)
           call pprint('')
         case('report')
           call pprint('')
@@ -1271,7 +1269,7 @@ CONTAINS
           call pprint('')
         case('plot')
           call pprint('')
-          call pprint('Command: plot <function> [at <range>] &
+          call pprint('Command: plot <function> [at <xvalues>] &
              &[to <filename>]',0,9)
           call pprint('')
           call pprint('Plot a function of the fit to <filename>.',2,2)
@@ -1280,7 +1278,7 @@ CONTAINS
              &first, and second derivative, respectively.  If <function> is &
              &f, the original data are also plotted.',2,2)
           call pprint('')
-          call pprint('<range> is specified as &
+          call pprint('<xvalues> is specified as &
              &"<variable>=<comma-separated-list>" (e.g., "X=0,1,2,3") or as &
              &"<variable>=<first>:<last>:<count>" (e.g., "X=0:3:4").',2,2)
           call pprint('')
@@ -1291,16 +1289,15 @@ CONTAINS
           call pprint('')
         case('evaluate')
           call pprint('')
-          call pprint('Command: evaluate <function> at <range>',0,9)
+          call pprint('Command: evaluate <function> at <xvalues>',0,9)
           call pprint('')
           call pprint('Evaluate a function of the fit and print the value.',&
              &2,2)
           call pprint('')
           call pprint('<function> can be f, f'', or f'''' for the value, &
-             &first, and second derivative, respectively.  If <function> is &
-             &f, the original data are also plotted.',2,2)
+             &first, and second derivative, respectively.',2,2)
           call pprint('')
-          call pprint('<range> is specified as &
+          call pprint('<xvalues> is specified as &
              &"<variable>=<comma-separated-list>" (e.g., "X=0,1,2,3") or as &
              &"<variable>=<first>:<last>:<count>" (e.g., "X=0:3:4").',2,2)
           call pprint('')
@@ -1374,17 +1371,20 @@ CONTAINS
               call pprint('Variable: range',0,10)
               call pprint('')
               call pprint('"range" sets the data mask to apply to all &
-                 &datasets.  The value can be specified as "<variable> &
-                 &<selector>", where:',2,2)
+                 &datasets.  The value can be specified as &
+                 &"<variable><selector>", where:',2,2)
               call pprint('* <variable> is one of x, y, X, or Y (lowercase &
                  &for original and uppercase for transformed values).',2,4)
               call pprint('* <selector> is one of:',2,4)
-              call pprint('- <  <threshold>',4,6)
-              call pprint('- <= <threshold>',4,6)
-              call pprint('- >= <threshold>',4,6)
-              call pprint('- >  <threshold>',4,6)
-              call pprint('- first <number>',4,6)
-              call pprint('- last <number>',4,6)
+              call pprint('- <T',4,6)
+              call pprint('- <=T',4,6)
+              call pprint('- >=T',4,6)
+              call pprint('- >T',4,6)
+              call pprint('- [N (first N)',4,6)
+              call pprint('- ]N (last N)',4,6)
+              call pprint('Note that in the above, T is a real-valued &
+                 &threshold, and N is an integer number.')
+              call pprint('')
               call pprint('Note that "range" is a global variable, so the &
                  &"for <set-list>" syntax does not apply to this variable.',&
                  &2,2)
@@ -1503,6 +1503,7 @@ CONTAINS
     LOGICAL,ALLOCATABLE :: mask(:)
     INTEGER,ALLOCATABLE :: indx(:)
     DOUBLE PRECISION,ALLOCATABLE :: sortvec(:)
+    INTEGER n
 
     ! Delete pre-existing data.
     if(associated(dset%txy))then
@@ -1551,15 +1552,16 @@ CONTAINS
       mask=sortvec>drange%thres.and..not.are_equal(sortvec,drange%thres)
     case('>=')
       mask=sortvec>drange%thres.or.are_equal(sortvec,drange%thres)
-    case('f','l')
+    case('[',']')
       if(drange%size>0)then
+        n=min(drange%size,dset%xy%nxy)
         allocate(indx(dset%xy%nxy))
         call isort(dset%xy%nxy,sortvec,indx)
         mask=.false.
-        if(trim(drange%op)=='f')then
-          mask(indx(1:drange%size))=.true.
-        elseif(trim(drange%op)=='l')then
-          mask(indx(dset%xy%nxy-drange%size+1:dset%xy%nxy))=.true.
+        if(trim(drange%op)=='[')then
+          mask(indx(1:n))=.true.
+        elseif(trim(drange%op)==']')then
+          mask(indx(dset%xy%nxy-n+1:dset%xy%nxy))=.true.
         endif
         deallocate(indx)
       endif
@@ -2028,7 +2030,8 @@ CONTAINS
   END SUBROUTINE assess_fit
 
 
-  SUBROUTINE assess_range(ndataset,datasets,fit,mcparams,deval,eval_iset)
+  SUBROUTINE assess_range(ndataset,datasets,drange,fit,mcparams,deval,&
+     &eval_iset)
     !------------------------------------------------!
     ! Test convergence of chi^2/Ndf as a function of !
     ! number of data points.                         !
@@ -2037,24 +2040,19 @@ CONTAINS
     INTEGER,INTENT(in) :: ndataset
     TYPE(dataset),INTENT(in) :: datasets(:)
     TYPE(fit_params),POINTER :: fit
+    TYPE(range_def),INTENT(inout) :: drange
     TYPE(monte_carlo_params),INTENT(in) :: mcparams
     TYPE(eval_def),INTENT(in) :: deval
     INTEGER,INTENT(in) :: eval_iset
     TYPE(dataset),POINTER :: tdatasets(:)
     TYPE(xydata),POINTER :: xy=>null()
-    TYPE(range_def) drange
     INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,ix,prev_igrid
-    INTEGER,ALLOCATABLE :: indx(:)
+    INTEGER,ALLOCATABLE :: indx(:),tngrid(:)
     DOUBLE PRECISION chi2,chi2err,fmean(deval%n,ndataset),&
        &ferr(deval%n,ndataset),t1,t2,min_chi2
     DOUBLE PRECISION,ALLOCATABLE :: chi2_all(:),chi2err_all(:),&
        &fmean_all(:,:,:),ferr_all(:,:,:)
     DOUBLE PRECISION,ALLOCATABLE :: txall(:),txgrid(:)
-
-    ! FIXME - expose these parameters.
-    drange%var='X'
-    drange%op='<='
-    drange%size=0
 
     ! Initialize.
     tot_nparam=count(fit%share)+ndataset*count(.not.fit%share)
@@ -2064,22 +2062,43 @@ CONTAINS
     do iset=1,ndataset
       tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
     enddo ! iset
-    allocate(txall(tot_nxy),indx(tot_nxy),txgrid(tot_nxy))
-    tot_nxy=0
-    do iset=1,ndataset
-      txall(tot_nxy+1:tot_nxy+datasets(iset)%rtxy%nxy)=&
-         &datasets(iset)%rtxy%x(1:datasets(iset)%rtxy%nxy)
-      tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
-    enddo ! iset
-    call isort(tot_nxy,txall,indx)
-    ngrid=1
-    txgrid(ngrid)=txall(indx(1))
-    do ixy=2,tot_nxy
-      if(are_equal(txall(indx(ixy)),txgrid(ngrid)))cycle
-      ngrid=ngrid+1
-      txgrid(ngrid)=txall(indx(ixy))
-    enddo ! ixy
-    deallocate(txall,indx)
+    select case(drange%op(1:1))
+    case('<','>')
+      allocate(txall(tot_nxy),indx(tot_nxy),txgrid(tot_nxy),tngrid(tot_nxy))
+      tngrid=0
+      tot_nxy=0
+      do iset=1,ndataset
+        txall(tot_nxy+1:tot_nxy+datasets(iset)%rtxy%nxy)=&
+           &datasets(iset)%rtxy%x(1:datasets(iset)%rtxy%nxy)
+        tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
+      enddo ! iset
+      call isort(tot_nxy,txall,indx)
+      if(drange%op(1:1)=='>')then
+        do ixy=1,tot_nxy
+          if(ixy>=tot_nxy-ixy+1)exit
+          call iswap1(indx(ixy),indx(tot_nxy-ixy+1))
+        enddo ! ixy
+      endif
+      ngrid=1
+      txgrid(1)=txall(indx(1))
+      do ixy=2,tot_nxy
+        if(are_equal(txall(indx(ixy)),txgrid(ngrid)))cycle
+        ngrid=ngrid+1
+        txgrid(ngrid)=txall(indx(ixy))
+      enddo ! ixy
+      deallocate(txall,indx)
+    case('[',']')
+      ngrid=0
+      do iset=1,ndataset
+        if(iset==1.or.datasets(iset)%rtxy%nxy<ngrid)&
+           &ngrid=datasets(iset)%rtxy%nxy
+      enddo ! iset
+      allocate(txgrid(ngrid),tngrid(ngrid))
+      txgrid=0.d0
+      do igrid=1,ngrid
+        tngrid(igrid)=igrid
+      enddo ! igrid
+    end select
 
     ! Allocate arrays to store test results and initialize to "invalid".
     allocate(chi2_all(tot_nxy),chi2err_all(tot_nxy),&
@@ -2134,6 +2153,7 @@ CONTAINS
     do igrid=ngrid,1,-1
       ! Apply range.
       drange%thres=txgrid(igrid)
+      drange%size=tngrid(igrid)
       tot_nxy=0
       do iset=1,ndataset
         call refresh_dataset(tdatasets(iset),drange)
@@ -2225,7 +2245,8 @@ CONTAINS
   END SUBROUTINE assess_range
 
 
-  SUBROUTINE assess_fit_range(ndataset,datasets,fit,mcparams,deval,eval_iset)
+  SUBROUTINE assess_fit_range(ndataset,datasets,drange,fit,mcparams,deval,&
+     &eval_iset)
     !------------------------------------------------!
     ! Test convergence of chi^2/Ndf as a function of !
     ! expansion order and number of data points.     !
@@ -2233,49 +2254,65 @@ CONTAINS
     IMPLICIT NONE
     INTEGER,INTENT(in) :: ndataset
     TYPE(dataset),POINTER :: datasets(:)
+    TYPE(range_def),INTENT(inout) :: drange
     TYPE(fit_params),POINTER :: fit
     TYPE(monte_carlo_params),INTENT(in) :: mcparams
     TYPE(eval_def),INTENT(in) :: deval
     INTEGER,INTENT(in) :: eval_iset
     TYPE(dataset),POINTER :: tdatasets(:)
     TYPE(xydata),POINTER :: xy=>null()
-    TYPE(range_def) drange
     TYPE(fit_params),POINTER :: tfit=>null()
     INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,npoly,ix,prev_igrid,&
        &prev_npoly,prev_prev_npoly
-    INTEGER,ALLOCATABLE :: indx(:)
+    INTEGER,ALLOCATABLE :: indx(:),tngrid(:)
     DOUBLE PRECISION chi2,chi2err,fmean(deval%n,ndataset),&
        &ferr(deval%n,ndataset),t1,t2,min_chi2
     DOUBLE PRECISION,ALLOCATABLE :: chi2_all(:,:),chi2err_all(:,:),&
        &fmean_all(:,:,:,:),ferr_all(:,:,:,:)
     DOUBLE PRECISION,ALLOCATABLE :: txall(:),txgrid(:)
 
-    ! FIXME - expose these parameters.
-    drange%var='X'
-    drange%op='<='
-    drange%size=0
-
     ! Compute grid.
     tot_nxy=0
     do iset=1,ndataset
       tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
     enddo ! iset
-    allocate(txall(tot_nxy),indx(tot_nxy),txgrid(tot_nxy))
-    tot_nxy=0
-    do iset=1,ndataset
-      txall(tot_nxy+1:tot_nxy+datasets(iset)%rtxy%nxy)=&
-         &datasets(iset)%rtxy%x(1:datasets(iset)%rtxy%nxy)
-      tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
-    enddo ! iset
-    call isort(tot_nxy,txall,indx)
-    ngrid=1
-    txgrid(ngrid)=txall(indx(1))
-    do ixy=2,tot_nxy
-      if(are_equal(txall(indx(ixy)),txgrid(ngrid)))cycle
-      ngrid=ngrid+1
-      txgrid(ngrid)=txall(indx(ixy))
-    enddo ! ixy
-    deallocate(txall,indx)
+    select case(drange%op(1:1))
+    case('<','>')
+      allocate(txall(tot_nxy),indx(tot_nxy),txgrid(tot_nxy),tngrid(tot_nxy))
+      tngrid=0
+      tot_nxy=0
+      do iset=1,ndataset
+        txall(tot_nxy+1:tot_nxy+datasets(iset)%rtxy%nxy)=&
+           &datasets(iset)%rtxy%x(1:datasets(iset)%rtxy%nxy)
+        tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
+      enddo ! iset
+      call isort(tot_nxy,txall,indx)
+      if(drange%op(1:1)=='>')then
+        do ixy=1,tot_nxy
+          if(ixy>=tot_nxy-ixy+1)exit
+          call iswap1(indx(ixy),indx(tot_nxy-ixy+1))
+        enddo ! ixy
+      endif
+      ngrid=1
+      txgrid(1)=txall(indx(1))
+      do ixy=2,tot_nxy
+        if(are_equal(txall(indx(ixy)),txgrid(ngrid)))cycle
+        ngrid=ngrid+1
+        txgrid(ngrid)=txall(indx(ixy))
+      enddo ! ixy
+      deallocate(txall,indx)
+    case('[',']')
+      ngrid=0
+      do iset=1,ndataset
+        if(iset==1.or.datasets(iset)%rtxy%nxy<ngrid)&
+           &ngrid=datasets(iset)%rtxy%nxy
+      enddo ! iset
+      allocate(txgrid(ngrid),tngrid(ngrid))
+      txgrid=0.d0
+      do igrid=1,ngrid
+        tngrid(igrid)=igrid
+      enddo ! igrid
+    end select
 
     ! Allocate arrays to store test results and initialize to "invalid".
     allocate(chi2_all(fit%npoly,tot_nxy),chi2err_all(fit%npoly,tot_nxy),&
@@ -2329,10 +2366,8 @@ CONTAINS
     ! Loop over points in grid.
     do igrid=ngrid,1,-1
       ! Apply range.
-      drange%var='X'
-      drange%op='<='
       drange%thres=txgrid(igrid)
-      drange%size=0
+      drange%size=tngrid(igrid)
       tot_nxy=0
       do iset=1,ndataset
         call refresh_dataset(tdatasets(iset),drange)
@@ -4153,15 +4188,71 @@ CONTAINS
   END FUNCTION are_equal_string
 
 
-  SUBROUTINE parse_range(string,deval)
+  SUBROUTINE parse_range(string,drange)
     !------------------------------------------------!
     ! Parse a data range out of a string. The string !
-    ! can take the form:                             ! 
-    ! * <variable>=<comma-separated-list>, e.g.,     !
+    ! can take the form:                             !
+    ! * <variable><operation><threshold>             !
     !   X=1,2,3  gives  X={1,2,3}                    !
     ! * <variable>=<first>:<last>:<count>, e.g.,     !
     !   X=1:2:3  gives  X={1,1.5,2}                  !
     !------------------------------------------------!
+    IMPLICIT NONE
+    CHARACTER(*),INTENT(in) :: string
+    TYPE(range_def),INTENT(inout) :: drange
+    CHARACTER(len_trim(string)) remainder
+    INTEGER ierr
+
+    ! Initialize.
+    drange%var='X'
+    drange%op=''
+    drange%thres=0.d0
+    drange%size=0
+    drange%no_rhs=.false.
+    remainder=trim(adjustl(string))
+
+    ! Extract variable.
+    select case(remainder(1:1))
+    case('x','y','X','Y')
+      drange%var=remainder(1:1)
+    case default
+      return
+    end select
+    remainder=remainder(2:)
+
+    ! Check sort operation and set range parameters.
+    select case(remainder(1:1))
+    case('<','>')
+      if(remainder(2:2)=='=')then
+        drange%op=remainder(1:2)
+        remainder=remainder(3:)
+      else
+        drange%op=remainder(1:1)
+        remainder=remainder(2:)
+      endif
+      drange%thres=parse_dble(remainder,ierr)
+      if(ierr/=0)drange%no_rhs=.true.
+    case('[',']')
+      drange%op=remainder(1:1)
+      remainder=remainder(2:)
+      drange%size=parse_int(remainder,ierr)
+      if(ierr/=0)drange%no_rhs=.true.
+    case default
+      continue
+    end select
+
+  END SUBROUTINE parse_range
+
+
+  SUBROUTINE parse_xeval(string,deval)
+    !---------------------------------------------!
+    ! Parse a list of x values from a string. The !
+    ! string can take the form:                   !
+    ! * <variable>=<comma-separated-list>, e.g.,  !
+    !   X=1,2,3  gives  X={1,2,3}                 !
+    ! * <variable>=<first>:<last>:<count>, e.g.,  !
+    !   X=1:2:3  gives  X={1,1.5,2}               !
+    !---------------------------------------------!
     IMPLICIT NONE
     CHARACTER(*),INTENT(in) :: string
     TYPE(eval_def),INTENT(inout) :: deval
@@ -4235,7 +4326,7 @@ CONTAINS
       enddo
     endif
 
-  END SUBROUTINE parse_range
+  END SUBROUTINE parse_xeval
 
 
   CHARACTER(12) FUNCTION i2s(n)
