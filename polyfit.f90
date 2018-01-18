@@ -465,6 +465,8 @@ CONTAINS
           call resize_dataset(ndataset,datasets)
         enddo ! i
         call refresh_fit(ndataset,datasets,fit)
+        write(6,'(a)')trim(i2s(count(smask)))//' datasets unloaded.'
+        write(6,'()')
         deallocate(smask)
 
       case('fit')
@@ -842,20 +844,17 @@ CONTAINS
               endif
             enddo ! iset
             ! Store transformation.
-            do iset=1,ndataset
-              select case(trim(field(2,command)))
-              case('xscale')
-                datasets(iset)%itransfx=itransf
-              case('yscale')
-                datasets(iset)%itransfy=itransf
-              end select
-            enddo ! ifield
-            ! Store default transformation.
             select case(trim(field(2,command)))
             case('xscale')
               itransfx_default=itransf
+              do iset=1,ndataset
+                datasets(iset)%itransfx=itransf
+              enddo ! ifield
             case('yscale')
               itransfy_default=itransf
+              do iset=1,ndataset
+                datasets(iset)%itransfy=itransf
+              enddo ! ifield
             end select
             write(6,'(a)')'Set '//trim(field(2,command))//' to '//&
                &trim(TRANSF_NAME(itransf))//' for all sets.'
@@ -1122,6 +1121,60 @@ CONTAINS
           cycle user_loop
         end select ! variable to set
 
+      case('unset')
+        ! Set variables.
+        write(6,'()')
+        select case(trim(field(2,command)))
+        case('xscale','yscale')
+          ! FIXME - "for" clause
+          select case(trim(field(2,command)))
+          case('xscale')
+            itransfx_default=ITRANSF_NONE
+            do iset=1,ndataset
+              datasets(iset)%itransfx=ITRANSF_NONE
+            enddo ! ifield
+          case('yscale')
+            itransfy_default=ITRANSF_NONE
+            do iset=1,ndataset
+              datasets(iset)%itransfy=ITRANSF_NONE
+            enddo ! ifield
+          end select
+          do iset=1,ndataset
+            call refresh_dataset(datasets(iset),drange)
+          enddo ! iset
+          call refresh_fit(ndataset,datasets,fit)
+        case('fit')
+          deallocate(fit%pow,fit%share)
+          fit%npoly=2
+          allocate(fit%pow(2),fit%share(2))
+          fit%pow=(/0.d0,1.d0/)
+          fit%share=.false.
+        case('range')
+          drange%var='X'
+          drange%op=''
+          drange%thres=0.d0
+          drange%size=0
+          do iset=1,ndataset
+            call refresh_dataset(datasets(iset),drange)
+          enddo ! iset
+          call refresh_fit(ndataset,datasets,fit)
+        case('shared')
+          fit%share=.false.
+        case('centre')
+          fit%X0_string='0'
+          call refresh_fit(ndataset,datasets,fit)
+        case('weights')
+          mcparams%weighted=.false.
+        case('nsample')
+          mcparams%nsample=10000
+        case default
+          write(6,'(a)')'Unknown variable "'//trim(field(2,command))//'".'
+          write(6,'()')
+          cycle user_loop
+        end select
+        write(6,'(a)')'Variable "'//trim(field(2,command))//'" reset.'
+        write(6,'()')
+
       case('status')
         write(6,'()')
         write(6,'(a,es11.4)')'Global settings:'
@@ -1213,7 +1266,9 @@ CONTAINS
           call pprint('* inspect <file>',0,2)
           call pprint('* load <file> [type <type> using <columns>] &
              &[where <column> <value>] [by <column]',0,2)
+          call pprint('* unload <set-index>',0,2)
           call pprint('* set <variable> <value> [for <set-list>]',0,2)
+          call pprint('* unset <variable>',0,2)
           call pprint('* status',0,2)
           call pprint('* assess <variables> [using <function> at X <X> &
              &[for <set>]]',0,2)
@@ -1356,6 +1411,15 @@ CONTAINS
           call pprint('<xvalues> is specified as &
              &"<variable>=<comma-separated-list>" (e.g., "X=0,1,2,3") or as &
              &"<variable>=<first>:<last>:<count>" (e.g., "X=0:3:4").',2,2)
+          call pprint('')
+        case('unset')
+          call pprint('')
+          call pprint('Command: unset <variable>',0,9)
+          call pprint('')
+          call pprint('Sets <variable> to its default value.',2,2)
+          call pprint('')
+          call pprint('Type "help set <variable>" for detailed information on &
+             &variables and their default values.',2,2)
           call pprint('')
         case('set')
           if(nfield(command)==2)then
