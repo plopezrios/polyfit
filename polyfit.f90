@@ -512,6 +512,7 @@ CONTAINS
         end select
         ! Initialize.
         deval%n=0
+        deval%rel=.false.
         eval_iset=0
         tdrange%var='X'
         tdrange%op='<='
@@ -583,9 +584,6 @@ CONTAINS
           end select
         enddo ! ifield
         ! Evaluate.
-        allocate(deval%x(deval%n))
-        if(deval%n>0)deval%x(1)=t1
-        deval%rel=.false.
         select case(trim(field(2,command)))
         case('fit')
           call assess_fit(ndataset,datasets,drange,fit,mcparams,deval,&
@@ -2263,7 +2261,7 @@ CONTAINS
     TYPE(fit_params),POINTER :: tfit=>null()
     INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,npoly,ix,prev_igrid,&
        &prev_npoly,prev_prev_npoly
-    INTEGER,ALLOCATABLE :: indx(:),tngrid(:)
+    INTEGER,ALLOCATABLE :: indx(:),tngrid(:),tot_nxy_grid(:)
     DOUBLE PRECISION chi2,chi2err,fmean(deval%n,ndataset),&
        &ferr(deval%n,ndataset),t1,t2,min_chi2
     DOUBLE PRECISION,ALLOCATABLE :: chi2_all(:,:),chi2err_all(:,:),&
@@ -2275,6 +2273,7 @@ CONTAINS
     do iset=1,ndataset
       tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
     enddo ! iset
+    allocate(tot_nxy_grid(tot_nxy))
     select case(drange%op(1:1))
     case('<','>')
       allocate(txall(tot_nxy),indx(tot_nxy),txgrid(tot_nxy),tngrid(tot_nxy))
@@ -2372,6 +2371,7 @@ CONTAINS
         call refresh_dataset(tdatasets(iset),drange)
         tot_nxy=tot_nxy+tdatasets(iset)%rtxy%nxy
       enddo ! iset
+      tot_nxy_grid(igrid)=tot_nxy
       ! Loop over expansion orders.
       do npoly=1,fit%npoly
         ! Allocate work arrays.
@@ -2420,6 +2420,26 @@ CONTAINS
     endif
     write(6,'()')
 
+    ! Print second table header.
+    write(6,'()')
+    write(6,'(2x,a5,2x,a5,1x,2(1x,a12))',advance='no')'Ndata','Order',&
+       &'chi^2/Ndf','dchi^2/Ndf'
+    do ix=1,deval%n
+      do iset=1,ndataset
+        if(eval_iset==0.or.eval_iset==iset)write(6,'(2(1x,a12))',advance='no')&
+           &'f'//trim(i2s(iset))//'(X'//trim(i2s(ix))//')  ',&
+           &'df'//trim(i2s(iset))//'(X'//trim(i2s(ix))//')  '
+      enddo ! iset
+    enddo ! ix
+    write(6,'()')
+    if(eval_iset==0)then
+      write(6,'(2x,'//trim(i2s(39+26*deval%n*ndataset))//'("-"))')
+    elseif(eval_iset>0.and.eval_iset<ndataset)then
+      write(6,'(2x,'//trim(i2s(39+26*deval%n))//'("-"))')
+    else
+      write(6,'(2x,'//trim(i2s(39))//'("-"))')
+    endif
+
     ! Report best choice of parameters.
     ! Locate minimum chi2/Ndf.
     min_chi2=-1.d0
@@ -2453,10 +2473,23 @@ CONTAINS
           enddo ! iset
           if(iset>ndataset)exit
         endif
+        ! Store npoly.
         prev_npoly=npoly
       enddo ! npoly
       ! Skip points for which test did not converge.
       if(npoly>fit%npoly)cycle
+      ! Write table entry.
+      write(6,'(2x,i5,2x,i5,1x,2(1x,es12.4))',advance='no')&
+         &tot_nxy_grid(igrid),prev_npoly-1,&
+         &chi2_all(prev_npoly,igrid),chi2err_all(prev_npoly,igrid)
+      do ix=1,deval%n
+        do iset=1,ndataset
+          if(eval_iset==0.or.eval_iset==iset)write(6,'(2(1x,es12.4))',&
+             &advance='no')fmean_all(ix,iset,prev_npoly,igrid),&
+             &ferr_all(ix,iset,prev_npoly,igrid)
+        enddo ! iset
+      enddo ! ix
+      write(6,'()')
       if(prev_igrid>0)then
         ! Check function value across grid sizes.
         do iset=1,ndataset
@@ -2474,9 +2507,22 @@ CONTAINS
       prev_igrid=igrid
       prev_prev_npoly=prev_npoly
     enddo ! igrid
+
+    ! Print table footer.
+    if(eval_iset==0)then
+      write(6,'(2x,'//trim(i2s(39+26*deval%n*ndataset))//'("-"))')
+    elseif(eval_iset>0.and.eval_iset<ndataset)then
+      write(6,'(2x,'//trim(i2s(39+26*deval%n))//'("-"))')
+    else
+      write(6,'(2x,'//trim(i2s(39))//'("-"))')
+    endif
+    write(6,'()')
+
+    ! Report suggestion.
     if(igrid>=1)then
       write(6,'(a)')'Suggested fit: '//trim(i2s(prev_prev_npoly-1))
-      write(6,'(a)')'Suggested grid point: '//trim(i2s(prev_igrid))
+      write(6,'(a)')'Suggested grid point: '//&
+         &trim(i2s(tot_nxy_grid(prev_igrid)))
     else
       write(6,'(a)')'Could not find optimal range by criteria.'
     endif
@@ -4313,8 +4359,10 @@ CONTAINS
         if(ipos<1)ipos=len_trim(remainder)+1
         t1=parse_dble(remainder(1:ipos-1),ierr)
         if(ierr/=0)then
-          deallocate(deval%x)
-          nullify(deval%x)
+          if(associated(deval%x))then
+            deallocate(deval%x)
+            nullify(deval%x)
+          endif
           return
         endif
         deval%n=deval%n+1
