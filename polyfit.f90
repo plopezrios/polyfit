@@ -22,43 +22,43 @@ PROGRAM polyfit
   LOGICAL,PARAMETER :: TRANSF_REQ_POSITIVE(0:NTRANSF)=&
      &(/.false.,.false.,.true.,.false./)
 
-  ! Types.
-  TYPE xydata
+  ! Derived types.
+  TYPE xy_type
     INTEGER :: nxy=0
     LOGICAL :: have_dx=.false.,have_dy=.false.
     DOUBLE PRECISION,POINTER :: x(:)=>null(),y(:)=>null(),dx(:)=>null(),&
        &dy(:)=>null()
-  END TYPE xydata
-  TYPE dataset
+  END TYPE xy_type
+  TYPE dataset_type
     INTEGER :: itransfx=ITRANSF_NONE,itransfy=ITRANSF_NONE
-    TYPE(xydata),POINTER :: xy=>null() ! original data
-    TYPE(xydata),POINTER :: txy=>null() ! transformed data
-    TYPE(xydata),POINTER :: rtxy=>null() ! range-restricted transformed data
-  END TYPE dataset
-  TYPE fit_params
+    TYPE(xy_type),POINTER :: xy=>null() ! original data
+    TYPE(xy_type),POINTER :: txy=>null() ! transformed data
+    TYPE(xy_type),POINTER :: rtxy=>null() ! range-restricted transformed data
+  END TYPE dataset_type
+  TYPE fit_form_type
     INTEGER :: npoly=0
     DOUBLE PRECISION :: X0=0.d0
     DOUBLE PRECISION,ALLOCATABLE :: pow(:)
     LOGICAL,ALLOCATABLE :: share(:)
     CHARACTER(64) :: X0_string='0'
-  END TYPE fit_params
-  TYPE range_def
+  END TYPE fit_form_type
+  TYPE range_type
     CHARACTER :: var='X'
     CHARACTER(2) :: op=''
     LOGICAL :: no_rhs=.false.
     DOUBLE PRECISION :: thres=0.d0
     INTEGER :: size=0
-  END TYPE range_def
-  TYPE eval_def
+  END TYPE range_type
+  TYPE eval_type
     CHARACTER :: var='X'
     LOGICAL :: rel=.false.
     INTEGER :: nderiv=0,n=0
     DOUBLE PRECISION,POINTER :: x(:)=>null()
-  END TYPE eval_def
-  TYPE monte_carlo_params
+  END TYPE eval_type
+  TYPE mc_params_type
     LOGICAL :: weighted=.true.
     INTEGER :: nsample=10000
-  END TYPE monte_carlo_params
+  END TYPE mc_params_type
 
   call main()
 
@@ -73,17 +73,17 @@ CONTAINS
     IMPLICIT NONE
     ! (x,y[,dx][,dy]) datasets.
     INTEGER ndataset,tndataset
-    TYPE(dataset),POINTER :: datasets(:)=>null(),tdatasets(:)=>null()
+    TYPE(dataset_type),POINTER :: dataset(:)=>null(),tdataset(:)=>null()
     ! Fit form.
-    TYPE(fit_params),POINTER :: fit=>null()
+    TYPE(fit_form_type),POINTER :: fit=>null()
     ! All-set settings.
     INTEGER itransfx_default,itransfy_default
-    TYPE(range_def) drange,tdrange
+    TYPE(range_type) drange,tdrange
     ! Function evaluation.
     INTEGER eval_iset
-    TYPE(eval_def) deval
+    TYPE(eval_type) deval
     ! Monte Carlo parameters.
-    TYPE(monte_carlo_params) mcparams
+    TYPE(mc_params_type) mcparams
     ! Input file information.
     INTEGER ncolumn,icol_x,icol_y,icol_dx,icol_dy
     CHARACTER(256) fname
@@ -346,7 +346,7 @@ CONTAINS
         if(.not.associated(search))allocate(fsearch(nsearch),search(nsearch))
         if(.not.associated(fdiscr))allocate(fdiscr(ndiscr))
         call read_file(fname,icol_x,icol_y,icol_dx,icol_dy,nsearch,fsearch,&
-           &search,ndiscr,fdiscr,tndataset,tdatasets,ierr)
+           &search,ndiscr,fdiscr,tndataset,tdataset,ierr)
         if(ierr/=0)cycle user_loop
         if(tndataset<1)then
           write(6,'(a)')'No data loaded.'
@@ -356,35 +356,35 @@ CONTAINS
 
         ! Check data ar compatible with current transformations.
         do iset=1,tndataset
-          tdatasets(iset)%itransfx=itransfx_default
-          tdatasets(iset)%itransfy=itransfy_default
-          if(TRANSF_REQ_NONZERO(tdatasets(iset)%itransfy))then
-            if(any(are_equal(tdatasets(iset)%xy%x,0.d0)))then
-              tdatasets(iset)%itransfx=ITRANSF_NONE
+          tdataset(iset)%itransfx=itransfx_default
+          tdataset(iset)%itransfy=itransfy_default
+          if(TRANSF_REQ_NONZERO(tdataset(iset)%itransfy))then
+            if(any(are_equal(tdataset(iset)%xy%x,0.d0)))then
+              tdataset(iset)%itransfx=ITRANSF_NONE
               write(6,'(a)')'Note: using linear X for set '//&
                  &trim(i2s(iset+ndataset))//' since it contains x=0.'
               write(6,'()')
             endif
           endif
-          if(TRANSF_REQ_NONZERO(tdatasets(iset)%itransfy))then
-            if(any(are_equal(tdatasets(iset)%xy%y,0.d0)))then
-              tdatasets(iset)%itransfy=ITRANSF_NONE
+          if(TRANSF_REQ_NONZERO(tdataset(iset)%itransfy))then
+            if(any(are_equal(tdataset(iset)%xy%y,0.d0)))then
+              tdataset(iset)%itransfy=ITRANSF_NONE
               write(6,'(a)')'Note: using linear Y for set '//&
                  &trim(i2s(iset+ndataset))//' since it contains y=0.'
               write(6,'()')
             endif
           endif
-          if(TRANSF_REQ_POSITIVE(tdatasets(iset)%itransfx))then
-            if(any(tdatasets(iset)%xy%x<0.d0))then
-              tdatasets(iset)%itransfx=ITRANSF_NONE
+          if(TRANSF_REQ_POSITIVE(tdataset(iset)%itransfx))then
+            if(any(tdataset(iset)%xy%x<0.d0))then
+              tdataset(iset)%itransfx=ITRANSF_NONE
               write(6,'(a)')'Note: using linear X for set '//&
                  &trim(i2s(iset+ndataset))//' since it contains x<0.'
               write(6,'()')
             endif
           endif
-          if(TRANSF_REQ_POSITIVE(tdatasets(iset)%itransfy))then
-            if(any(tdatasets(iset)%xy%y<0.d0))then
-              tdatasets(iset)%itransfy=ITRANSF_NONE
+          if(TRANSF_REQ_POSITIVE(tdataset(iset)%itransfy))then
+            if(any(tdataset(iset)%xy%y<0.d0))then
+              tdataset(iset)%itransfy=ITRANSF_NONE
               write(6,'(a)')'Note: using linear Y for set '//&
                  &trim(i2s(iset+ndataset))//' since it contains y<0.'
               write(6,'()')
@@ -393,28 +393,28 @@ CONTAINS
         enddo ! iset
 
         ! Add datasets to list.
-        call resize_dataset(ndataset+tndataset,datasets)
+        call resize_dataset(ndataset+tndataset,dataset)
         do iset=ndataset+1,ndataset+tndataset
-          datasets(iset)=tdatasets(iset-ndataset)
-          call refresh_dataset(datasets(iset),drange)
+          dataset(iset)=tdataset(iset-ndataset)
+          call refresh_dataset(dataset(iset),drange)
           ! Report.
           write(6,'(a)',advance='no')'Loaded data from "'//trim(fname)//&
              &'" as dataset #'//trim(i2s(iset))//', type '
-          if(datasets(iset)%xy%have_dx.and.datasets(iset)%xy%have_dy)then
+          if(dataset(iset)%xy%have_dx.and.dataset(iset)%xy%have_dy)then
             write(6,'(a)',advance='no')'xdxydy'
-          elseif(datasets(iset)%xy%have_dx)then
+          elseif(dataset(iset)%xy%have_dx)then
             write(6,'(a)',advance='no')'xdxy'
-          elseif(datasets(iset)%xy%have_dy)then
+          elseif(dataset(iset)%xy%have_dy)then
             write(6,'(a)',advance='no')'xydy'
           else
             write(6,'(a)',advance='no')'xy'
           endif
-          write(6,'(a)')', '//trim(i2s(datasets(iset)%xy%nxy))//' data.'
+          write(6,'(a)')', '//trim(i2s(dataset(iset)%xy%nxy))//' data.'
         enddo ! iset
-        deallocate(tdatasets)
-        nullify(tdatasets)
+        deallocate(tdataset)
+        nullify(tdataset)
         ndataset=ndataset+tndataset
-        call refresh_fit(ndataset,datasets,fit)
+        call refresh_fit(ndataset,dataset,fit)
         write(6,'()')
 
       case('unload')
@@ -452,19 +452,19 @@ CONTAINS
         ! Delete datasets backwards.
         do i=ndataset,1,-1
           if(.not.smask(i))cycle
-          call kill_xydata(datasets(i)%xy)
-          call kill_xydata(datasets(i)%txy)
-          call kill_xydata(datasets(i)%rtxy)
+          call kill_xydata(dataset(i)%xy)
+          call kill_xydata(dataset(i)%txy)
+          call kill_xydata(dataset(i)%rtxy)
           do j=i,ndataset-1
-            datasets(j)=datasets(j+1)
+            dataset(j)=dataset(j+1)
           enddo ! j
-          nullify(datasets(ndataset)%xy)
-          nullify(datasets(ndataset)%txy)
-          nullify(datasets(ndataset)%rtxy)
+          nullify(dataset(ndataset)%xy)
+          nullify(dataset(ndataset)%txy)
+          nullify(dataset(ndataset)%rtxy)
           ndataset=ndataset-1
-          call resize_dataset(ndataset,datasets)
+          call resize_dataset(ndataset,dataset)
         enddo ! i
-        call refresh_fit(ndataset,datasets,fit)
+        call refresh_fit(ndataset,dataset,fit)
         write(6,'(a)')trim(i2s(count(smask)))//' datasets unloaded.'
         write(6,'()')
         deallocate(smask)
@@ -482,7 +482,7 @@ CONTAINS
           write(6,'()')
           cycle user_loop
         endif ! nfield>1
-        call show_multipoly(ndataset,datasets,drange,fit,mcparams)
+        call show_multipoly(ndataset,dataset,drange,fit,mcparams)
 
       case('plot')
         write(6,'()')
@@ -544,7 +544,7 @@ CONTAINS
             cycle user_loop
           end select
         enddo
-        call plot_multipoly(ndataset,datasets,drange,fit,deval,mcparams,&
+        call plot_multipoly(ndataset,dataset,drange,fit,deval,mcparams,&
            &trim(fname))
 
       case('assess')
@@ -639,13 +639,13 @@ CONTAINS
         ! Evaluate.
         select case(trim(field(2,command)))
         case('fit')
-          call assess_fit(ndataset,datasets,drange,fit,mcparams,deval,&
+          call assess_fit(ndataset,dataset,drange,fit,mcparams,deval,&
              &eval_iset)
         case('range')
-          call assess_range(ndataset,datasets,tdrange,fit,mcparams,deval,&
+          call assess_range(ndataset,dataset,tdrange,fit,mcparams,deval,&
              &eval_iset)
         case('range,fit','fit,range')
-          call assess_fit_range(ndataset,datasets,tdrange,fit,mcparams,deval,&
+          call assess_fit_range(ndataset,dataset,tdrange,fit,mcparams,deval,&
              &eval_iset)
         case default
           write(6,'()')
@@ -663,7 +663,7 @@ CONTAINS
         endif
         select case(trim(field(2,command)))
         case('range')
-          call report_statistics(ndataset,datasets)
+          call report_statistics(ndataset,dataset)
         case default
           write(6,'()')
           write(6,'(a)')'Unknown report name "'//trim(field(2,command))//'".'
@@ -707,7 +707,7 @@ CONTAINS
           cycle user_loop
         endif
         ! Perform evaluation.
-        call evaluate_fit(ndataset,datasets,fit,mcparams,drange,deval)
+        call evaluate_fit(ndataset,dataset,fit,mcparams,drange,deval)
 
       case('set')
 
@@ -757,14 +757,14 @@ CONTAINS
               if(TRANSF_REQ_NONZERO(itransf))then
                 select case(trim(field(2,command)))
                 case('xscale')
-                  if(any(are_equal(datasets(iset)%xy%x,0.d0)))then
+                  if(any(are_equal(dataset(iset)%xy%x,0.d0)))then
                     write(6,*)'Cannot apply axis transformation: set #'//&
                        &trim(i2s(iset))//' contains x=0.'
                     write(6,'()')
                     cycle user_loop
                   endif
                 case('yscale')
-                  if(any(are_equal(datasets(iset)%xy%y,0.d0)))then
+                  if(any(are_equal(dataset(iset)%xy%y,0.d0)))then
                     write(6,*)'Cannot apply axis transformation: set #'//&
                        &trim(i2s(iset))//' contains y=0.'
                     write(6,'()')
@@ -775,14 +775,14 @@ CONTAINS
               if(TRANSF_REQ_POSITIVE(itransf))then
                 select case(trim(field(2,command)))
                 case('xscale')
-                  if(any(datasets(iset)%xy%x<0.d0))then
+                  if(any(dataset(iset)%xy%x<0.d0))then
                     write(6,*)'Cannot apply axis transformation: set #'//&
                        &trim(i2s(iset))//' contains x<0.'
                     write(6,'()')
                     cycle user_loop
                   endif
                 case('yscale')
-                  if(any(datasets(iset)%xy%y<0.d0))then
+                  if(any(dataset(iset)%xy%y<0.d0))then
                     write(6,*)'Cannot apply axis transformation: set #'//&
                        &trim(i2s(iset))//' contains y<0.'
                     write(6,'()')
@@ -796,9 +796,9 @@ CONTAINS
               iset=int_field(ifield,command,ierr)
               select case(trim(field(2,command)))
               case('xscale')
-                datasets(iset)%itransfx=itransf
+                dataset(iset)%itransfx=itransf
               case('yscale')
-                datasets(iset)%itransfy=itransf
+                dataset(iset)%itransfy=itransf
               end select
             enddo ! ifield
             write(6,'(a)')'Set '//trim(field(2,command))//' to '//&
@@ -809,14 +809,14 @@ CONTAINS
               if(TRANSF_REQ_NONZERO(itransf))then
                 select case(trim(field(2,command)))
                 case('xscale')
-                  if(any(are_equal(datasets(iset)%xy%x,0.d0)))then
+                  if(any(are_equal(dataset(iset)%xy%x,0.d0)))then
                     write(6,*)'Cannot apply axis transformation: set #'//&
                        &trim(i2s(iset))//' contains x=0.'
                     write(6,'()')
                     cycle user_loop
                   endif
                 case('yscale')
-                  if(any(are_equal(datasets(iset)%xy%y,0.d0)))then
+                  if(any(are_equal(dataset(iset)%xy%y,0.d0)))then
                     write(6,*)'Cannot apply axis transformation: set #'//&
                        &trim(i2s(iset))//' contains y=0.'
                     write(6,'()')
@@ -827,14 +827,14 @@ CONTAINS
               if(TRANSF_REQ_POSITIVE(itransf))then
                 select case(trim(field(2,command)))
                 case('xscale')
-                  if(any(datasets(iset)%xy%x<0.d0))then
+                  if(any(dataset(iset)%xy%x<0.d0))then
                     write(6,*)'Cannot apply axis transformation: set #'//&
                        &trim(i2s(iset))//' contains x<0.'
                     write(6,'()')
                     cycle user_loop
                   endif
                 case('yscale')
-                  if(any(datasets(iset)%xy%y<0.d0))then
+                  if(any(dataset(iset)%xy%y<0.d0))then
                     write(6,*)'Cannot apply axis transformation: set #'//&
                        &trim(i2s(iset))//' contains y<0.'
                     write(6,'()')
@@ -848,12 +848,12 @@ CONTAINS
             case('xscale')
               itransfx_default=itransf
               do iset=1,ndataset
-                datasets(iset)%itransfx=itransf
+                dataset(iset)%itransfx=itransf
               enddo ! ifield
             case('yscale')
               itransfy_default=itransf
               do iset=1,ndataset
-                datasets(iset)%itransfy=itransf
+                dataset(iset)%itransfy=itransf
               enddo ! ifield
             end select
             write(6,'(a)')'Set '//trim(field(2,command))//' to '//&
@@ -862,10 +862,10 @@ CONTAINS
           write(6,'()')
           ! Apply transformations.
           do iset=1,ndataset
-            call refresh_dataset(datasets(iset),drange)
+            call refresh_dataset(dataset(iset),drange)
           enddo ! iset
           ! Update X0.
-          call refresh_fit(ndataset,datasets,fit)
+          call refresh_fit(ndataset,dataset,fit)
 
         case('fit')
           ! Set fit exponents.
@@ -960,10 +960,10 @@ CONTAINS
           endif
           ! Apply transformations.
           do iset=1,ndataset
-            call refresh_dataset(datasets(iset),drange)
+            call refresh_dataset(dataset(iset),drange)
           enddo ! iset
           ! Update X0.
-          call refresh_fit(ndataset,datasets,fit)
+          call refresh_fit(ndataset,dataset,fit)
           ! Report.
           write(6,'(a)')'Range set.'
           write(6,'()')
@@ -1077,7 +1077,7 @@ CONTAINS
           ! Set value.
           fit%x0_string=field(3,command)
           ! Update X0.
-          call refresh_fit(ndataset,datasets,fit)
+          call refresh_fit(ndataset,dataset,fit)
 
         case('weights')
           select case(trim(field(3,command)))
@@ -1131,18 +1131,18 @@ CONTAINS
           case('xscale')
             itransfx_default=ITRANSF_NONE
             do iset=1,ndataset
-              datasets(iset)%itransfx=ITRANSF_NONE
+              dataset(iset)%itransfx=ITRANSF_NONE
             enddo ! ifield
           case('yscale')
             itransfy_default=ITRANSF_NONE
             do iset=1,ndataset
-              datasets(iset)%itransfy=ITRANSF_NONE
+              dataset(iset)%itransfy=ITRANSF_NONE
             enddo ! ifield
           end select
           do iset=1,ndataset
-            call refresh_dataset(datasets(iset),drange)
+            call refresh_dataset(dataset(iset),drange)
           enddo ! iset
-          call refresh_fit(ndataset,datasets,fit)
+          call refresh_fit(ndataset,dataset,fit)
         case('fit')
           deallocate(fit%pow,fit%share)
           fit%npoly=2
@@ -1155,14 +1155,14 @@ CONTAINS
           drange%thres=0.d0
           drange%size=0
           do iset=1,ndataset
-            call refresh_dataset(datasets(iset),drange)
+            call refresh_dataset(dataset(iset),drange)
           enddo ! iset
-          call refresh_fit(ndataset,datasets,fit)
+          call refresh_fit(ndataset,dataset,fit)
         case('shared')
           fit%share=.false.
         case('centre')
           fit%X0_string='0'
-          call refresh_fit(ndataset,datasets,fit)
+          call refresh_fit(ndataset,dataset,fit)
         case('weights')
           mcparams%weighted=.false.
         case('nsample')
@@ -1210,26 +1210,26 @@ CONTAINS
         end select
         do iset=1,ndataset
           write(6,'(a)',advance='no')'* Set #'//trim(i2s(iset))//': type '
-          if(datasets(iset)%xy%have_dx.and.datasets(iset)%xy%have_dy)then
+          if(dataset(iset)%xy%have_dx.and.dataset(iset)%xy%have_dy)then
             write(6,'(a)',advance='no')'xdxydy'
-          elseif(datasets(iset)%xy%have_dx)then
+          elseif(dataset(iset)%xy%have_dx)then
             write(6,'(a)',advance='no')'xdxy'
-          elseif(datasets(iset)%xy%have_dy)then
+          elseif(dataset(iset)%xy%have_dy)then
             write(6,'(a)',advance='no')'xydy'
           else
             write(6,'(a)',advance='no')'xy'
           endif
-          if(datasets(iset)%xy%nxy/=datasets(iset)%rtxy%nxy)then
+          if(dataset(iset)%xy%nxy/=dataset(iset)%rtxy%nxy)then
             write(6,'(a)',advance='no')', '//&
-               &trim(i2s(datasets(iset)%xy%nxy))//' ('//&
-               &trim(i2s(datasets(iset)%rtxy%nxy))//') data, '
+               &trim(i2s(dataset(iset)%xy%nxy))//' ('//&
+               &trim(i2s(dataset(iset)%rtxy%nxy))//') data, '
           else
             write(6,'(a)',advance='no')', '//&
-               &trim(i2s(datasets(iset)%xy%nxy))//' data, '
+               &trim(i2s(dataset(iset)%xy%nxy))//' data, '
           endif
           write(6,'(a)',advance='no')&
-             &trim(TRANSF_NAME(datasets(iset)%itransfx))//'-'//&
-             &trim(TRANSF_NAME(datasets(iset)%itransfy))//' scale'
+             &trim(TRANSF_NAME(dataset(iset)%itransfx))//'-'//&
+             &trim(TRANSF_NAME(dataset(iset)%itransfy))//' scale'
           write(6,'(a)')'.'
         enddo ! i
         write(6,'()')
@@ -1617,9 +1617,9 @@ CONTAINS
     ! change in choice of transformation or mask.           !
     !-------------------------------------------------------!
     IMPLICIT NONE
-    TYPE(dataset),INTENT(inout) :: dset
-    TYPE(range_def),INTENT(in) :: drange
-    TYPE(xydata),POINTER :: xy
+    TYPE(dataset_type),INTENT(inout) :: dset
+    TYPE(range_type),INTENT(in) :: drange
+    TYPE(xy_type),POINTER :: xy
     LOGICAL,ALLOCATABLE :: mask(:)
     INTEGER,ALLOCATABLE :: indx(:)
     DOUBLE PRECISION,ALLOCATABLE :: sortvec(:)
@@ -1705,15 +1705,15 @@ CONTAINS
   END SUBROUTINE refresh_dataset
 
 
-  SUBROUTINE refresh_fit(ndataset,datasets,fit)
+  SUBROUTINE refresh_fit(ndataset,dataset,fit)
     !------------------------------------------------!
     ! Refresh value of X0 in fit following change to !
     ! X0_string, range or loaded data.               !
     !------------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: ndataset
-    TYPE(dataset),INTENT(in) :: datasets(ndataset)
-    TYPE(fit_params),POINTER :: fit
+    TYPE(dataset_type),INTENT(in) :: dataset(ndataset)
+    TYPE(fit_form_type),POINTER :: fit
     INTEGER iset,tot_nxy,ixy,ierr
     DOUBLE PRECISION t1,tx0
     DOUBLE PRECISION,ALLOCATABLE :: x(:),y(:)
@@ -1724,17 +1724,17 @@ CONTAINS
       ! Build combined dataset.
       tot_nxy=0
       do iset=1,ndataset
-        tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
+        tot_nxy=tot_nxy+dataset(iset)%rtxy%nxy
       enddo ! iset
       allocate(x(tot_nxy),y(tot_nxy))
       tot_nxy=0
       do iset=1,ndataset
-        if(datasets(iset)%rtxy%nxy==0)cycle
-        x(tot_nxy+1:tot_nxy+datasets(iset)%rtxy%nxy)=&
-           &datasets(iset)%rtxy%x(1:datasets(iset)%rtxy%nxy)
-        y(tot_nxy+1:tot_nxy+datasets(iset)%rtxy%nxy)=&
-           &datasets(iset)%rtxy%y(1:datasets(iset)%rtxy%nxy)
-        tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
+        if(dataset(iset)%rtxy%nxy==0)cycle
+        x(tot_nxy+1:tot_nxy+dataset(iset)%rtxy%nxy)=&
+           &dataset(iset)%rtxy%x(1:dataset(iset)%rtxy%nxy)
+        y(tot_nxy+1:tot_nxy+dataset(iset)%rtxy%nxy)=&
+           &dataset(iset)%rtxy%y(1:dataset(iset)%rtxy%nxy)
+        tot_nxy=tot_nxy+dataset(iset)%rtxy%nxy
       enddo ! iset
 
       ! Locate X0.
@@ -1784,17 +1784,17 @@ CONTAINS
   END SUBROUTINE refresh_fit
 
 
-  SUBROUTINE show_multipoly(ndataset,datasets,drange,fit,mcparams)
+  SUBROUTINE show_multipoly(ndataset,dataset,drange,fit,mcparams)
     !--------------------------------!
     ! Perform chosen fit and report. !
     !--------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: ndataset
-    TYPE(dataset),INTENT(in) :: datasets(ndataset)
-    TYPE(range_def),INTENT(in) :: drange
-    TYPE(fit_params),INTENT(in) :: fit
-    TYPE(monte_carlo_params),INTENT(in) :: mcparams
-    TYPE(eval_def) deval
+    TYPE(dataset_type),INTENT(in) :: dataset(ndataset)
+    TYPE(range_type),INTENT(in) :: drange
+    TYPE(fit_form_type),INTENT(in) :: fit
+    TYPE(mc_params_type),INTENT(in) :: mcparams
+    TYPE(eval_type) deval
     INTEGER tot_nparam,tot_nxy,iset,i
     DOUBLE PRECISION chi2,chi2err,a(fit%npoly,ndataset),da(fit%npoly,ndataset)
 
@@ -1802,7 +1802,7 @@ CONTAINS
     tot_nparam=count(fit%share)+ndataset*count(.not.fit%share)
     tot_nxy=0
     do iset=1,ndataset
-      tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
+      tot_nxy=tot_nxy+dataset(iset)%rtxy%nxy
     enddo ! iset
 
     ! Perform fit.
@@ -1810,7 +1810,7 @@ CONTAINS
     deval%rel=.false.
     deval%var='X'
     deval%n=0
-    call eval_multifit_monte_carlo(ndataset,datasets,drange,fit,mcparams,&
+    call eval_multifit_monte_carlo(ndataset,dataset,drange,fit,mcparams,&
        &deval,chi2mean=chi2,chi2err=chi2err,amean=a,aerr=da)
 
     ! Print table header.
@@ -1868,24 +1868,24 @@ CONTAINS
   END SUBROUTINE show_multipoly
 
 
-  SUBROUTINE evaluate_fit(ndataset,datasets,fit,mcparams,drange,deval)
+  SUBROUTINE evaluate_fit(ndataset,dataset,fit,mcparams,drange,deval)
     !-------------------------------------------------!
     ! Evaluate value or derivative of fit at provided !
     ! points.                                         !
     !-------------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: ndataset
-    TYPE(dataset),INTENT(in) :: datasets(ndataset)
-    TYPE(fit_params),INTENT(in) :: fit
-    TYPE(monte_carlo_params),INTENT(in) :: mcparams
-    TYPE(range_def),INTENT(in) :: drange
-    TYPE(eval_def),INTENT(in) :: deval
+    TYPE(dataset_type),INTENT(in) :: dataset(ndataset)
+    TYPE(fit_form_type),INTENT(in) :: fit
+    TYPE(mc_params_type),INTENT(in) :: mcparams
+    TYPE(range_type),INTENT(in) :: drange
+    TYPE(eval_type),INTENT(in) :: deval
     INTEGER iset,ix
     DOUBLE PRECISION,ALLOCATABLE :: fmean(:,:),ferr(:,:)
 
     ! Evaluate.
     allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset))
-    call eval_multifit_monte_carlo(ndataset,datasets,drange,fit,mcparams,&
+    call eval_multifit_monte_carlo(ndataset,dataset,drange,fit,mcparams,&
        &deval,fmean,ferr)
 
     ! Report.
@@ -1909,19 +1909,19 @@ CONTAINS
   END SUBROUTINE evaluate_fit
 
 
-  SUBROUTINE plot_multipoly(ndataset,datasets,drange,fit,deval,mcparams,fname)
+  SUBROUTINE plot_multipoly(ndataset,dataset,drange,fit,deval,mcparams,fname)
     !--------------------------------!
     ! Perform chosen fit and report. !
     !--------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: ndataset
-    TYPE(dataset),INTENT(in) :: datasets(ndataset)
-    TYPE(range_def),INTENT(in) :: drange
-    TYPE(fit_params),INTENT(in) :: fit
-    TYPE(eval_def),INTENT(inout) :: deval
-    TYPE(monte_carlo_params),INTENT(in) :: mcparams
+    TYPE(dataset_type),INTENT(in) :: dataset(ndataset)
+    TYPE(range_type),INTENT(in) :: drange
+    TYPE(fit_form_type),INTENT(in) :: fit
+    TYPE(eval_type),INTENT(inout) :: deval
+    TYPE(mc_params_type),INTENT(in) :: mcparams
     CHARACTER(*),INTENT(in) :: fname
-    TYPE(xydata),POINTER :: xy=>null()
+    TYPE(xy_type),POINTER :: xy=>null()
     INTEGER tot_nparam,tot_nxy,iset,i,ierr,op_npoly
     DOUBLE PRECISION op_a(fit%npoly),op_pow(fit%npoly),tx0,tx1,t1
     DOUBLE PRECISION,ALLOCATABLE :: fmean(:,:),ferr(:,:),a(:,:)
@@ -1939,7 +1939,7 @@ CONTAINS
     tot_nparam=count(fit%share)+ndataset*count(.not.fit%share)
     tot_nxy=0
     do iset=1,ndataset
-      tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
+      tot_nxy=tot_nxy+dataset(iset)%rtxy%nxy
     enddo ! iset
 
     ! Define plot range if not provided.
@@ -1950,11 +1950,11 @@ CONTAINS
       deval%n=101
       allocate(deval%x(deval%n))
       ! Get data range.
-      tx0=minval(datasets(1)%rtxy%x)
-      tx1=maxval(datasets(1)%rtxy%x)
+      tx0=minval(dataset(1)%rtxy%x)
+      tx1=maxval(dataset(1)%rtxy%x)
       do iset=2,ndataset
-        tx0=min(tx0,minval(datasets(iset)%rtxy%x))
-        tx1=max(tx1,maxval(datasets(iset)%rtxy%x))
+        tx0=min(tx0,minval(dataset(iset)%rtxy%x))
+        tx1=max(tx1,maxval(dataset(iset)%rtxy%x))
       enddo ! iset
       ! Extend range past far end and ensure we get to zero on near end.
       t1=tx1-tx0
@@ -1978,12 +1978,12 @@ CONTAINS
     allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset),&
        &a(fit%npoly,ndataset))
     if(all(.not.fit%share))then
-      call eval_multifit_monte_carlo(ndataset,datasets,drange,fit,mcparams,&
+      call eval_multifit_monte_carlo(ndataset,dataset,drange,fit,mcparams,&
          &deval,fmean=fmean,amean=a)
       if(deval%nderiv==0)then
         ! Plot data.
         do iset=1,ndataset
-          xy=>datasets(iset)%rtxy
+          xy=>dataset(iset)%rtxy
           if(xy%have_dx.and.xy%have_dy)then
             write(io,'(a)')'@type xydxdy'
             do i=1,xy%nxy
@@ -2017,14 +2017,14 @@ CONTAINS
         write(io,'(a)')'&'
       enddo ! iset
     else
-      call eval_multifit_monte_carlo(ndataset,datasets,drange,fit,mcparams,&
+      call eval_multifit_monte_carlo(ndataset,dataset,drange,fit,mcparams,&
          &deval,fmean=fmean,ferr=ferr,amean=a,eval_fshared=.true.)
       ! Plot data minus independent bit.
       if(deval%nderiv==0)then
         op_npoly=fit%npoly
         op_pow=fit%pow
         do iset=1,ndataset
-          xy=>datasets(iset)%rtxy
+          xy=>dataset(iset)%rtxy
           op_a(1:op_npoly)=a(1:fit%npoly,iset)
           where(fit%share)op_a=0.d0
           if(xy%have_dx.and.xy%have_dy)then
@@ -2075,20 +2075,20 @@ CONTAINS
   END SUBROUTINE plot_multipoly
 
 
-  SUBROUTINE assess_fit(ndataset,datasets,drange,fit,mcparams,deval,eval_iset)
+  SUBROUTINE assess_fit(ndataset,dataset,drange,fit,mcparams,deval,eval_iset)
     !------------------------------------------------!
     ! Test convergence of chi^2/Ndf as a function of !
     ! expansion order.                               !
     !------------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: ndataset
-    TYPE(dataset),POINTER :: datasets(:)
-    TYPE(range_def),INTENT(in) :: drange
-    TYPE(fit_params),INTENT(in) :: fit
-    TYPE(monte_carlo_params),INTENT(in) :: mcparams
-    TYPE(eval_def),INTENT(in) :: deval
+    TYPE(dataset_type),POINTER :: dataset(:)
+    TYPE(range_type),INTENT(in) :: drange
+    TYPE(fit_form_type),INTENT(in) :: fit
+    TYPE(mc_params_type),INTENT(in) :: mcparams
+    TYPE(eval_type),INTENT(in) :: deval
     INTEGER,INTENT(in) :: eval_iset
-    TYPE(fit_params),POINTER :: tfit=>null()
+    TYPE(fit_form_type),POINTER :: tfit=>null()
     INTEGER tot_nxy,tot_nparam,iset,npoly,ix,prev_npoly
     DOUBLE PRECISION chi2,chi2err,fmean(deval%n,ndataset),&
        &ferr(deval%n,ndataset),t1,t2,min_chi2
@@ -2099,7 +2099,7 @@ CONTAINS
     ! Prepare combined dataset arrays.
     tot_nxy=0
     do iset=1,ndataset
-      tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
+      tot_nxy=tot_nxy+dataset(iset)%rtxy%nxy
     enddo ! iset
 
     ! Print table header.
@@ -2137,12 +2137,12 @@ CONTAINS
       tfit%pow=fit%pow(1:npoly)
       tfit%share=fit%share(1:npoly)
       tfit%X0_string=fit%X0_string
-      call refresh_fit(ndataset,datasets,tfit)
+      call refresh_fit(ndataset,dataset,tfit)
       ! Adjust counters.
       tot_nparam=count(tfit%share)+ndataset*count(.not.tfit%share)
       if(tot_nparam<tot_nxy)then
         ! Perform fit and report.
-        call eval_multifit_monte_carlo(ndataset,datasets,drange,tfit,mcparams,&
+        call eval_multifit_monte_carlo(ndataset,dataset,drange,tfit,mcparams,&
            &deval,fmean,ferr,chi2,chi2err)
         chi2_all(npoly)=chi2/dble(tot_nxy-tot_nparam)
         chi2err_all(npoly)=chi2err/dble(tot_nxy-tot_nparam)
@@ -2215,7 +2215,7 @@ CONTAINS
   END SUBROUTINE assess_fit
 
 
-  SUBROUTINE assess_range(ndataset,datasets,drange,fit,mcparams,deval,&
+  SUBROUTINE assess_range(ndataset,dataset,drange,fit,mcparams,deval,&
      &eval_iset)
     !------------------------------------------------!
     ! Test convergence of chi^2/Ndf as a function of !
@@ -2223,14 +2223,14 @@ CONTAINS
     !------------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: ndataset
-    TYPE(dataset),INTENT(in) :: datasets(:)
-    TYPE(fit_params),POINTER :: fit
-    TYPE(range_def),INTENT(inout) :: drange
-    TYPE(monte_carlo_params),INTENT(in) :: mcparams
-    TYPE(eval_def),INTENT(in) :: deval
+    TYPE(dataset_type),INTENT(in) :: dataset(:)
+    TYPE(fit_form_type),POINTER :: fit
+    TYPE(range_type),INTENT(inout) :: drange
+    TYPE(mc_params_type),INTENT(in) :: mcparams
+    TYPE(eval_type),INTENT(in) :: deval
     INTEGER,INTENT(in) :: eval_iset
-    TYPE(dataset),POINTER :: tdatasets(:)
-    TYPE(xydata),POINTER :: xy=>null()
+    TYPE(dataset_type),POINTER :: tdataset(:)
+    TYPE(xy_type),POINTER :: xy=>null()
     INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,ix,prev_igrid
     INTEGER,ALLOCATABLE :: indx(:),tngrid(:),tot_nxy_grid(:)
     DOUBLE PRECISION chi2,chi2err,fmean(deval%n,ndataset),&
@@ -2245,7 +2245,7 @@ CONTAINS
     ! Compute grid.
     tot_nxy=0
     do iset=1,ndataset
-      tot_nxy=tot_nxy+datasets(iset)%txy%nxy
+      tot_nxy=tot_nxy+dataset(iset)%txy%nxy
     enddo ! iset
     allocate(tot_nxy_grid(tot_nxy))
     select case(drange%op(1:1))
@@ -2254,9 +2254,9 @@ CONTAINS
       tngrid=0
       tot_nxy=0
       do iset=1,ndataset
-        txall(tot_nxy+1:tot_nxy+datasets(iset)%txy%nxy)=&
-           &datasets(iset)%txy%x(1:datasets(iset)%txy%nxy)
-        tot_nxy=tot_nxy+datasets(iset)%txy%nxy
+        txall(tot_nxy+1:tot_nxy+dataset(iset)%txy%nxy)=&
+           &dataset(iset)%txy%x(1:dataset(iset)%txy%nxy)
+        tot_nxy=tot_nxy+dataset(iset)%txy%nxy
       enddo ! iset
       call isort(tot_nxy,txall,indx)
       if(drange%op(1:1)=='>')then
@@ -2276,8 +2276,8 @@ CONTAINS
     case('[',']')
       ngrid=0
       do iset=1,ndataset
-        if(iset==1.or.datasets(iset)%txy%nxy<ngrid)&
-           &ngrid=datasets(iset)%txy%nxy
+        if(iset==1.or.dataset(iset)%txy%nxy<ngrid)&
+           &ngrid=dataset(iset)%txy%nxy
       enddo ! iset
       allocate(txgrid(ngrid),tngrid(ngrid))
       txgrid=0.d0
@@ -2296,22 +2296,22 @@ CONTAINS
     ferr_all=-1.d0
 
     ! Make copy of datasets.
-    allocate(tdatasets(ndataset))
+    allocate(tdataset(ndataset))
     do iset=1,ndataset
       allocate(xy)
-      xy%nxy=datasets(iset)%xy%nxy
+      xy%nxy=dataset(iset)%xy%nxy
       allocate(xy%x(xy%nxy),xy%dx(xy%nxy),xy%y(xy%nxy),xy%dy(xy%nxy))
-      xy%x=datasets(iset)%xy%x
-      xy%dx=datasets(iset)%xy%dx
-      xy%y=datasets(iset)%xy%y
-      xy%dy=datasets(iset)%xy%dy
-      xy%have_dx=datasets(iset)%xy%have_dx
-      xy%have_dy=datasets(iset)%xy%have_dy
-      tdatasets(iset)%xy=>xy
-      tdatasets(iset)%itransfx=datasets(iset)%itransfx
-      tdatasets(iset)%itransfy=datasets(iset)%itransfy
-      nullify(tdatasets(iset)%txy)
-      nullify(tdatasets(iset)%rtxy)
+      xy%x=dataset(iset)%xy%x
+      xy%dx=dataset(iset)%xy%dx
+      xy%y=dataset(iset)%xy%y
+      xy%dy=dataset(iset)%xy%dy
+      xy%have_dx=dataset(iset)%xy%have_dx
+      xy%have_dy=dataset(iset)%xy%have_dy
+      tdataset(iset)%xy=>xy
+      tdataset(iset)%itransfx=dataset(iset)%itransfx
+      tdataset(iset)%itransfy=dataset(iset)%itransfy
+      nullify(tdataset(iset)%txy)
+      nullify(tdataset(iset)%rtxy)
       nullify(xy)
     enddo ! iset
 
@@ -2342,13 +2342,13 @@ CONTAINS
       drange%size=tngrid(igrid)
       tot_nxy=0
       do iset=1,ndataset
-        call refresh_dataset(tdatasets(iset),drange)
-        tot_nxy=tot_nxy+tdatasets(iset)%rtxy%nxy
+        call refresh_dataset(tdataset(iset),drange)
+        tot_nxy=tot_nxy+tdataset(iset)%rtxy%nxy
       enddo ! iset
       tot_nxy_grid(igrid)=tot_nxy
       if(tot_nparam<tot_nxy)then
         ! Perform fit and report.
-        call eval_multifit_monte_carlo(ndataset,tdatasets,drange,fit,mcparams,&
+        call eval_multifit_monte_carlo(ndataset,tdataset,drange,fit,mcparams,&
            &deval,fmean,ferr,chi2,chi2err)
         chi2_all(igrid)=chi2/dble(tot_nxy-tot_nparam)
         chi2err_all(igrid)=chi2err/dble(tot_nxy-tot_nparam)
@@ -2416,18 +2416,18 @@ CONTAINS
 
     ! Clean up.
     do iset=1,ndataset
-      call kill_xydata(tdatasets(iset)%xy)
-      call kill_xydata(tdatasets(iset)%txy)
-      call kill_xydata(tdatasets(iset)%rtxy)
+      call kill_xydata(tdataset(iset)%xy)
+      call kill_xydata(tdataset(iset)%txy)
+      call kill_xydata(tdataset(iset)%rtxy)
     enddo ! iset
-    deallocate(tdatasets)
-    nullify(tdatasets)
+    deallocate(tdataset)
+    nullify(tdataset)
     deallocate(chi2_all,chi2err_all,fmean_all,ferr_all)
 
   END SUBROUTINE assess_range
 
 
-  SUBROUTINE assess_fit_range(ndataset,datasets,drange,fit,mcparams,deval,&
+  SUBROUTINE assess_fit_range(ndataset,dataset,drange,fit,mcparams,deval,&
      &eval_iset)
     !------------------------------------------------!
     ! Test convergence of chi^2/Ndf as a function of !
@@ -2435,15 +2435,15 @@ CONTAINS
     !------------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: ndataset
-    TYPE(dataset),POINTER :: datasets(:)
-    TYPE(range_def),INTENT(inout) :: drange
-    TYPE(fit_params),POINTER :: fit
-    TYPE(monte_carlo_params),INTENT(in) :: mcparams
-    TYPE(eval_def),INTENT(in) :: deval
+    TYPE(dataset_type),POINTER :: dataset(:)
+    TYPE(range_type),INTENT(inout) :: drange
+    TYPE(fit_form_type),POINTER :: fit
+    TYPE(mc_params_type),INTENT(in) :: mcparams
+    TYPE(eval_type),INTENT(in) :: deval
     INTEGER,INTENT(in) :: eval_iset
-    TYPE(dataset),POINTER :: tdatasets(:)
-    TYPE(xydata),POINTER :: xy=>null()
-    TYPE(fit_params),POINTER :: tfit=>null()
+    TYPE(dataset_type),POINTER :: tdataset(:)
+    TYPE(xy_type),POINTER :: xy=>null()
+    TYPE(fit_form_type),POINTER :: tfit=>null()
     INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,npoly,ix,prev_igrid,&
        &prev_npoly,prev_prev_npoly
     INTEGER,ALLOCATABLE :: indx(:),tngrid(:),tot_nxy_grid(:)
@@ -2456,7 +2456,7 @@ CONTAINS
     ! Compute grid.
     tot_nxy=0
     do iset=1,ndataset
-      tot_nxy=tot_nxy+datasets(iset)%txy%nxy
+      tot_nxy=tot_nxy+dataset(iset)%txy%nxy
     enddo ! iset
     allocate(tot_nxy_grid(tot_nxy))
     select case(drange%op(1:1))
@@ -2465,9 +2465,9 @@ CONTAINS
       tngrid=0
       tot_nxy=0
       do iset=1,ndataset
-        txall(tot_nxy+1:tot_nxy+datasets(iset)%txy%nxy)=&
-           &datasets(iset)%txy%x(1:datasets(iset)%txy%nxy)
-        tot_nxy=tot_nxy+datasets(iset)%txy%nxy
+        txall(tot_nxy+1:tot_nxy+dataset(iset)%txy%nxy)=&
+           &dataset(iset)%txy%x(1:dataset(iset)%txy%nxy)
+        tot_nxy=tot_nxy+dataset(iset)%txy%nxy
       enddo ! iset
       call isort(tot_nxy,txall,indx)
       if(drange%op(1:1)=='>')then
@@ -2487,8 +2487,8 @@ CONTAINS
     case('[',']')
       ngrid=0
       do iset=1,ndataset
-        if(iset==1.or.datasets(iset)%txy%nxy<ngrid)&
-           &ngrid=datasets(iset)%txy%nxy
+        if(iset==1.or.dataset(iset)%txy%nxy<ngrid)&
+           &ngrid=dataset(iset)%txy%nxy
       enddo ! iset
       allocate(txgrid(ngrid),tngrid(ngrid))
       txgrid=0.d0
@@ -2507,22 +2507,22 @@ CONTAINS
     ferr_all=-1.d0
 
     ! Make copy of datasets.
-    allocate(tdatasets(ndataset))
+    allocate(tdataset(ndataset))
     do iset=1,ndataset
       allocate(xy)
-      xy%nxy=datasets(iset)%xy%nxy
+      xy%nxy=dataset(iset)%xy%nxy
       allocate(xy%x(xy%nxy),xy%dx(xy%nxy),xy%y(xy%nxy),xy%dy(xy%nxy))
-      xy%x=datasets(iset)%xy%x
-      xy%dx=datasets(iset)%xy%dx
-      xy%y=datasets(iset)%xy%y
-      xy%dy=datasets(iset)%xy%dy
-      xy%have_dx=datasets(iset)%xy%have_dx
-      xy%have_dy=datasets(iset)%xy%have_dy
-      tdatasets(iset)%xy=>xy
-      tdatasets(iset)%itransfx=datasets(iset)%itransfx
-      tdatasets(iset)%itransfy=datasets(iset)%itransfy
-      nullify(tdatasets(iset)%txy)
-      nullify(tdatasets(iset)%rtxy)
+      xy%x=dataset(iset)%xy%x
+      xy%dx=dataset(iset)%xy%dx
+      xy%y=dataset(iset)%xy%y
+      xy%dy=dataset(iset)%xy%dy
+      xy%have_dx=dataset(iset)%xy%have_dx
+      xy%have_dy=dataset(iset)%xy%have_dy
+      tdataset(iset)%xy=>xy
+      tdataset(iset)%itransfx=dataset(iset)%itransfx
+      tdataset(iset)%itransfy=dataset(iset)%itransfy
+      nullify(tdataset(iset)%txy)
+      nullify(tdataset(iset)%rtxy)
       nullify(xy)
     enddo ! iset
 
@@ -2553,8 +2553,8 @@ CONTAINS
       drange%size=tngrid(igrid)
       tot_nxy=0
       do iset=1,ndataset
-        call refresh_dataset(tdatasets(iset),drange)
-        tot_nxy=tot_nxy+tdatasets(iset)%rtxy%nxy
+        call refresh_dataset(tdataset(iset),drange)
+        tot_nxy=tot_nxy+tdataset(iset)%rtxy%nxy
       enddo ! iset
       tot_nxy_grid(igrid)=tot_nxy
       ! Loop over expansion orders.
@@ -2566,12 +2566,12 @@ CONTAINS
         tfit%pow=fit%pow(1:npoly)
         tfit%share=fit%share(1:npoly)
         tfit%X0_string=fit%X0_string
-        call refresh_fit(ndataset,tdatasets,tfit)
+        call refresh_fit(ndataset,tdataset,tfit)
         ! Adjust counters.
         tot_nparam=count(tfit%share)+ndataset*count(.not.tfit%share)
         if(tot_nparam<tot_nxy)then
           ! Perform fit and report.
-          call eval_multifit_monte_carlo(ndataset,tdatasets,drange,tfit,&
+          call eval_multifit_monte_carlo(ndataset,tdataset,drange,tfit,&
              &mcparams,deval,fmean,ferr,chi2,chi2err)
           chi2_all(npoly,igrid)=chi2/dble(tot_nxy-tot_nparam)
           chi2err_all(npoly,igrid)=chi2err/dble(tot_nxy-tot_nparam)
@@ -2715,24 +2715,24 @@ CONTAINS
 
     ! Clean up.
     do iset=1,ndataset
-      call kill_xydata(tdatasets(iset)%xy)
-      call kill_xydata(tdatasets(iset)%txy)
-      call kill_xydata(tdatasets(iset)%rtxy)
+      call kill_xydata(tdataset(iset)%xy)
+      call kill_xydata(tdataset(iset)%txy)
+      call kill_xydata(tdataset(iset)%rtxy)
     enddo ! iset
-    deallocate(tdatasets)
-    nullify(tdatasets)
+    deallocate(tdataset)
+    nullify(tdataset)
     deallocate(chi2_all,chi2err_all,fmean_all,ferr_all)
 
   END SUBROUTINE assess_fit_range
 
 
-  SUBROUTINE report_statistics(ndataset,datasets)
+  SUBROUTINE report_statistics(ndataset,dataset)
     !-----------------------------------------------------!
     ! Show min/centre/mean/median/max of X, Y, dX and dY. !
     !-----------------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: ndataset
-    TYPE(dataset),INTENT(in) :: datasets(ndataset)
+    TYPE(dataset_type),INTENT(in) :: dataset(ndataset)
     INTEGER iset
     DOUBLE PRECISION vmin,vmax,vcentre,vmean,vmedian
 
@@ -2745,42 +2745,42 @@ CONTAINS
     write(6,'(2x,74("-"))')
     do iset=1,ndataset
       ! Transformed X and dX.
-      vmin=minval(datasets(iset)%txy%x)
-      vmax=maxval(datasets(iset)%txy%x)
+      vmin=minval(dataset(iset)%txy%x)
+      vmax=maxval(dataset(iset)%txy%x)
       vcentre=.5d0*(vmin+vmax)
-      vmean=sum(datasets(iset)%txy%x)/dble(datasets(iset)%txy%nxy)
-      vmedian=median(datasets(iset)%txy%nxy,datasets(iset)%txy%x)
+      vmean=sum(dataset(iset)%txy%x)/dble(dataset(iset)%txy%nxy)
+      vmedian=median(dataset(iset)%txy%nxy,dataset(iset)%txy%x)
       write(6,'(2x,a3,1x,i4,5(1x,es12.4))')'X',iset,vmin,vmean,vmedian,&
          &vcentre,vmax
     enddo ! iset
     do iset=1,ndataset
-      if(datasets(iset)%txy%have_dx)then
-        vmin=minval(datasets(iset)%txy%dx)
-        vmax=maxval(datasets(iset)%txy%dx)
+      if(dataset(iset)%txy%have_dx)then
+        vmin=minval(dataset(iset)%txy%dx)
+        vmax=maxval(dataset(iset)%txy%dx)
         vcentre=.5d0*(vmin+vmax)
-        vmean=sum(datasets(iset)%txy%dx)/dble(datasets(iset)%txy%nxy)
-        vmedian=median(datasets(iset)%txy%nxy,datasets(iset)%txy%dx)
+        vmean=sum(dataset(iset)%txy%dx)/dble(dataset(iset)%txy%nxy)
+        vmedian=median(dataset(iset)%txy%nxy,dataset(iset)%txy%dx)
         write(6,'(2x,a3,1x,i4,5(1x,es12.4))')'dX',iset,vmin,vmean,vmedian,&
            &vcentre,vmax
       endif
     enddo ! iset
     do iset=1,ndataset
       ! Transformed Y and dY.
-      vmin=minval(datasets(iset)%txy%y)
-      vmax=maxval(datasets(iset)%txy%y)
+      vmin=minval(dataset(iset)%txy%y)
+      vmax=maxval(dataset(iset)%txy%y)
       vcentre=.5d0*(vmin+vmax)
-      vmean=sum(datasets(iset)%txy%y)/dble(datasets(iset)%txy%nxy)
-      vmedian=median(datasets(iset)%txy%nxy,datasets(iset)%txy%y)
+      vmean=sum(dataset(iset)%txy%y)/dble(dataset(iset)%txy%nxy)
+      vmedian=median(dataset(iset)%txy%nxy,dataset(iset)%txy%y)
       write(6,'(2x,a3,1x,i4,5(1x,es12.4))')'Y',iset,vmin,vmean,vmedian,&
          &vcentre,vmax
     enddo ! iset
     do iset=1,ndataset
-      if(datasets(iset)%txy%have_dy)then
-        vmin=minval(datasets(iset)%txy%dy)
-        vmax=maxval(datasets(iset)%txy%dy)
+      if(dataset(iset)%txy%have_dy)then
+        vmin=minval(dataset(iset)%txy%dy)
+        vmax=maxval(dataset(iset)%txy%dy)
         vcentre=.5d0*(vmin+vmax)
-        vmean=sum(datasets(iset)%txy%dy)/dble(datasets(iset)%txy%nxy)
-        vmedian=median(datasets(iset)%txy%nxy,datasets(iset)%txy%dy)
+        vmean=sum(dataset(iset)%txy%dy)/dble(dataset(iset)%txy%nxy)
+        vmedian=median(dataset(iset)%txy%nxy,dataset(iset)%txy%dy)
         write(6,'(2x,a3,1x,i4,5(1x,es12.4))')'dY',iset,vmin,vmean,vmedian,&
            &vcentre,vmax
       endif
@@ -2823,7 +2823,7 @@ CONTAINS
   ! COMPUTATION ROUTINES
 
 
-  SUBROUTINE perform_multifit(ndataset,datasets,fit,weighted,chi2,a,da)
+  SUBROUTINE perform_multifit(ndataset,dataset,fit,weighted,chi2,a,da)
     !----------------------------------------------------!
     ! Perform least-squares fit of sets of (weighted) xy !
     ! data to the polynomial of exponents pow(1:npoly),  !
@@ -2832,12 +2832,12 @@ CONTAINS
     !----------------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: ndataset
-    TYPE(dataset),INTENT(in) :: datasets(ndataset)
-    TYPE(fit_params),INTENT(in) :: fit
+    TYPE(dataset_type),INTENT(in) :: dataset(ndataset)
+    TYPE(fit_form_type),INTENT(in) :: fit
     LOGICAL,INTENT(in) :: weighted
     DOUBLE PRECISION,INTENT(inout) :: chi2,a(fit%npoly,ndataset)
     DOUBLE PRECISION,INTENT(inout),OPTIONAL :: da(fit%npoly,ndataset)
-    TYPE(xydata),POINTER :: xy=>null()
+    TYPE(xy_type),POINTER :: xy=>null()
     DOUBLE PRECISION,ALLOCATABLE :: x(:,:),y(:,:),weight(:,:)
     INTEGER tot_nparam,max_nxy,tot_nxy,ieq,ip,jp,iset,jset,&
        &ixy,ipoly,jpoly,i,j,lwork,ierr
@@ -2852,15 +2852,15 @@ CONTAINS
     max_nxy=0
     tot_nxy=0
     do iset=1,ndataset
-      max_nxy=max(max_nxy,datasets(iset)%rtxy%nxy)
-      tot_nxy=tot_nxy+datasets(iset)%rtxy%nxy
+      max_nxy=max(max_nxy,dataset(iset)%rtxy%nxy)
+      tot_nxy=tot_nxy+dataset(iset)%rtxy%nxy
     enddo ! iset
     allocate(x(max_nxy,ndataset),y(max_nxy,ndataset),weight(max_nxy,ndataset))
     x=1.d0
     y=0.d0
     weight=0.d0
     do iset=1,ndataset
-      xy=>datasets(iset)%rtxy
+      xy=>dataset(iset)%rtxy
       if(xy%nxy==0)cycle
       x(1:xy%nxy,iset)=xy%x(1:xy%nxy)-fit%X0
       y(1:xy%nxy,iset)=xy%y(1:xy%nxy)
@@ -3022,7 +3022,7 @@ CONTAINS
   END SUBROUTINE perform_multifit
 
 
-  SUBROUTINE eval_multifit_monte_carlo(ndataset,datasets,drange,fit,mcparams,&
+  SUBROUTINE eval_multifit_monte_carlo(ndataset,dataset,drange,fit,mcparams,&
      &deval,fmean,ferr,chi2mean,chi2err,amean,aerr,fmean_1s,ferr_1s,fmean_2s,&
      &ferr_2s,fmed,fskew,fkurt,eval_fshared)
     !------------------------------------------------------!
@@ -3032,11 +3032,11 @@ CONTAINS
     !------------------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: ndataset
-    TYPE(dataset),INTENT(in) :: datasets(ndataset)
-    TYPE(range_def),INTENT(in) :: drange
-    TYPE(fit_params),INTENT(in) :: fit
-    TYPE(monte_carlo_params),INTENT(in) :: mcparams
-    TYPE(eval_def),INTENT(in) :: deval
+    TYPE(dataset_type),INTENT(in) :: dataset(ndataset)
+    TYPE(range_type),INTENT(in) :: drange
+    TYPE(fit_form_type),INTENT(in) :: fit
+    TYPE(mc_params_type),INTENT(in) :: mcparams
+    TYPE(eval_type),INTENT(in) :: deval
     DOUBLE PRECISION,INTENT(inout),OPTIONAL :: &
        &fmean(deval%n,ndataset),ferr(deval%n,ndataset),&
        &chi2mean,chi2err,&
@@ -3047,8 +3047,8 @@ CONTAINS
        &fkurt(deval%n,ndataset)
     LOGICAL,INTENT(in),OPTIONAL :: eval_fshared
     ! Pointers.
-    TYPE(dataset),POINTER :: tdatasets(:)=>null()
-    TYPE(xydata),POINTER :: xy=>null()
+    TYPE(dataset_type),POINTER :: tdataset(:)=>null()
+    TYPE(xy_type),POINTER :: xy=>null()
     ! Polynomials resulting from operations on fitting polynomial.
     INTEGER op_npoly
     DOUBLE PRECISION op_pow(fit%npoly),op_a(fit%npoly)
@@ -3063,22 +3063,22 @@ CONTAINS
     DOUBLE PRECISION chi2,t1,a(fit%npoly,ndataset),da(fit%npoly,ndataset),f0
 
     ! Make copy of datasets.
-    allocate(tdatasets(ndataset))
+    allocate(tdataset(ndataset))
     do iset=1,ndataset
       allocate(xy)
-      xy%nxy=datasets(iset)%xy%nxy
+      xy%nxy=dataset(iset)%xy%nxy
       allocate(xy%x(xy%nxy),xy%dx(xy%nxy),xy%y(xy%nxy),xy%dy(xy%nxy))
-      xy%x=datasets(iset)%xy%x
-      xy%dx=datasets(iset)%xy%dx
-      xy%y=datasets(iset)%xy%y
-      xy%dy=datasets(iset)%xy%dy
-      xy%have_dx=datasets(iset)%xy%have_dx
-      xy%have_dy=datasets(iset)%xy%have_dy
-      tdatasets(iset)%xy=>xy
-      tdatasets(iset)%itransfx=datasets(iset)%itransfx
-      tdatasets(iset)%itransfy=datasets(iset)%itransfy
-      nullify(tdatasets(iset)%txy)
-      nullify(tdatasets(iset)%rtxy)
+      xy%x=dataset(iset)%xy%x
+      xy%dx=dataset(iset)%xy%dx
+      xy%y=dataset(iset)%xy%y
+      xy%dy=dataset(iset)%xy%dy
+      xy%have_dx=dataset(iset)%xy%have_dx
+      xy%have_dy=dataset(iset)%xy%have_dy
+      tdataset(iset)%xy=>xy
+      tdataset(iset)%itransfx=dataset(iset)%itransfx
+      tdataset(iset)%itransfy=dataset(iset)%itransfy
+      nullify(tdataset(iset)%txy)
+      nullify(tdataset(iset)%rtxy)
       nullify(xy)
     enddo ! iset
 
@@ -3108,8 +3108,8 @@ CONTAINS
     ! Override weights if not all sets have stderrs.
     weighted=mcparams%weighted
     do iset=1,ndataset
-      weighted=weighted.and.(tdatasets(iset)%xy%have_dx.or.&
-         &tdatasets(iset)%xy%have_dy)
+      weighted=weighted.and.(tdataset(iset)%xy%have_dx.or.&
+         &tdataset(iset)%xy%have_dy)
     enddo ! iset
 
     ! Initialize.
@@ -3119,13 +3119,13 @@ CONTAINS
     ! Loop over random points.
     do irandom=1,nsample
       do iset=1,ndataset
-        if(datasets(iset)%xy%have_dx)tdatasets(iset)%xy%x=&
-           &datasets(iset)%xy%x+gaussian_random_number(datasets(iset)%xy%dx)
-        if(datasets(iset)%xy%have_dy)tdatasets(iset)%xy%y=&
-           &datasets(iset)%xy%y+gaussian_random_number(datasets(iset)%xy%dy)
-        call refresh_dataset(tdatasets(iset),drange)
+        if(dataset(iset)%xy%have_dx)tdataset(iset)%xy%x=&
+           &dataset(iset)%xy%x+gaussian_random_number(dataset(iset)%xy%dx)
+        if(dataset(iset)%xy%have_dy)tdataset(iset)%xy%y=&
+           &dataset(iset)%xy%y+gaussian_random_number(dataset(iset)%xy%dy)
+        call refresh_dataset(tdataset(iset),drange)
       enddo ! iset
-      call perform_multifit(ndataset,tdatasets,fit,weighted,chi2,a,da)
+      call perform_multifit(ndataset,tdataset,fit,weighted,chi2,a,da)
       w_vector(irandom)=1.d0
       if(need_chi2)chi2_array(irandom)=chi2
       if(need_a)a_array(irandom,1:fit%npoly,1:ndataset)=&
@@ -3229,12 +3229,12 @@ CONTAINS
     if(allocated(a_array))deallocate(a_array)
     if(allocated(chi2_array))deallocate(chi2_array)
     do iset=1,ndataset
-      call kill_xydata(tdatasets(iset)%xy)
-      call kill_xydata(tdatasets(iset)%txy)
-      call kill_xydata(tdatasets(iset)%rtxy)
+      call kill_xydata(tdataset(iset)%xy)
+      call kill_xydata(tdataset(iset)%txy)
+      call kill_xydata(tdataset(iset)%rtxy)
     enddo ! iset
-    deallocate(tdatasets)
-    nullify(tdatasets)
+    deallocate(tdataset)
+    nullify(tdataset)
 
   END SUBROUTINE eval_multifit_monte_carlo
 
@@ -3300,7 +3300,7 @@ CONTAINS
 
 
   SUBROUTINE read_file(fname,icol_x,icol_y,icol_dx,icol_dy,nsearch,fsearch,&
-     &search,ndiscr,fdiscr,ndataset,datasets,ierr)
+     &search,ndiscr,fdiscr,ndataset,dataset,ierr)
     !-------------------------------------!
     ! Read in the data in the input file. !
     !-------------------------------------!
@@ -3310,7 +3310,7 @@ CONTAINS
        &fsearch(nsearch),ndiscr,fdiscr(ndiscr)
     CHARACTER(*),INTENT(in) :: search(nsearch)
     INTEGER,INTENT(inout) :: ndataset,ierr
-    TYPE(dataset),POINTER :: datasets(:)
+    TYPE(dataset_type),POINTER :: dataset(:)
     CHARACTER(8192) line
     CHARACTER(8192),POINTER :: discr(:,:)=>null()
     INTEGER i,ipos,isearch,iset,idiscr
@@ -3364,7 +3364,7 @@ CONTAINS
       if(iset>ndataset)then
         ! Create new dataset.
         ndataset=ndataset+1
-        call resize_dataset(ndataset,datasets)
+        call resize_dataset(ndataset,dataset)
         iset=ndataset
         ! Store discriminators.
         call resize_pointer_char2(8192,(/ndiscr,ndataset/),discr)
@@ -3373,41 +3373,41 @@ CONTAINS
         enddo ! idiscr
       endif
       ! Enlarge arrays.
-      if(.not.associated(datasets(iset)%xy))then
+      if(.not.associated(dataset(iset)%xy))then
         i=1
       else
-        i=datasets(iset)%xy%nxy+1
+        i=dataset(iset)%xy%nxy+1
       endif
-      call enlarge_xydata(i,icol_dx>0,icol_dy>0,datasets(iset)%xy)
+      call enlarge_xydata(i,icol_dx>0,icol_dy>0,dataset(iset)%xy)
       ! Read data point from string.
       if(icol_x>0)then
-        datasets(iset)%xy%x(i)=dble_field(icol_x,line,ierr)
+        dataset(iset)%xy%x(i)=dble_field(icol_x,line,ierr)
         if(ierr/=0)then
           write(6,'(a)')'Failed to parse value of x in "'//trim(fname)//'".'
           write(6,'()')
           exit
         endif
       else
-        datasets(iset)%xy%x(i)=dble(i)
+        dataset(iset)%xy%x(i)=dble(i)
       endif
       if(icol_y>0)then
-        datasets(iset)%xy%y(i)=dble_field(icol_y,line,ierr)
+        dataset(iset)%xy%y(i)=dble_field(icol_y,line,ierr)
         if(ierr/=0)then
           write(6,'(a)')'Failed to parse value of y in "'//trim(fname)//'".'
           write(6,'()')
           exit
         endif
       else
-        datasets(iset)%xy%y(i)=dble(i)
+        dataset(iset)%xy%y(i)=dble(i)
       endif
       if(icol_dx>0)then
-        datasets(iset)%xy%dx(i)=dble_field(icol_dx,line,ierr)
+        dataset(iset)%xy%dx(i)=dble_field(icol_dx,line,ierr)
         if(ierr/=0)then
           write(6,'(a)')'Failed to parse value of dx in "'//trim(fname)//'".'
           write(6,'()')
           exit
         endif
-        if(datasets(iset)%xy%dx(i)<=0.d0)then
+        if(dataset(iset)%xy%dx(i)<=0.d0)then
           write(6,'(a)')'Found non-positive dx in "'//trim(fname)//'".'
           write(6,'()')
           ierr=-5
@@ -3415,13 +3415,13 @@ CONTAINS
         endif
       endif ! have_dx
       if(icol_dy>0)then
-        datasets(iset)%xy%dy(i)=dble_field(icol_dy,line,ierr)
+        dataset(iset)%xy%dy(i)=dble_field(icol_dy,line,ierr)
         if(ierr/=0)then
           write(6,'(a)')'Failed to parse value of dx in "'//trim(fname)//'".'
           write(6,'()')
           exit
         endif
-        if(datasets(iset)%xy%dy(i)<=0.d0)then
+        if(dataset(iset)%xy%dy(i)<=0.d0)then
           write(6,'(a)')'Found non-positive dy in "'//trim(fname)//'".'
           write(6,'()')
           ierr=-6
@@ -3445,7 +3445,7 @@ CONTAINS
     ! fitted polynomial.                                !
     !---------------------------------------------------!
     IMPLICIT NONE
-    TYPE(fit_params),INTENT(in) :: fit
+    TYPE(fit_form_type),INTENT(in) :: fit
     CHARACTER(3+fit%npoly*54) :: polystr
     INTEGER j,ipow
     CHARACTER(40) pwstr
@@ -3490,7 +3490,7 @@ CONTAINS
     ! into xmgrace.                                      !
     !----------------------------------------------------!
     IMPLICIT NONE
-    TYPE(fit_params),INTENT(in) :: fit
+    TYPE(fit_form_type),INTENT(in) :: fit
     DOUBLE PRECISION,INTENT(in) :: a(fit%npoly)
     CHARACTER(2+fit%npoly*105) :: polystr
     INTEGER j,ipow
@@ -3680,14 +3680,14 @@ CONTAINS
 
 
   SUBROUTINE enlarge_xydata(nxy,have_dx,have_dy,xy)
-    !--------------------------------------------!
-    ! Enlarge an xydata-type pointer to (1:nxy), !
-    ! preserving any existing data.              !
-    !--------------------------------------------!
+    !---------------------------------------------!
+    ! Enlarge an xy_type-type pointer to (1:nxy), !
+    ! preserving any existing data.               !
+    !---------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: nxy
     LOGICAL,INTENT(in) :: have_dx,have_dy
-    TYPE(xydata),POINTER :: xy
+    TYPE(xy_type),POINTER :: xy
     INTEGER i
     if(.not.associated(xy))then
       allocate(xy)
@@ -3715,11 +3715,11 @@ CONTAINS
 
 
   SUBROUTINE kill_xydata(xy)
-    !---------------------------------!
-    ! Destroy an xydata-type pointer. !
-    !---------------------------------!
+    !----------------------------------!
+    ! Destroy an xy_type-type pointer. !
+    !----------------------------------!
     IMPLICIT NONE
-    TYPE(xydata),POINTER :: xy
+    TYPE(xy_type),POINTER :: xy
     if(associated(xy))then
       if(associated(xy%x))deallocate(xy%x)
       if(associated(xy%y))deallocate(xy%y)
@@ -3731,49 +3731,49 @@ CONTAINS
   END SUBROUTINE kill_xydata
 
 
-  SUBROUTINE resize_dataset(ndataset,datasets)
+  SUBROUTINE resize_dataset(ndataset,dataset)
     !------------------------------------------------!
     ! Resize a dataset-type pointer to (1:ndataset), !
     ! preserving any existing data.                  !
     !------------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: ndataset
-    TYPE(dataset),POINTER :: datasets(:)
-    TYPE(dataset),POINTER :: tdatasets(:)
+    TYPE(dataset_type),POINTER :: dataset(:)
+    TYPE(dataset_type),POINTER :: tdataset(:)
     INTEGER old_ndataset,i
 
     ! Backup original vector of pointers to datasets and destroy original.
     old_ndataset=0
-    if(associated(datasets))then
-      old_ndataset=size(datasets)
+    if(associated(dataset))then
+      old_ndataset=size(dataset)
       if(ndataset>0)then
-        allocate(tdatasets(min(old_ndataset,ndataset)))
+        allocate(tdataset(min(old_ndataset,ndataset)))
         do i=1,min(old_ndataset,ndataset)
-          tdatasets(i)=datasets(i)
+          tdataset(i)=dataset(i)
         enddo ! i
       endif
       do i=ndataset+1,old_ndataset
-        call kill_xydata(datasets(i)%xy)
-        call kill_xydata(datasets(i)%txy)
-        call kill_xydata(datasets(i)%rtxy)
+        call kill_xydata(dataset(i)%xy)
+        call kill_xydata(dataset(i)%txy)
+        call kill_xydata(dataset(i)%rtxy)
       enddo ! i
-      deallocate(datasets)
+      deallocate(dataset)
     endif
 
     ! Create new vector of pointers to datasets.
-    if(ndataset>0)allocate(datasets(ndataset))
+    if(ndataset>0)allocate(dataset(ndataset))
 
     ! Copy vector of pointers to datasets from backup and destroy backup.
     if(old_ndataset>0.and.ndataset>0)then
       do i=1,min(old_ndataset,ndataset)
-        datasets(i)=tdatasets(i)
+        dataset(i)=tdataset(i)
       enddo ! i
-      deallocate(tdatasets)
-      nullify(tdatasets)
+      deallocate(tdataset)
+      nullify(tdataset)
     endif
 
     ! Nullify pointer if empty.
-    if(ndataset==0)nullify(datasets)
+    if(ndataset==0)nullify(dataset)
 
   END SUBROUTINE resize_dataset
 
@@ -4381,7 +4381,7 @@ CONTAINS
     !------------------------------------------------!
     IMPLICIT NONE
     CHARACTER(*),INTENT(in) :: string
-    TYPE(range_def),INTENT(inout) :: drange
+    TYPE(range_type),INTENT(inout) :: drange
     CHARACTER(len_trim(string)) remainder
     INTEGER ierr
 
@@ -4437,7 +4437,7 @@ CONTAINS
     !---------------------------------------------!
     IMPLICIT NONE
     CHARACTER(*),INTENT(in) :: string
-    TYPE(eval_def),INTENT(inout) :: deval
+    TYPE(eval_type),INTENT(inout) :: deval
     CHARACTER(len_trim(string)) remainder
     INTEGER ipos,it1,i,ierr
     DOUBLE PRECISION t1,t2
