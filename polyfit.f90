@@ -478,10 +478,7 @@ CONTAINS
         endif
         do i=1,ndataset
           if(.not.smask(i))cycle
-          call kill_xydata(dlist(i)%dataset%xy)
-          call kill_xydata(dlist(i)%dataset%txy)
-          call kill_xydata(dlist(i)%dataset%rtxy)
-          deallocate(dlist(i)%dataset)
+          call kill_dataset(dlist(i)%dataset)
         enddo
         deallocate(dlist)
         nullify(dlist)
@@ -2447,13 +2444,7 @@ CONTAINS
     write(6,'()')
 
     ! Clean up.
-    do iset=1,ndataset
-      call kill_xydata(tmp_dlist(iset)%dataset%xy)
-      call kill_xydata(tmp_dlist(iset)%dataset%txy)
-      call kill_xydata(tmp_dlist(iset)%dataset%rtxy)
-      deallocate(tmp_dlist(iset)%dataset)
-    enddo ! iset
-    deallocate(tmp_dlist)
+    call kill_dlist(tmp_dlist)
     deallocate(chi2_all,chi2err_all,fmean_all,ferr_all)
 
   END SUBROUTINE assess_range
@@ -2734,13 +2725,7 @@ CONTAINS
     write(6,'()')
 
     ! Clean up.
-    do iset=1,ndataset
-      call kill_xydata(tmp_dlist(iset)%dataset%xy)
-      call kill_xydata(tmp_dlist(iset)%dataset%txy)
-      call kill_xydata(tmp_dlist(iset)%dataset%rtxy)
-      deallocate(tmp_dlist(iset)%dataset)
-    enddo ! iset
-    deallocate(tmp_dlist)
+    call kill_dlist(tmp_dlist)
     deallocate(chi2_all,chi2err_all,fmean_all,ferr_all)
 
   END SUBROUTINE assess_fit_range
@@ -3246,13 +3231,7 @@ CONTAINS
     if(allocated(f_array))deallocate(f_array)
     if(allocated(a_array))deallocate(a_array)
     if(allocated(chi2_array))deallocate(chi2_array)
-    do iset=1,ndataset
-      call kill_xydata(tmp_dlist(iset)%dataset%xy)
-      call kill_xydata(tmp_dlist(iset)%dataset%txy)
-      call kill_xydata(tmp_dlist(iset)%dataset%rtxy)
-      deallocate(tmp_dlist(iset)%dataset)
-    enddo ! iset
-    deallocate(tmp_dlist)
+    call kill_dlist(tmp_dlist)
 
   END SUBROUTINE eval_multifit_monte_carlo
 
@@ -3407,12 +3386,8 @@ CONTAINS
         dataset=>dlist(iset)%dataset
       endif
       ! Enlarge arrays.
-      if(.not.associated(dataset%xy))then
-        i=1
-      else
-        i=dataset%xy%nxy+1
-      endif
-      call enlarge_xydata(i,icol_dx>0,icol_dy>0,dataset%xy)
+      call increment_xy_size(icol_dx>0,icol_dy>0,dataset%xy)
+      i=dataset%xy%nxy
       ! Read data point from string.
       if(icol_x>0)then
         dataset%xy%x(i)=dble_field(icol_x,line,ierr)
@@ -3716,95 +3691,130 @@ CONTAINS
   ! DERIVED-TYPE TOOLS
 
 
-  SUBROUTINE enlarge_xydata(nxy,have_dx,have_dy,xy)
-    !---------------------------------------------!
-    ! Enlarge an xy_type-type pointer to (1:nxy), !
-    ! preserving any existing data.               !
-    !---------------------------------------------!
+  SUBROUTINE increment_xy_size(have_dx,have_dy,xy)
+    !--------------------------------------!
+    ! Increment the size of pointers in an !
+    ! xy_type-type pointer by 1.           !
+    !--------------------------------------!
     IMPLICIT NONE
-    INTEGER,INTENT(in) :: nxy
     LOGICAL,INTENT(in) :: have_dx,have_dy
     TYPE(xy_type),POINTER :: xy
-    INTEGER i
-    if(.not.associated(xy))then
-      allocate(xy)
-      xy%nxy=0
-      xy%have_dx=have_dx
-      xy%have_dy=have_dy
-      nullify(xy%x)
-      nullify(xy%y)
-      nullify(xy%dx)
-      nullify(xy%dy)
-    endif
-    ! Enlarge arrays.
+    INTEGER nxy
+    nxy=0
+    if(associated(xy))nxy=xy%nxy
+    nxy=nxy+1
+    xy%nxy=nxy
+    xy%have_dx=have_dx
+    xy%have_dy=have_dy
     call resize_pointer_dble1((/nxy/),xy%x)
     call resize_pointer_dble1((/nxy/),xy%y)
     call resize_pointer_dble1((/nxy/),xy%dx)
     call resize_pointer_dble1((/nxy/),xy%dy)
-    ! Initialize x and y.
-    do i=xy%nxy+1,nxy
-      xy%x(i)=dble(i)
-      xy%y(i)=dble(i)
-    enddo ! i
-    ! Store dataset length.
-    xy%nxy=nxy
-  END SUBROUTINE enlarge_xydata
+    ! Initialize x and y to index by default.
+    xy%x(nxy)=dble(nxy)
+    xy%y(nxy)=dble(nxy)
+  END SUBROUTINE increment_xy_size
 
 
-  SUBROUTINE kill_xydata(xy)
+  SUBROUTINE kill_xy(xy)
     !----------------------------------!
     ! Destroy an xy_type-type pointer. !
     !----------------------------------!
     IMPLICIT NONE
     TYPE(xy_type),POINTER :: xy
-    if(associated(xy))then
-      if(associated(xy%x))deallocate(xy%x)
-      if(associated(xy%y))deallocate(xy%y)
-      if(associated(xy%dx))deallocate(xy%dx)
-      if(associated(xy%dy))deallocate(xy%dy)
-      deallocate(xy)
-      nullify(xy)
-    endif
-  END SUBROUTINE kill_xydata
+    if(.not.associated(xy))return
+    if(associated(xy%x))deallocate(xy%x)
+    if(associated(xy%y))deallocate(xy%y)
+    if(associated(xy%dx))deallocate(xy%dx)
+    if(associated(xy%dy))deallocate(xy%dy)
+    deallocate(xy)
+    nullify(xy)
+  END SUBROUTINE kill_xy
+
+
+  SUBROUTINE kill_dataset(dataset)
+    !--------------------------------------!
+    ! Destroy a dataset_type-type pointer. !
+    !--------------------------------------!
+    IMPLICIT NONE
+    TYPE(dataset_type),POINTER :: dataset
+    if(.not.associated(dataset))return
+    call kill_xy(dataset%xy)
+    call kill_xy(dataset%txy)
+    call kill_xy(dataset%rtxy)
+    deallocate(dataset)
+    nullify(dataset)
+  END SUBROUTINE kill_dataset
+
+
+  SUBROUTINE kill_dlist(dlist)
+    !-------------------------------------------!
+    ! Destroy a dataset_list_type-type pointer. !
+    !-------------------------------------------!
+    IMPLICIT NONE
+    TYPE(dataset_list_type),POINTER :: dlist(:)
+    INTEGER ndataset,iset
+    if(.not.associated(dlist))return
+    ndataset=size(dlist)
+    do iset=1,ndataset
+      call kill_dataset(dlist(iset)%dataset)
+    enddo ! iset
+    deallocate(dlist)
+    nullify(dlist)
+  END SUBROUTINE kill_dlist
+
+
+  SUBROUTINE clone_xy(xy1,xy2)
+    !-----------------------------------------!
+    ! Make an independent copy of xy1 as xy2. !
+    !-----------------------------------------!
+    IMPLICIT NONE
+    TYPE(xy_type),POINTER :: xy1,xy2
+    nullify(xy2)
+    if(.not.associated(xy1))return
+    allocate(xy2)
+    xy2%nxy=xy1%nxy
+    xy2%have_dx=xy1%have_dx
+    xy2%have_dy=xy1%have_dy
+    allocate(xy2%x(xy2%nxy),xy2%dx(xy2%nxy),xy2%y(xy2%nxy),xy2%dy(xy2%nxy))
+    xy2%x=xy1%x
+    xy2%dx=xy1%dx
+    xy2%y=xy1%y
+    xy2%dy=xy1%dy
+  END SUBROUTINE clone_xy
+
+
+  SUBROUTINE clone_dataset(dataset1,dataset2)
+    !---------------------------------------------------!
+    ! Make an independent copy of dataset1 as dataset2. !
+    !---------------------------------------------------!
+    IMPLICIT NONE
+    TYPE(dataset_type),POINTER :: dataset1,dataset2
+    nullify(dataset2)
+    if(.not.associated(dataset1))return
+    allocate(dataset2)
+    dataset2%itransfx=dataset1%itransfx
+    dataset2%itransfy=dataset1%itransfy
+    call clone_xy(dataset1%xy,dataset2%xy)
+    call clone_xy(dataset1%txy,dataset2%txy)
+    call clone_xy(dataset1%rtxy,dataset2%rtxy)
+  END SUBROUTINE clone_dataset
 
 
   SUBROUTINE clone_dlist(dlist1,dlist2)
-    !----------------------------------------------!
-    ! Make an independent copy of dlist as dlist2, !
-    ! ignoring the txy and rtxy components.        !
-    !----------------------------------------------!
+    !-----------------------------------------------!
+    ! Make an independent copy of dlist1 as dlist2. !
+    !-----------------------------------------------!
     IMPLICIT NONE
     TYPE(dataset_list_type),POINTER :: dlist1(:),dlist2(:)
-    TYPE(dataset_type),POINTER :: dataset1,dataset2
-    TYPE(xy_type),POINTER :: xy1,xy2
     INTEGER iset,ndataset
-
-    ! Intialize.
     nullify(dlist2)
     if(.not.associated(dlist1))return
     ndataset=size(dlist1)
     allocate(dlist2(ndataset))
-
-    ! Clone each dataset.
     do iset=1,ndataset
-      dataset1=>dlist1(iset)%dataset
-      allocate(dataset2)
-      dlist2(iset)%dataset=>dataset2
-      xy1=>dataset1%xy
-      allocate(xy2)
-      dataset2%xy=>xy2
-      xy2%nxy=xy1%nxy
-      allocate(xy2%x(xy2%nxy),xy2%dx(xy2%nxy),xy2%y(xy2%nxy),xy2%dy(xy2%nxy))
-      xy2%x=xy1%x
-      xy2%dx=xy1%dx
-      xy2%y=xy1%y
-      xy2%dy=xy1%dy
-      xy2%have_dx=xy1%have_dx
-      xy2%have_dy=xy1%have_dy
-      dataset2%itransfx=dataset1%itransfx
-      dataset2%itransfy=dataset1%itransfy
+      call clone_dataset(dlist1(iset)%dataset,dlist2(iset)%dataset)
     enddo ! iset
-
   END SUBROUTINE clone_dlist
 
 
