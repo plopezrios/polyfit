@@ -1642,48 +1642,35 @@ CONTAINS
     IMPLICIT NONE
     TYPE(dataset_type),INTENT(inout) :: dataset
     TYPE(range_type),INTENT(in) :: drange
-    TYPE(xy_type),POINTER :: xy
+    TYPE(xy_type),POINTER :: xy,txy,rtxy
     LOGICAL,ALLOCATABLE :: mask(:)
     INTEGER,ALLOCATABLE :: indx(:)
-    DOUBLE PRECISION,ALLOCATABLE :: sortvec(:)
+    DOUBLE PRECISION,POINTER :: sortvec(:)
     INTEGER n
 
-    ! Delete pre-existing data.
-    if(associated(dataset%txy))then
-      deallocate(dataset%txy%x,dataset%txy%y,dataset%txy%dx,dataset%txy%dy)
-      deallocate(dataset%txy)
-    endif
-    if(associated(dataset%rtxy))then
-      deallocate(dataset%rtxy%x,dataset%rtxy%y,dataset%rtxy%dx,dataset%rtxy%dy)
-      deallocate(dataset%rtxy)
-    endif
-
     ! Transform.
-    allocate(xy)
-    xy%nxy=dataset%xy%nxy
-    xy%have_dx=dataset%xy%have_dx
-    xy%have_dy=dataset%xy%have_dy
-    allocate(xy%x(xy%nxy),xy%y(xy%nxy),xy%dx(xy%nxy),xy%dy(xy%nxy))
-    call scale_transform(xy%nxy,dataset%itransfx,dataset%xy%x,xy%x,&
-       &dataset%xy%have_dx,dataset%xy%dx,xy%dx)
-    call scale_transform(xy%nxy,dataset%itransfy,dataset%xy%y,xy%y,&
-       &dataset%xy%have_dy,dataset%xy%dy,xy%dy)
-    dataset%txy=>xy
-    nullify(xy)
+    xy=>dataset%xy
+    call kill_xy(dataset%txy)
+    call clone_xy(xy,txy)
+    dataset%txy=>txy
+    call scale_transform(xy%nxy,dataset%itransfx,xy%x,txy%x,xy%have_dx,xy%dx,&
+       &txy%dx)
+    call scale_transform(xy%nxy,dataset%itransfy,xy%y,txy%y,xy%have_dy,xy%dy,&
+       &txy%dy)
 
     ! Mask.
-    allocate(sortvec(dataset%xy%nxy),mask(dataset%xy%nxy))
+    allocate(mask(xy%nxy))
     mask=.true.
-    ! Build vector with sort variable.
+    ! Point at sort variable.
     select case(drange%var)
     case('x')
-      sortvec=dataset%xy%x
+      sortvec=>xy%x
     case('y')
-      sortvec=dataset%xy%y
+      sortvec=>xy%y
     case('X')
-      sortvec=dataset%txy%x
+      sortvec=>txy%x
     case('Y')
-      sortvec=dataset%txy%y
+      sortvec=>txy%y
     end select
     ! Act on sort operation.
     select case(trim(drange%op))
@@ -1697,33 +1684,35 @@ CONTAINS
       mask=sortvec>drange%thres.or.are_equal(sortvec,drange%thres)
     case('[',']')
       if(drange%size>0)then
-        n=min(drange%size,dataset%xy%nxy)
-        allocate(indx(dataset%xy%nxy))
-        call isort(dataset%xy%nxy,sortvec,indx)
+        n=min(drange%size,xy%nxy)
+        allocate(indx(xy%nxy))
+        call isort(xy%nxy,sortvec,indx)
         mask=.false.
         if(trim(drange%op)=='[')then
           mask(indx(1:n))=.true.
         elseif(trim(drange%op)==']')then
-          mask(indx(dataset%xy%nxy-n+1:dataset%xy%nxy))=.true.
+          mask(indx(xy%nxy-n+1:xy%nxy))=.true.
         endif
         deallocate(indx)
       endif
     end select
+    nullify(sortvec)
 
     ! Create masked transformed dataset.
-    allocate(xy)
-    xy%nxy=count(mask)
-    xy%have_dx=dataset%txy%have_dx
-    xy%have_dy=dataset%txy%have_dy
-    allocate(xy%x(xy%nxy),xy%y(xy%nxy),xy%dx(xy%nxy),xy%dy(xy%nxy))
-    if(xy%nxy>0)then
-      xy%x=pack(dataset%txy%x,mask)
-      xy%dx=pack(dataset%txy%dx,mask)
-      xy%y=pack(dataset%txy%y,mask)
-      xy%dy=pack(dataset%txy%dy,mask)
+    call kill_xy(dataset%rtxy)
+    allocate(rtxy)
+    dataset%rtxy=>rtxy
+    rtxy%nxy=count(mask)
+    rtxy%have_dx=txy%have_dx
+    rtxy%have_dy=txy%have_dy
+    allocate(rtxy%x(rtxy%nxy),rtxy%y(rtxy%nxy),rtxy%dx(rtxy%nxy),&
+       &rtxy%dy(rtxy%nxy))
+    if(rtxy%nxy>0)then
+      rtxy%x=pack(txy%x,mask)
+      rtxy%dx=pack(txy%dx,mask)
+      rtxy%y=pack(txy%y,mask)
+      rtxy%dy=pack(txy%dy,mask)
     endif
-    dataset%rtxy=>xy
-    nullify(xy)
 
   END SUBROUTINE refresh_dataset
 
