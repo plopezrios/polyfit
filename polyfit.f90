@@ -31,6 +31,7 @@ PROGRAM polyfit
   END TYPE xy_type
   TYPE dataset_type
     INTEGER :: itransfx=ITRANSF_NONE,itransfy=ITRANSF_NONE
+    DOUBLE PRECISION :: weight=1.d0
     TYPE(xy_type),POINTER :: xy=>null() ! original data
     TYPE(xy_type),POINTER :: txy=>null() ! transformed data
     TYPE(xy_type),POINTER :: rtxy=>null() ! range-restricted transformed data
@@ -54,6 +55,7 @@ PROGRAM polyfit
   END TYPE range_type
   TYPE eval_type
     CHARACTER :: var='X'
+    CHARACTER(10) :: what='function'
     LOGICAL :: rel=.false.
     INTEGER :: nderiv=0,n=0
     DOUBLE PRECISION,POINTER :: x(:)=>null()
@@ -179,7 +181,7 @@ CONTAINS
           write(6,'()')
         end select
 
-      case('load')
+      case('load','wload')
         ! Load data from specified columns of data file.
         fname=trim(field(2,command))
         call check_file(fname,nxy,ncolumn)
@@ -213,29 +215,53 @@ CONTAINS
         icol_y=0
         icol_dx=0
         icol_dy=0
-        select case(ncolumn)
-        case(1)
+        if(trim(field(1,command))=='wload')then
           icol_y=1
-        case(2)
-          icol_x=1
-          icol_y=2
-        case(3)
-          icol_x=1
-          icol_y=2
-          icol_dy=3
-        case default
-          icol_x=1
-          icol_y=3
-          icol_dx=2
-          icol_dy=4
-        end select
+        else
+          select case(ncolumn)
+          case(1)
+            icol_y=1
+          case(2)
+            icol_x=1
+            icol_y=2
+          case(3)
+            icol_x=1
+            icol_y=2
+            icol_dy=3
+          case default
+            icol_x=1
+            icol_y=3
+            icol_dx=2
+            icol_dy=4
+          end select
+        endif
 
         ! Parse subcommands.
         ifield=2
         do
           ifield=ifield+1
           select case(trim(field(ifield,command)))
+          case('using') ! lone "using" for wload only
+            if(trim(field(1,command))=='load')then
+              write(6,'(a)')'Syntax error in load command: "using" without &
+                 &preceeding "type" not allowed.'
+              write(6,'()')
+              cycle user_loop
+            endif
+            icol_y=int_field(ifield+1,command,ierr1)
+            ifield=ifield+1
+            if(ierr1/=0)then
+              write(6,'(a)')'Problem parsing "using" index.'
+              write(6,'()')
+              cycle user_loop
+            endif
           case('type')
+            if(trim(field(1,command))=='wload')then
+              write(6,'(a)')'Syntax error in wload command: "type" is not &
+                 &an allowed subcommand.'
+              write(6,'()')
+              cycle user_loop
+            endif
             if(trim(field(ifield+2,command))/='using')then
               write(6,'(a)')'Syntax error in load command: "type" without &
                  &"using".'
@@ -277,6 +303,11 @@ CONTAINS
               write(6,'()')
               cycle user_loop
             end select
+            if(ierr1/=0.or.ierr2/=0.or.ierr3/=0.or.ierr4/=0)then
+              write(6,'(a)')'Problem parsing "using" indices.'
+              write(6,'()')
+              cycle user_loop
+            endif
           case('where')
             ! Add a search clause.
             if(nfield(command)<ifield+2)then
@@ -305,6 +336,12 @@ CONTAINS
             ifield=ifield+2
           case('by')
             ! Add a discriminator clause.
+            if(trim(field(1,command))=='wload')then
+              write(6,'(a)')'Syntax error in wload command: "by" is not &
+                 &an allowed subcommand.'
+              write(6,'()')
+              cycle user_loop
+            endif
             if(nfield(command)<ifield+1)then
               write(6,'(a)')'Syntax error in load command: too few arguments &
                  &for "by" subcommand"'
@@ -359,6 +396,39 @@ CONTAINS
         if(file_ndataset<1)then
           write(6,'(a)')'No data loaded.'
           write(6,'()')
+          cycle user_loop
+        endif
+
+        if(field(1,command)=='wload')then
+          ! We are loading dataset weights, so lets see if we have the
+          ! right number of them.
+          if(file_ndataset/=1)then
+            write(6,'(a)')'Problem with wload: loaded too many datasets.'
+            write(6,'()')
+            call kill_dlist(file_dlist)
+            cycle user_loop
+          endif
+          if(file_dlist(1)%dataset%xy%nxy/=ndataset)then
+            write(6,'(a)')'Problem with wload: loaded '//&
+               &trim(i2s(file_dlist(1)%dataset%xy%nxy))//' weights but &
+               &expected '//trim(i2s(ndataset))//'.'
+            write(6,'()')
+            call kill_dlist(file_dlist)
+            cycle user_loop
+          endif
+          ! Check that weights are > 0.
+          if(any(file_dlist(1)%dataset%xy%y<=0.d0))then
+            write(6,'(a)')'Problem with wload: found negative weights.'
+            write(6,'()')
+            call kill_dlist(file_dlist)
+            cycle user_loop
+          endif
+          ! Set weights.
+          do iset=1,ndataset
+            dlist(iset)%dataset%weight=file_dlist(1)%dataset%xy%y(iset)
+          enddo ! iset
+          ! Clean up and loop here to avoid giant if-block below.
+          call kill_dlist(file_dlist)
           cycle user_loop
         endif
 
@@ -516,6 +586,7 @@ CONTAINS
           cycle user_loop
         endif
         ! Initialize unused components.
+        deval%what='function'
         deval%rel=.false.
         ! Get object to evaluate.
         select case(field(2,command))
@@ -589,6 +660,7 @@ CONTAINS
           cycle user_loop
         end select
         ! Initialize.
+        deval%what='function'
         deval%n=0
         deval%rel=.false.
         eval_iset=0
@@ -703,10 +775,22 @@ CONTAINS
         ! Get object to evaluate.
         select case(field(2,command))
         case("f")
+          deval%what='function'
           deval%nderiv=0
         case("f'")
+          deval%what='function'
           deval%nderiv=1
         case("f''")
+          deval%what='function'
+          deval%nderiv=2
+        case("sumf")
+          deval%what='sum'
+          deval%nderiv=0
+        case("sumf'")
+          deval%what='sum'
+          deval%nderiv=1
+        case("sumf''")
+          deval%what='sum'
           deval%nderiv=2
         case default
           write(6,'(a)')'Syntax error: unknown function "'//&
@@ -1253,6 +1337,7 @@ CONTAINS
           write(6,'(a)',advance='no')&
              &trim(TRANSF_NAME(dataset%itransfx))//'-'//&
              &trim(TRANSF_NAME(dataset%itransfy))//' scale'
+          write(6,'(a,es10.4)',advance='no')', weight=',dataset%weight
           write(6,'(a)')'.'
         enddo ! i
         write(6,'()')
@@ -1288,7 +1373,9 @@ CONTAINS
           call pprint('')
           call pprint('* inspect <file>',0,2)
           call pprint('* load <file> [type <type> using <columns>] &
-             &[where <column> <value>] [by <column]',0,2)
+             &[where <column> <value>] [by <column>]',0,2)
+          call pprint('* wload <file> [using <column>] [where <column> &
+             &<value>]',0,2)
           call pprint('* unload <set-index>',0,2)
           call pprint('* set <variable> <value> [for <set-list>]',0,2)
           call pprint('* unset <variable>',0,2)
@@ -1312,7 +1399,8 @@ CONTAINS
           call pprint('')
         case('load')
           call pprint('')
-          call pprint('Command: load <file> [type <type> using <columns>]',0,9)
+          call pprint('Command: load <file> [type <type> using <columns>] &
+             &[where <column> <value>] [by <column>]',0,9)
           call pprint('')
           call pprint('Loads data from <file> into a new dataset.  By &
              &default:',2,2)
@@ -1326,6 +1414,35 @@ CONTAINS
           call pprint('Other column selections can be specified with an &
              &explicity type/using clause, e.g., "type xydy using 3 5 7".  A &
              &column index of zero refers to the line index.',2,2)
+          call pprint('')
+          call pprint('The "where" subcommand restricts the file parsing to &
+             &those lines in <file> where column <column> takes the value &
+             &<value>.  <value> can be a string.  If multiple "where" &
+             &subcommands are specified, only lines for which ALL &
+             &specified columns take the required values are loaded.',2,2)
+          call pprint('')
+          call pprint('The "by" subcommand allows loading multiple datasets &
+             &from <file>, each corresponding to a different value of column &
+             &<column>.  If multiple "by" commands are specified, two lines &
+             &belong to different datasets if ANY of the specified columns &
+             &differs in value.',2,2)
+          call pprint('')
+        case('wload')
+          call pprint('')
+          call pprint('Command: wload <file> [using <column>] [where <column> &
+             &<value>]',0,9)
+          call pprint('')
+          call pprint('Loads dataset weights from column <column> (column 1 &
+             &by default) of <file>.  These weights are applied to all data &
+             &in a dataset during fitting, and are used in the "sum" &
+             &operation as linear coefficients.  E.g., "evaluate sumf at X=0" &
+             &on two weighted datasets will compute w1*f1(0) + w2*f2(0).',2,2)
+          call pprint('')
+          call pprint('The "where" subcommand restricts the file parsing to &
+             &those lines in <file> where column <column> takes the value &
+             &<value>.  <value> can be a string.  If multiple "where" &
+             &subcommands are specified, only lines for which ALL &
+             &specified columns take the required values are loaded.',2,2)
           call pprint('')
         case('unload')
           call pprint('')
@@ -1428,8 +1545,19 @@ CONTAINS
           call pprint('Evaluate a function of the fit and print the value.',&
              &2,2)
           call pprint('')
-          call pprint('<function> can be f, f'', or f'''' for the value, &
-             &first, and second derivative, respectively.',2,2)
+          call pprint('<function> can be:',2,2)
+          call pprint('* f for the fit value',2,4)
+          call pprint('* f'' for the first derivative of the fit function',2,4)
+          call pprint('* f'''' for the second derivative of the fit function',&
+             &2,4)
+          call pprint('* sumf for the sum of fit values over all detasets &
+             &(weighted sum if dataset weights loaded)',2,4)
+          call pprint('* sumf'' for the sum of the first derivative of the &
+             &fit function over all datasets (weighted sum if dataset weights &
+             &loaded)',2,4)
+          call pprint('* sumf'''' for the sum of the second derivative of the &
+             &fit function over all datasets (weighted sum if dataset weights &
+             &loaded)',2,4)
           call pprint('')
           call pprint('<xvalues> is specified as &
              &"<variable>=<comma-separated-list>" (e.g., "X=0,1,2,3") or as &
@@ -1813,9 +1941,10 @@ CONTAINS
     ! Quick-access pointers.
     TYPE(dataset_type),POINTER :: dataset
     ! Local variables.
-    TYPE(eval_type) deval
+    TYPE(eval_type) deval ! dummy arg
     INTEGER tot_nparam,tot_nxy,iset,i
-    DOUBLE PRECISION chi2,chi2err,a(fit%npoly,ndataset),da(fit%npoly,ndataset)
+    DOUBLE PRECISION chi2,chi2err,rmsy,rmsyerr,a(fit%npoly,ndataset),&
+       &da(fit%npoly,ndataset)
 
     ! Initialize.
     tot_nparam=count(fit%share)+ndataset*count(.not.fit%share)
@@ -1826,12 +1955,9 @@ CONTAINS
     enddo ! iset
 
     ! Perform fit.
-    deval%nderiv=0
-    deval%rel=.false.
-    deval%var='X'
-    deval%n=0
     call eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
-       &deval,chi2mean=chi2,chi2err=chi2err,amean=a,aerr=da)
+       &deval,chi2mean=chi2,chi2err=chi2err,amean=a,aerr=da,rmsymean=rmsy,&
+       &rmsyerr=rmsyerr)
 
     ! Print table header.
     write(6,'()')
@@ -1868,9 +1994,7 @@ CONTAINS
          &chi2/dble(tot_nxy-tot_nparam),chi2err/dble(tot_nxy-tot_nparam)
     endif
     write(6,'(a)',advance='no')'FIT'
-    write(6,'(2x,a12,1x,2(1x,es20.12))')'RMS(Y-f) ',&
-       &sqrt(chi2/dble(tot_nxy)),&
-       &sqrt(chi2err/dble(tot_nxy))
+    write(6,'(2x,a12,1x,2(1x,es20.12))')'RMS(Y-f) ',rmsy,rmsyerr
     write(6,'(a)',advance='no')'   '
     write(6,'(2x,'//trim(i2s(55))//'("-"))')
     write(6,'()')
@@ -1921,6 +2045,10 @@ CONTAINS
         write(6,'(2x,i4,1x,3(1x,f16.12))')iset,deval%x(ix),&
            &fmean(ix,iset),ferr(ix,iset)
       enddo ! ix
+      select case(trim(deval%what))
+      case('shared','sum')
+        exit
+      end select
     enddo ! iset
     write(6,'(4x)',advance='no')
     write(6,'(2x,56("-"))')
@@ -1969,6 +2097,7 @@ CONTAINS
 
     ! Define plot range if not provided.
     if(.not.associated(deval%x))then
+      deval%what='function'
       deval%nderiv=0
       deval%rel=.false.
       deval%var='X'
@@ -2006,7 +2135,7 @@ CONTAINS
        &a(fit%npoly,ndataset))
     if(all(.not.fit%share))then
       call eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
-         &deval,fmean=fmean,amean=a)
+         &deval,fmean=fmean,ferr=ferr,amean=a)
       if(deval%nderiv==0)then
         ! Plot data.
         do iset=1,ndataset
@@ -2044,8 +2173,9 @@ CONTAINS
         write(io,'(a)')'&'
       enddo ! iset
     else
+      deval%what='shared'
       call eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
-         &deval,fmean=fmean,ferr=ferr,amean=a,eval_fshared=.true.)
+         &deval,fmean=fmean,ferr=ferr,amean=a)
       ! Plot data minus independent bit.
       if(deval%nderiv==0)then
         op_npoly=fit%npoly
@@ -2846,7 +2976,7 @@ CONTAINS
     DOUBLE PRECISION,ALLOCATABLE :: x(:,:),y(:,:),weight(:,:)
     INTEGER tot_nparam,max_nxy,tot_nxy,ieq,ip,jp,iset,jset,&
        &ixy,ipoly,jpoly,i,j,lwork,ierr
-    DOUBLE PRECISION e_fit
+    DOUBLE PRECISION e_fit,set_weight
     DOUBLE PRECISION,ALLOCATABLE :: M(:,:),Minv(:,:),c(:),dc(:),work(:)
     INTEGER,ALLOCATABLE :: ipiv(:)
 
@@ -2866,21 +2996,22 @@ CONTAINS
     y=0.d0
     weight=0.d0
     do iset=1,ndataset
+      set_weight=dlist(iset)%dataset%weight
       xy=>dlist(iset)%dataset%rtxy
       if(xy%nxy==0)cycle
       x(1:xy%nxy,iset)=xy%x(1:xy%nxy)-fit%X0
       y(1:xy%nxy,iset)=xy%y(1:xy%nxy)
       if(.not.weighted)then
-        weight(1:xy%nxy,iset)=1.d0
+        weight(1:xy%nxy,iset)=set_weight
       else
         if(xy%have_dx.and.xy%have_dy)then
-          weight(1:xy%nxy,iset)=1.d0/(xy%dx(1:xy%nxy)*xy%dy(1:xy%nxy))**2
+          weight(1:xy%nxy,iset)=set_weight/(xy%dx(1:xy%nxy)*xy%dy(1:xy%nxy))**2
         elseif(xy%have_dx)then
-          weight(1:xy%nxy,iset)=1.d0/xy%dx(1:xy%nxy)**2
+          weight(1:xy%nxy,iset)=set_weight/xy%dx(1:xy%nxy)**2
         elseif(xy%have_dy)then
-          weight(1:xy%nxy,iset)=1.d0/xy%dy(1:xy%nxy)**2
+          weight(1:xy%nxy,iset)=set_weight/xy%dy(1:xy%nxy)**2
         else
-          weight(1:xy%nxy,iset)=1.d0
+          weight(1:xy%nxy,iset)=set_weight
         endif
       endif
     enddo ! iset
@@ -3029,8 +3160,8 @@ CONTAINS
 
 
   SUBROUTINE eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
-     &deval,fmean,ferr,chi2mean,chi2err,amean,aerr,fmean_1s,ferr_1s,fmean_2s,&
-     &ferr_2s,fmed,fskew,fkurt,eval_fshared)
+     &deval,fmean,ferr,chi2mean,chi2err,rmsymean,rmsyerr,amean,aerr,&
+     &fmean_1s,ferr_1s,fmean_2s,ferr_2s,fmed,fskew,fkurt)
     !------------------------------------------------------!
     ! Perform Monte Carlo sampling of data space to obtain !
     ! fit values or derivatives at specified points with   !
@@ -3045,13 +3176,12 @@ CONTAINS
     TYPE(eval_type),INTENT(in) :: deval
     DOUBLE PRECISION,INTENT(inout),OPTIONAL :: &
        &fmean(deval%n,ndataset),ferr(deval%n,ndataset),&
-       &chi2mean,chi2err,&
+       &chi2mean,chi2err,rmsymean,rmsyerr,&
        &amean(fit%npoly,ndataset),aerr(fit%npoly,ndataset),&
        &fmean_1s(deval%n,ndataset),ferr_1s(deval%n,ndataset),&
        &fmean_2s(deval%n,ndataset),ferr_2s(deval%n,ndataset),&
        &fmed(deval%n,ndataset),fskew(deval%n,ndataset),&
        &fkurt(deval%n,ndataset)
-    LOGICAL,INTENT(in),OPTIONAL :: eval_fshared
     ! Quick-access pointers.
     TYPE(dataset_type),POINTER :: dataset
     TYPE(xy_type),POINTER :: xy,xy_orig
@@ -3062,13 +3192,15 @@ CONTAINS
     DOUBLE PRECISION op_pow(fit%npoly),op_a(fit%npoly)
     ! Random sampling arrays.
     DOUBLE PRECISION w_vector(mcparams%nsample)
-    DOUBLE PRECISION,ALLOCATABLE :: f_array(:,:,:),a_array(:,:,:),chi2_array(:)
+    DOUBLE PRECISION,ALLOCATABLE :: f_array(:,:,:),a_array(:,:,:),&
+       &chi2_array(:),rmsy_array(:)
     ! Distribution analysis.
     DOUBLE PRECISION var,skew,kurt,f2s_lo,f1s_lo,f1s_hi,f2s_hi
     ! Misc.
-    LOGICAL weighted,need_f,need_a,need_chi2,fshared,fsplit
+    LOGICAL weighted,need_f,need_a,need_chi2,need_rmsy
     INTEGER nsample,ipoly,ideriv,irandom,ix,iset
-    DOUBLE PRECISION chi2,t1,a(fit%npoly,ndataset),da(fit%npoly,ndataset),f0
+    DOUBLE PRECISION chi2,t1,a(fit%npoly,ndataset),da(fit%npoly,ndataset),&
+       &f0,sum_weight
 
     ! Make copy of datasets.
     call clone_dlist(dlist,tmp_dlist)
@@ -3079,22 +3211,29 @@ CONTAINS
        &present(fmed).or.present(fskew).or.present(fkurt)
     need_f=need_f.and.deval%n>0
     need_chi2=present(chi2mean).or.present(chi2err)
+    need_rmsy=present(rmsymean).or.present(rmsyerr)
     need_a=present(amean).or.present(aerr)
-    fsplit=.false.
-    fshared=.false.
-    if(present(eval_fshared))then
-      fsplit=.true.
-      fshared=eval_fshared
-    endif
+    ! Determine what to evaluate (function per set, shared portion of
+    ! function, "unshared" portion of function per set, sum of functions).
+    ! Allocate f_array.
     if(need_f)then
-      if(fshared)then
+      select case(trim(deval%what))
+      case('shared','sum')
         allocate(f_array(mcparams%nsample,deval%n,1))
-      else
+      case default
         allocate(f_array(mcparams%nsample,deval%n,ndataset))
-      endif
+      end select
+      f_array=0.d0
     endif
     if(need_a)allocate(a_array(mcparams%nsample,fit%npoly,ndataset))
     if(need_chi2)allocate(chi2_array(mcparams%nsample))
+    if(need_rmsy)allocate(rmsy_array(mcparams%nsample))
+
+    ! Compute total dataset weight.
+    sum_weight=0.d0
+    do iset=1,ndataset
+      sum_weight=sum_weight+tmp_dlist(iset)%dataset%weight
+    enddo ! iset
 
     ! Override weights if not all sets have stderrs.
     weighted=mcparams%weighted
@@ -3120,28 +3259,13 @@ CONTAINS
       call perform_multifit(ndataset,tmp_dlist,fit,weighted,chi2,a,da)
       w_vector(irandom)=1.d0
       if(need_chi2)chi2_array(irandom)=chi2
+      if(need_rmsy)rmsy_array(irandom)=sqrt(chi2/sum_weight)
       if(need_a)a_array(irandom,1:fit%npoly,1:ndataset)=&
          &a(1:fit%npoly,1:ndataset)
       ! Evaluate requested function.
       if(need_f)then
-        if(.not.fshared)then
-          do iset=1,ndataset
-            op_npoly=fit%npoly
-            op_pow=fit%pow
-            op_a=a(:,iset)
-            if(fsplit)then
-              where(fit%share)op_a=0.d0
-            endif
-            do ideriv=1,deval%nderiv
-              call deriv_poly(op_npoly,op_pow,op_a)
-            enddo ! ideriv
-            if(deval%rel)f0=eval_poly(op_npoly,op_pow,op_a,-fit%X0)
-            do ix=1,deval%n
-              t1=eval_poly(op_npoly,op_pow,op_a,deval%x(ix)-fit%X0)
-              f_array(irandom,ix,iset)=t1-f0
-            enddo ! ix
-          enddo ! iset
-        else ! .not.fshared (implies fsplit)
+        select case(trim(deval%what))
+        case('shared')
           ! Evaluate shared component of requested function.
           op_npoly=fit%npoly
           op_pow=fit%pow
@@ -3155,7 +3279,29 @@ CONTAINS
             t1=eval_poly(op_npoly,op_pow,op_a,deval%x(ix)-fit%X0)
             f_array(irandom,ix,1)=t1-f0
           enddo ! ix
-        endif ! fshared or not
+        case default
+          do iset=1,ndataset
+            op_npoly=fit%npoly
+            op_pow=fit%pow
+            op_a=a(:,iset)
+            if(trim(deval%what)=='unshared')then
+              where(fit%share)op_a=0.d0
+            endif
+            do ideriv=1,deval%nderiv
+              call deriv_poly(op_npoly,op_pow,op_a)
+            enddo ! ideriv
+            if(deval%rel)f0=eval_poly(op_npoly,op_pow,op_a,-fit%X0)
+            do ix=1,deval%n
+              t1=eval_poly(op_npoly,op_pow,op_a,deval%x(ix)-fit%X0)
+              if(trim(deval%what)=='sum')then
+                f_array(irandom,ix,1)=f_array(irandom,ix,1)+&
+                   &tmp_dlist(iset)%dataset%weight*(t1-f0)
+              else
+                f_array(irandom,ix,iset)=t1-f0
+              endif
+            enddo ! ix
+          enddo ! iset
+        end select ! deval%what
       endif ! need_f
     enddo ! irandom
 
@@ -3165,6 +3311,11 @@ CONTAINS
       call characterize_dist(nsample,chi2_array,w_vector,mean=t1,var=var)
       if(present(chi2mean))chi2mean=t1
       if(present(chi2err))chi2err=sqrt(var)
+    endif
+    if(need_rmsy)then
+      call characterize_dist(nsample,rmsy_array,w_vector,mean=t1,var=var)
+      if(present(rmsymean))rmsymean=t1
+      if(present(rmsyerr))rmsyerr=sqrt(var)
     endif
     do iset=1,ndataset
       if(need_a)then
@@ -3176,7 +3327,8 @@ CONTAINS
         enddo ! ipoly
       endif ! need_a
       if(need_f)then
-        if(fshared.and.iset>1)then
+        if((trim(deval%what)=='shared'.or.trim(deval%what)=='sum').and.&
+           &iset>1)then
           if(present(fmean))fmean(:,iset)=fmean(:,1)
           if(present(ferr))ferr(:,iset)=ferr(:,1)
           if(present(fskew))fskew(:,iset)=fskew(:,1)
@@ -3186,7 +3338,7 @@ CONTAINS
           if(present(ferr_1s))ferr_1s(:,iset)=ferr_1s(:,1)
           if(present(fmean_2s))fmean_2s(:,iset)=fmean_2s(:,1)
           if(present(ferr_2s))ferr_2s(:,iset)=ferr_2s(:,1)
-        else ! .not.fshared or iset==1
+        else ! per-set "what" or first set in global "what"
           do ix=1,deval%n
             call characterize_dist(nsample,f_array(:,ix,iset),w_vector,mean=t1,&
                &var=var,skew=skew,kurt=kurt)
@@ -3212,7 +3364,7 @@ CONTAINS
               if(present(ferr_2s))ferr_2s(ix,iset)=0.25d0*(f2s_hi-f2s_lo)
             endif
           enddo ! ix
-        endif ! fshared.and.iset>1 or not
+        endif ! global "what".and.iset==1 or not
       endif ! need_f
     enddo ! iset
 
@@ -3689,8 +3841,12 @@ CONTAINS
     LOGICAL,INTENT(in) :: have_dx,have_dy
     TYPE(xy_type),POINTER :: xy
     INTEGER nxy
-    nxy=0
-    if(associated(xy))nxy=xy%nxy
+    if(.not.associated(xy))then
+      nxy=0
+      allocate(xy)
+    else
+      nxy=xy%nxy
+    endif
     nxy=nxy+1
     xy%nxy=nxy
     xy%have_dx=have_dx
@@ -3784,6 +3940,7 @@ CONTAINS
     allocate(dataset2)
     dataset2%itransfx=dataset1%itransfx
     dataset2%itransfy=dataset1%itransfy
+    dataset2%weight=dataset1%weight
     call clone_xy(dataset1%xy,dataset2%xy)
     call clone_xy(dataset1%txy,dataset2%txy)
     call clone_xy(dataset1%rtxy,dataset2%rtxy)
