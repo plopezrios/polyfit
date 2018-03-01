@@ -586,15 +586,26 @@ CONTAINS
           cycle user_loop
         endif
         ! Initialize unused components.
-        deval%what='function'
         deval%rel=.false.
         ! Get object to evaluate.
         select case(field(2,command))
         case("f")
+          deval%what='function'
           deval%nderiv=0
         case("f'")
+          deval%what='function'
           deval%nderiv=1
         case("f''")
+          deval%what='function'
+          deval%nderiv=2
+        case("sharedf")
+          deval%what='shared'
+          deval%nderiv=0
+        case("sharedf'")
+          deval%what='shared'
+          deval%nderiv=1
+        case("sharedf''")
+          deval%what='shared'
           deval%nderiv=2
         case default
           write(6,'(a)')'Syntax error: unknown function "'//&
@@ -660,7 +671,6 @@ CONTAINS
           cycle user_loop
         end select
         ! Initialize.
-        deval%what='function'
         deval%n=0
         deval%rel=.false.
         eval_iset=0
@@ -679,10 +689,22 @@ CONTAINS
             ! Get object to evaluate.
             select case(field(ifield+1,command))
             case("f")
+              deval%what='function'
               deval%nderiv=0
             case("f'")
+              deval%what='function'
               deval%nderiv=1
             case("f''")
+              deval%what='function'
+              deval%nderiv=2
+            case("sumf")
+              deval%what='sum'
+              deval%nderiv=0
+            case("sumf'")
+              deval%what='sum'
+              deval%nderiv=1
+            case("sumf''")
+              deval%what='sum'
               deval%nderiv=2
             case default
               write(6,'(a)')'Syntax error: unknown function "'//&
@@ -1497,7 +1519,10 @@ CONTAINS
              &and a literal "N", respectively.',2,2)
           call pprint('')
           call pprint('<function> can be f, f'', or f'''' for the value, &
-             &first, and second derivative, respectively.',2,2)
+             &first, and second derivative of the fit, respectively, or &
+             &sumf, sumf'', or sumf'''' for the sum over datasets of the &
+             &value, first, and second derivative of the fit, respectively.',&
+             &2,2)
           call pprint('')
           call pprint('<xvalues> is specified as &
              &"<variable>=<comma-separated-list>" (e.g., "X=0,1,2,3") or as &
@@ -1526,8 +1551,12 @@ CONTAINS
           call pprint('Plot a function of the fit to <filename>.',2,2)
           call pprint('')
           call pprint('<function> can be f, f'', or f'''' for the value, &
-             &first, and second derivative, respectively.  If <function> is &
-             &f, the original data are also plotted.',2,2)
+             &first, and second derivative, respectively, or sharedf, &
+             &sharedf'', or sharedf'''' for the value, first, and second &
+             &derivative of the shared part of the fit function (for &
+             &multi-dataset fits containing shared parameters). If &
+             &<function> is f or sharef, the original data are also &
+             &plotted.',2,2)
           call pprint('')
           call pprint('<xvalues> is specified as &
              &"<variable>=<comma-separated-list>" (e.g., "X=0,1,2,3") or as &
@@ -1983,7 +2012,7 @@ CONTAINS
     write(6,'(a)')'Fit assessment:'
     write(6,'()')
     write(6,'(a)',advance='no')'   '
-    write(6,'(2x,a12,1x,2(1x,a20))')'Measure','Value     ','Stderr    '
+    write(6,'(2x,a12,1x,2(1x,a20))')'Measure  ','Value       ','Stderr      '
     write(6,'(a)',advance='no')'   '
     write(6,'(2x,'//trim(i2s(55))//'("-"))')
     write(6,'(a)',advance='no')'FIT'
@@ -2097,9 +2126,6 @@ CONTAINS
 
     ! Define plot range if not provided.
     if(.not.associated(deval%x))then
-      deval%what='function'
-      deval%nderiv=0
-      deval%rel=.false.
       deval%var='X'
       deval%n=101
       allocate(deval%x(deval%n))
@@ -2133,7 +2159,7 @@ CONTAINS
     ! Perform fit and plot
     allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset),&
        &a(fit%npoly,ndataset))
-    if(all(.not.fit%share))then
+    if(trim(deval%what)/='shared')then
       call eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
          &deval,fmean=fmean,ferr=ferr,amean=a)
       if(deval%nderiv==0)then
@@ -2173,7 +2199,6 @@ CONTAINS
         write(io,'(a)')'&'
       enddo ! iset
     else
-      deval%what='shared'
       call eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
          &deval,fmean=fmean,ferr=ferr,amean=a)
       ! Plot data minus independent bit.
