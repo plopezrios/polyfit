@@ -25,12 +25,13 @@ PROGRAM polyfit
   ! Derived types.
   TYPE xy_type
     INTEGER :: nxy=0
-    LOGICAL :: have_dx=.false.,have_dy=.false.
+    LOGICAL :: have_dx=.false.,have_dy=.false.,have_w=.false.
     DOUBLE PRECISION,POINTER :: x(:)=>null(),y(:)=>null(),dx(:)=>null(),&
-       &dy(:)=>null()
+       &dy(:)=>null(),w(:)=>null()
   END TYPE xy_type
   TYPE dataset_type
     INTEGER :: itransfx=ITRANSF_NONE,itransfy=ITRANSF_NONE
+    DOUBLE PRECISION :: wexp=1.d0
     DOUBLE PRECISION :: weight=1.d0
     TYPE(xy_type),POINTER :: xy=>null() ! original data
     TYPE(xy_type),POINTER :: txy=>null() ! transformed data
@@ -61,7 +62,6 @@ PROGRAM polyfit
     DOUBLE PRECISION,POINTER :: x(:)=>null()
   END TYPE eval_type
   TYPE mc_params_type
-    LOGICAL :: weighted=.true.
     INTEGER :: nsample=10000
   END TYPE mc_params_type
 
@@ -86,6 +86,7 @@ CONTAINS
     TYPE(fit_form_type),POINTER :: fit
     ! All-set settings.
     INTEGER itransfx_default,itransfy_default
+    DOUBLE PRECISION wexp_default
     TYPE(range_type) drange,tdrange
     ! Function evaluation.
     INTEGER eval_iset
@@ -93,7 +94,7 @@ CONTAINS
     ! Monte Carlo parameters.
     TYPE(mc_params_type) mcparams
     ! Input file information.
-    INTEGER ncolumn,icol_x,icol_y,icol_dx,icol_dy
+    INTEGER ncolumn,icol_x,icol_y,icol_dx,icol_dy,icol_w
     CHARACTER(256) fname
     ! Input file search facility.
     INTEGER,PARAMETER :: search_size=1024
@@ -101,23 +102,25 @@ CONTAINS
     INTEGER,POINTER :: fsearch(:),fdiscr(:)
     CHARACTER(search_size),POINTER :: search(:)
     ! Misc variables.
+    CHARACTER(7) settype
     CHARACTER(8192) command,token
     LOGICAL,ALLOCATABLE :: smask(:)
-    INTEGER i,ifield,ierr,ierr1,ierr2,ierr3,ierr4
+    INTEGER i,ifield,ierr,ipos_x,ipos_y,ipos_dx,ipos_dy,ipos_w,&
+       &ierr1,ierr2,ierr3,ierr4,ierr5
     INTEGER nxy,itransf,iset,i1,i2,ipos,npoly
-    DOUBLE PRECISION t1
+    DOUBLE PRECISION t1,wexp
 
     ! Initialize.
     ndataset=0
     nullify(dlist)
     itransfx_default=ITRANSF_NONE
     itransfy_default=ITRANSF_NONE
+    wexp_default=1.d0
     allocate(fit)
     fit%npoly=2
     allocate(fit%pow(fit%npoly),fit%share(fit%npoly))
     fit%pow(1:2)=(/0.d0,1.d0/)
     fit%share=.false.
-    mcparams%weighted=.false.
     mcparams%nsample=10000
     nullify(fsearch,fdiscr,search)
 
@@ -211,30 +214,24 @@ CONTAINS
 
         ! Get column selection.
         ! Initialize to default column indices.
-        icol_x=0
-        icol_y=0
-        icol_dx=0
-        icol_dy=0
         if(trim(field(1,command))=='wload')then
-          icol_y=1
+          settype='y'
         else
           select case(ncolumn)
           case(1)
-            icol_y=1
+            settype='y'
           case(2)
-            icol_x=1
-            icol_y=2
+            settype='xy'
           case(3)
-            icol_x=1
-            icol_y=2
-            icol_dy=3
+            settype='xydy'
+          case(4)
+            settype='xydyw'
           case default
-            icol_x=1
-            icol_y=3
-            icol_dx=2
-            icol_dy=4
+            settype='xdxydyw'
           end select
         endif
+        call parse_type_string(settype,icol_x,icol_dx,icol_y,icol_dy,icol_w,&
+           &ierr)
 
         ! Parse subcommands.
         ifield=2
@@ -255,6 +252,12 @@ CONTAINS
               write(6,'()')
               cycle user_loop
             endif
+            ! Check column index.
+            if(icol_y>ncolumn.or.icol_y<0)then
+              write(6,'(a)')'Column indices out of range.'
+              write(6,'()')
+              cycle user_loop
+            endif
           case('type')
             if(trim(field(1,command))=='wload')then
               write(6,'(a)')'Syntax error in wload command: "type" is not &
@@ -262,52 +265,58 @@ CONTAINS
               write(6,'()')
               cycle user_loop
             endif
-            if(trim(field(ifield+2,command))/='using')then
-              write(6,'(a)')'Syntax error in load command: "type" without &
-                 &"using".'
+            call parse_type_string(field(ifield+1,command),ipos_x,ipos_dx,&
+               &ipos_y,ipos_dy,ipos_w,ierr)
+            if(ierr/=0)then
+              write(6,'(a)')'Syntax error in load command: unrecognized &
+                 &dataset type.'
               write(6,'()')
               cycle user_loop
             endif
-            icol_x=0
-            icol_y=0
-            icol_dx=0
-            icol_dy=0
-            ierr1=0
-            ierr2=0
-            ierr3=0
-            ierr4=0
-            select case(field(ifield+1,command))
-            case('xy')
-              icol_x=int_field(ifield+3,command,ierr1)
-              icol_y=int_field(ifield+4,command,ierr2)
-              ifield=ifield+4
-            case('xydy')
-              icol_x=int_field(ifield+3,command,ierr1)
-              icol_y=int_field(ifield+4,command,ierr2)
-              icol_dy=int_field(ifield+5,command,ierr3)
-              ifield=ifield+5
-            case('xdxy')
-              icol_x=int_field(ifield+3,command,ierr1)
-              icol_dx=int_field(ifield+4,command,ierr2)
-              icol_y=int_field(ifield+5,command,ierr3)
-              ifield=ifield+5
-            case('xdxydy')
-              icol_x=int_field(ifield+3,command,ierr1)
-              icol_dx=int_field(ifield+4,command,ierr2)
-              icol_y=int_field(ifield+5,command,ierr3)
-              icol_dy=int_field(ifield+6,command,ierr4)
-              ifield=ifield+6
-            case default
-              write(6,'(a)')'Syntax error in load command: unknown type "'//&
-                 &trim(field(ifield+1,command))//'".'
-              write(6,'()')
-              cycle user_loop
-            end select
-            if(ierr1/=0.or.ierr2/=0.or.ierr3/=0.or.ierr4/=0)then
-              write(6,'(a)')'Problem parsing "using" indices.'
+            if(trim(field(ifield+2,command))=='using')then
+              ierr1=0
+              ierr2=0
+              ierr3=0
+              ierr4=0
+              ierr5=0
+              icol_x=0
+              icol_dx=0
+              icol_y=0
+              icol_dy=0
+              icol_w=0
+              if(ipos_x>0)icol_x=int_field(ifield+2+ipos_x,command,ierr1)
+              if(ipos_dx>0)icol_dx=int_field(ifield+2+ipos_dx,command,ierr2)
+              if(ipos_y>0)icol_y=int_field(ifield+2+ipos_y,command,ierr3)
+              if(ipos_dy>0)icol_dy=int_field(ifield+2+ipos_dy,command,ierr4)
+              if(ipos_w>0)icol_w=int_field(ifield+2+ipos_w,command,ierr5)
+              if(ierr1/=0.or.ierr2/=0.or.ierr3/=0.or.ierr4/=0.or.ierr5/=0)then
+                write(6,'(a)')'Problem parsing "using" indices.'
+                write(6,'()')
+                cycle user_loop
+              endif
+              ifield=ifield+2
+              if(ipos_x>0)ifield=ifield+1
+              if(ipos_dx>0)ifield=ifield+1
+              if(ipos_y>0)ifield=ifield+1
+              if(ipos_dy>0)ifield=ifield+1
+              if(ipos_w>0)ifield=ifield+1
+            else
+              icol_x=ipos_x
+              icol_dx=ipos_dx
+              icol_y=ipos_y
+              icol_dy=ipos_dy
+              icol_w=ipos_w
+              ifield=ifield+1
+            endif
+            ! Check column indices.
+            if(icol_x>ncolumn.or.icol_x<0.or.icol_dx>ncolumn.or.icol_dx<0.or.&
+               &icol_y>ncolumn.or.icol_y<0.or.icol_dy>ncolumn.or.icol_dy<0.or.&
+               &icol_w>ncolumn.or.icol_w<0)then
+              write(6,'(a)')'Column indices out of range.'
               write(6,'()')
               cycle user_loop
             endif
+
           case('where')
             ! Add a search clause.
             if(nfield(command)<ifield+2)then
@@ -374,24 +383,11 @@ CONTAINS
           end select
         enddo ! ifield
 
-        ! Check.
-        if(ierr1/=0.or.ierr2/=0.or.ierr3/=0.or.ierr4/=0)then
-          write(6,'(a)')'Problem parsing column indices.'
-          write(6,'()')
-          cycle user_loop
-        endif
-        if(icol_x>ncolumn.or.icol_x<0.or.icol_y>ncolumn.or.icol_y<0.or.&
-           &icol_dx>ncolumn.or.icol_dx<0.or.icol_dy>ncolumn.or.icol_dy<0)then
-          write(6,'(a)')'Column indices out of range.'
-          write(6,'()')
-          cycle user_loop
-        endif
-
         ! Read data.
         if(.not.associated(search))allocate(fsearch(nsearch),search(nsearch))
         if(.not.associated(fdiscr))allocate(fdiscr(ndiscr))
-        call read_file(fname,icol_x,icol_y,icol_dx,icol_dy,nsearch,fsearch,&
-           &search,ndiscr,fdiscr,file_ndataset,file_dlist,ierr)
+        call read_file(fname,icol_x,icol_y,icol_dx,icol_dy,icol_w,nsearch,&
+           &fsearch,search,ndiscr,fdiscr,file_ndataset,file_dlist,ierr)
         if(ierr/=0)cycle user_loop
         if(file_ndataset<1)then
           write(6,'(a)')'No data loaded.'
@@ -416,7 +412,7 @@ CONTAINS
             call kill_dlist(file_dlist)
             cycle user_loop
           endif
-          ! Check that weights are > 0.
+          ! Check that dataset weights are > 0.
           if(any(file_dlist(1)%dataset%xy%y<=0.d0))then
             write(6,'(a)')'Problem with wload: found negative weights.'
             write(6,'()')
@@ -438,6 +434,7 @@ CONTAINS
           xy=>dataset%xy
           dataset%itransfx=itransfx_default
           dataset%itransfy=itransfy_default
+          dataset%wexp=wexp_default
           if(TRANSF_REQ_NONZERO(dataset%itransfy))then
             if(any(are_equal(xy%x,0.d0)))then
               dataset%itransfx=ITRANSF_NONE
@@ -470,6 +467,23 @@ CONTAINS
               write(6,'()')
             endif
           endif
+          if(dataset%xy%have_w)then
+            if(any(xy%w<0.d0.and..not.are_equal(xy%w,0.d0)))then
+              if(.not.are_equal(dataset%wexp,0.d0))then
+                dataset%wexp=0.d0
+                write(6,'(a)')'Note: zeroing weight exponent for set '//&
+                   &trim(i2s(iset+ndataset))//' since it contains w<0.'
+                write(6,'()')
+              endif
+            elseif(any(are_equal(xy%w,0.d0)))then
+              if(dataset%wexp<0.d0.and..not.are_equal(dataset%wexp,0.d0))then
+                dataset%wexp=1.d0
+                write(6,'(a)')'Note: setting weight exponent to 1 for set '//&
+                   &trim(i2s(iset+ndataset))//' since it contains w=0.'
+                write(6,'()')
+              endif
+            endif
+          endif
         enddo ! iset
 
         ! Add datasets to list.
@@ -491,18 +505,9 @@ CONTAINS
           call refresh_dataset(dataset,drange)
           ! Report.
           xy=>dataset%xy
-          write(6,'(a)',advance='no')'Loaded data from "'//trim(fname)//&
-             &'" as dataset #'//trim(i2s(iset))//', type '
-          if(xy%have_dx.and.xy%have_dy)then
-            write(6,'(a)',advance='no')'xdxydy'
-          elseif(xy%have_dx)then
-            write(6,'(a)',advance='no')'xdxy'
-          elseif(xy%have_dy)then
-            write(6,'(a)',advance='no')'xydy'
-          else
-            write(6,'(a)',advance='no')'xy'
-          endif
-          write(6,'(a)')', '//trim(i2s(xy%nxy))//' data.'
+          write(6,'(a)')'Loaded data from "'//trim(fname)//'" as dataset #'//&
+             &trim(i2s(iset))//', type '//trim(type_string(xy%have_dx,&
+             &xy%have_dy,xy%have_w))//', '//trim(i2s(xy%nxy))//' data.'
         enddo ! iset
         call refresh_fit(ndataset,dlist,fit)
         write(6,'()')
@@ -928,9 +933,9 @@ CONTAINS
               case('yscale')
                 dataset%itransfy=itransf
               end select
+              write(6,'(a)')'Set '//trim(field(2,command))//' to '//&
+                 &trim(TRANSF_NAME(itransf))//' for set #'//trim(i2s(iset))//'.'
             enddo ! ifield
-            write(6,'(a)')'Set '//trim(field(2,command))//' to '//&
-               &trim(TRANSF_NAME(itransf))//' for set #'//trim(i2s(iset))//'.'
           else
             ! Check transformation is applicable.
             do iset=1,ndataset
@@ -978,12 +983,12 @@ CONTAINS
               itransfx_default=itransf
               do iset=1,ndataset
                 dlist(iset)%dataset%itransfx=itransf
-              enddo ! ifield
+              enddo ! iset
             case('yscale')
               itransfy_default=itransf
               do iset=1,ndataset
                 dlist(iset)%dataset%itransfy=itransf
-              enddo ! ifield
+              enddo ! iset
             end select
             write(6,'(a)')'Set '//trim(field(2,command))//' to '//&
                &trim(TRANSF_NAME(itransf))//' for all sets.'
@@ -995,6 +1000,82 @@ CONTAINS
           enddo ! iset
           ! Update X0.
           call refresh_fit(ndataset,dlist,fit)
+
+        case('wexp')
+          ! Set weight exponent.
+          wexp=parse_dble(field(3,command),ierr)
+          if(ierr/=0)then
+            write(6,'(a)')'Problem parsing value of weight exponent.'
+            write(6,'()')
+            cycle user_loop
+          endif
+          if(nfield(command)>3)then
+            ! Set-by-set setting.  Check syntax.
+            if(trim(field(4,command))/='for')then
+              write(6,'(a)')'Syntax error in set command: unkwown subcommand &
+                 &"'//trim(field(4,command))//'".'
+              write(6,'()')
+              cycle user_loop
+            endif
+            if(nfield(command)<5)then
+              write(6,'(a)')'Syntax error in set command: "for" subcommand &
+                 &requires arguments.'
+              write(6,'()')
+              cycle user_loop
+            endif
+            ! Check exponent is applicable.
+            do ifield=5,nfield(command)
+              iset=int_field(ifield,command,ierr)
+              if(ierr/=0)then
+                write(6,'(a)')'Syntax error in set command: could not parse &
+                   &set values.'
+                write(6,'()')
+                cycle user_loop
+              endif
+              if(iset<1.or.iset>ndataset)then
+                write(6,'(a)')'Set index out of range.'
+                write(6,'()')
+                cycle user_loop
+              endif
+              if(wexp<0.d0.and..not.are_equal(wexp,0.d0))then
+                xy=>dlist(iset)%dataset%xy
+                if(any(are_equal(xy%w,0.d0)))then
+                  write(6,*)'Cannot apply weight exponent: set #'//&
+                     &trim(i2s(iset))//' contains w=0.'
+                  write(6,'()')
+                  cycle user_loop
+                endif
+              endif
+            enddo ! ifield
+            ! Set exponent.
+            do ifield=5,nfield(command)
+              iset=int_field(ifield,command,ierr)
+              dataset=>dlist(iset)%dataset
+              dataset%wexp=wexp
+              write(6,'(a)')'Set wexp for set #'//trim(i2s(iset))//'.'
+            enddo ! ifield
+          else
+            ! Check exponent is applicable.
+            ! FIXME - create functions eq_dble, le_dble, lt_dble, etc.
+            if(wexp<0.d0.and..not.are_equal(wexp,0.d0))then
+              do iset=1,ndataset
+                xy=>dlist(iset)%dataset%xy
+                if(any(are_equal(xy%w,0.d0)))then
+                  write(6,*)'Cannot apply weight exponent: set #'//&
+                     &trim(i2s(iset))//' contains w=0.'
+                  write(6,'()')
+                  cycle user_loop
+                endif
+              enddo ! iset
+            endif ! wexp<0
+            ! Set exponent.
+            wexp_default=wexp
+            do iset=1,ndataset
+              dlist(iset)%dataset%wexp=wexp
+            enddo ! iset
+            write(6,'(a)')'Set wexp for all sets.'
+          endif
+          write(6,'()')
 
         case('fit')
           ! Set fit exponents.
@@ -1073,6 +1154,7 @@ CONTAINS
 
         case('range')
           ! Set fit range.
+          ! FIXME - "for" clause
           ! Check sort variable.
           call parse_range(trim(field(3,command)),drange)
           if(drange%op=='')then
@@ -1110,7 +1192,7 @@ CONTAINS
               write(6,'()')
               cycle user_loop
             case(3)
-              t1=int_field(3,command,ierr)
+              i1=int_field(3,command,ierr)
             end select
             if(ierr==0)then
               ! Indices given as list.
@@ -1191,6 +1273,7 @@ CONTAINS
 
         case('centre')
           ! Check value.
+          ! FIXME - "for" clause
           select case(field(3,command))
           case('left','right','max','min','centre','mean','median')
             continue
@@ -1207,26 +1290,6 @@ CONTAINS
           fit%x0_string=field(3,command)
           ! Update X0.
           call refresh_fit(ndataset,dlist,fit)
-
-        case('weights')
-          select case(trim(field(3,command)))
-          case('yes','YES','y','Y','true','TRUE','t','T')
-            mcparams%weighted=.true.
-          case('no','NO','n','N','false','FALSE','f','F')
-            mcparams%weighted=.false.
-          case default
-            write(6,'(a)')'Invalid value "'//trim(field(3,command))//'" for &
-               &variable "'//trim(field(2,command))//'".'
-            write(6,'()')
-            cycle user_loop
-          end select
-          write(6,'(a)',advance='no')'Set weights = '
-          if(mcparams%weighted)then
-            write(6,'(a)')'yes'
-          else
-            write(6,'(a)')'no'
-          endif
-          write(6,'()')
 
         case('nsample')
           ! Check value.
@@ -1272,6 +1335,12 @@ CONTAINS
             call refresh_dataset(dlist(iset)%dataset,drange)
           enddo ! iset
           call refresh_fit(ndataset,dlist,fit)
+        case('wexp')
+          ! FIXME - "for" clause
+          wexp_default=1.d0
+          do iset=1,ndataset
+            dlist(iset)%dataset%wexp=1.d0
+          enddo ! ifield
         case('fit')
           deallocate(fit%pow,fit%share)
           fit%npoly=2
@@ -1292,8 +1361,6 @@ CONTAINS
         case('centre')
           fit%X0_string='0'
           call refresh_fit(ndataset,dlist,fit)
-        case('weights')
-          mcparams%weighted=.false.
         case('nsample')
           mcparams%nsample=10000
         case default
@@ -1320,12 +1387,6 @@ CONTAINS
           write(6,'(a,es11.4)')'  Data range: '//trim(drange%var)//' '//&
              &trim(drange%op)//' ',drange%thres
         end select
-        write(6,'(a)',advance='no')'  Use stderr-based weights in fits: '
-        if(mcparams%weighted)then
-          write(6,'(a)')'yes [not recommended]'
-        else
-          write(6,'(a)')'no [recommended]'
-        endif
         write(6,'(a)')'  Number of Monte Carlo samples: '//&
            &trim(i2s(mcparams%nsample))
         write(6,'()')
@@ -1340,26 +1401,17 @@ CONTAINS
         do iset=1,ndataset
           dataset=>dlist(iset)%dataset
           xy=>dataset%xy
-          write(6,'(a)',advance='no')'* Set #'//trim(i2s(iset))//': type '
-          if(xy%have_dx.and.xy%have_dy)then
-            write(6,'(a)',advance='no')'xdxydy'
-          elseif(xy%have_dx)then
-            write(6,'(a)',advance='no')'xdxy'
-          elseif(xy%have_dy)then
-            write(6,'(a)',advance='no')'xydy'
-          else
-            write(6,'(a)',advance='no')'xy'
-          endif
-          if(xy%nxy/=dataset%rtxy%nxy)then
-            write(6,'(a)',advance='no')', '//trim(i2s(xy%nxy))//' ('//&
-               &trim(i2s(dataset%rtxy%nxy))//') data, '
-          else
-            write(6,'(a)',advance='no')', '//trim(i2s(xy%nxy))//' data, '
-          endif
+          write(6,'(a)',advance='no')'* Set #'//trim(i2s(iset))//': '//&
+             &trim(i2s(xy%nxy))
+          if(xy%nxy/=dataset%rtxy%nxy)write(6,'(a)',advance='no')' ('//&
+             &trim(i2s(dataset%rtxy%nxy))//')'
+          write(6,'(a)',advance='no')' '//&
+             &trim(type_string(xy%have_dx,xy%have_dy,xy%have_w))//' data, '
           write(6,'(a)',advance='no')&
              &trim(TRANSF_NAME(dataset%itransfx))//'-'//&
              &trim(TRANSF_NAME(dataset%itransfy))//' scale'
-          write(6,'(a,es10.4)',advance='no')', weight=',dataset%weight
+          write(6,'(a,es10.4)',advance='no')', wexp=',dataset%wexp
+          write(6,'(a,es10.4)',advance='no')', sw=',dataset%weight
           write(6,'(a)')'.'
         enddo ! i
         write(6,'()')
@@ -1421,21 +1473,24 @@ CONTAINS
           call pprint('')
         case('load')
           call pprint('')
-          call pprint('Command: load <file> [type <type> using <columns>] &
+          call pprint('Command: load <file> [type <type> [using <columns>]] &
              &[where <column> <value>] [by <column>]',0,9)
           call pprint('')
           call pprint('Loads data from <file> into a new dataset.  By &
              &default:',2,2)
-          call pprint('* 1-column files are of type xy, with (x,y)=(index,1)',&
-             &2,4)
-          call pprint('* 2-column files are of type xy, with (x,y)=(1,2)',2,4)
-          call pprint('* 3-column files are of type xydy, with &
-             &(x,y,dy)=(1,2,3)',2,4)
-          call pprint('* 4- or more-column files are of type xdxydy, with &
-             &(x,dx,y,dy)=(1,2,3,4)',2,4)
-          call pprint('Other column selections can be specified with an &
-             &explicity type/using clause, e.g., "type xydy using 3 5 7".  A &
-             &column index of zero refers to the line index.',2,2)
+          call pprint('* 1-column files are of type y',2,4)
+          call pprint('* 2-column files are of type xy',2,4)
+          call pprint('* 3-column files are of type xydy',2,4)
+          call pprint('* 4-column files are of type xydyw',2,4)
+          call pprint('* 5- or more-column files are of type xdxydyw',2,4)
+          call pprint('Other types can be specified with an "type" clause. &
+             &POLYFIT assumes by default that data can be found in the &
+             &order given by <type> starting at column 1.  Other columns can &
+             &be specified with the "using" clause; column indices are &
+             &assigned to the variables in the order given by <type>. &
+             &Specifying a column index of zero for x or y is equivalent to &
+             &omitting x or y from <type>, and causes the variable to be set &
+             &to the line index.',2,2)
           call pprint('')
           call pprint('The "where" subcommand restricts the file parsing to &
              &those lines in <file> where column <column> takes the value &
@@ -1449,14 +1504,28 @@ CONTAINS
              &belong to different datasets if ANY of the specified columns &
              &differs in value.',2,2)
           call pprint('')
+          call pprint('Example:',2,2)
+          call pprint('')
+          call pprint('load "../data.dat" type ywdy using 3 5 4 &
+             &where 2 "good" where 7 1/4 by 1',4,6)
+          call pprint('')
+          call pprint('This will read file "../data.dat", loading y, dy, and &
+             &w from colums 3, 4, and 5, setting x to the data-point index. &
+             &Lines whose column 2 does not contain "good" or whose column 7 &
+             &does not contain 0.25 are skipped, and the loaded data are &
+             &split into individual datasets for each distinct value of &
+             &column 1.  Note that data-point indices for each dataset run &
+             &independently, i.e., the first value of x in each dataset will &
+             &be 1.',2,2)
+          call pprint('')
         case('wload')
           call pprint('')
           call pprint('Command: wload <file> [using <column>] [where <column> &
              &<value>]',0,9)
           call pprint('')
-          call pprint('Loads dataset weights from column <column> (column 1 &
-             &by default) of <file>.  These weights are applied to all data &
-             &in a dataset during fitting, and are used in the "sum" &
+          call pprint('Loads global dataset weights from column <column> &
+             &(column 1 by default) of <file>.  These weights are applied to &
+             &all data in a dataset during fitting, and are used in the "sum" &
              &operation as linear coefficients.  E.g., "evaluate sumf at X=0" &
              &on two weighted datasets will compute w1*f1(0) + w2*f2(0).',2,2)
           call pprint('')
@@ -1616,7 +1685,6 @@ CONTAINS
             call pprint('* range',2,4)
             call pprint('* shared',2,4)
             call pprint('* centre',2,4)
-            call pprint('* weights',2,4)
             call pprint('* nsample',2,4)
             call pprint('')
             call pprint('Type "help set <variable>" for detailed &
@@ -1651,6 +1719,33 @@ CONTAINS
               call pprint('')
               call pprint('The default value of "xscale" and "yscale" &
                  &is "linear".',2,2)
+              call pprint('')
+            case('wexp')
+              call pprint('')
+              call pprint('Variable: wexp',0,10)
+              call pprint('')
+              call pprint('"wexp" sets the exponent of the data weights to &
+                 &be used in the fits, so that the i-th data point is &
+                 &weighted by w_i^wexp. The default value of wexp is 1.',2,2)
+              call pprint('')
+              call pprint('"wexp" can be set globally or per dataset using &
+                 &the "for" clause.  Note that the global value applies to &
+                 &all loaded datasets and becomes the default for new &
+                 &datasets.  POLYFIT will refuse to apply a negative weight &
+                 &exponent transformation to datasets containing zero &
+                 &weights.',2,2)
+              call pprint('')
+              call pprint('Note that one can use wexp=-2 to perform the usual &
+                 &dy^-2 weighting used in "chi-squared" fits, e.g.,',2,2)
+              call pprint('')
+              call pprint('load "file.dat" type xydyw using 1 2 3 3',4,6)
+              call pprint('set wexp -2',4,6)
+              call pprint('')
+              call pprint('The repeated index in the "load" command hints at &
+                 &the double-counting problem with this type of fit, which, &
+                 &along with its inability to handle data with an uncertainty &
+                 &of zero, is the reason why we do not recommend using this &
+                 &technique.',2,2)
               call pprint('')
             case('fit')
               call pprint('')
@@ -1733,24 +1828,6 @@ CONTAINS
                  &if data ranges are modified, etc.',2,2)
               call pprint('')
               call pprint('The default value of "centre" is "0".',2,2)
-              call pprint('')
-            case('weights')
-              call pprint('')
-              call pprint('Variable: weights',0,10)
-              call pprint('')
-              call pprint('"weights" determines whether to use fit weights &
-                 &of the form w=1, w=dX^-2, w=dY^-2, or w=(dXdY)^-2 &
-                 &respectively for xy, xdxy, xydy, and xdxydy datasets.',2,2)
-              call pprint('')
-              call pprint('This type of weighting is common practice, but &
-                 &results in the underestimation of uncertainties due to &
-                 &double counting, breaks the ability to mix xy datasets with &
-                 &xdxy/xydy/xdxydy datasets, and is in general discouraged.',&
-                 &2,2)
-              call pprint('')
-              call pprint('The value of "weights" is Boolean, and can be set &
-                 &to "yes" or "no".  The default value of "weights" is "no".',&
-                 &2,2)
               call pprint('')
             case('nsample')
               call pprint('')
@@ -1854,6 +1931,14 @@ CONTAINS
       endif
     end select
     nullify(sortvec)
+    ! Apply weight exponent.
+    if(.not.are_equal(dataset%wexp,1.d0))then
+      if(are_equal(dataset%wexp,0.d0))then
+        txy%w=1.d0
+      else
+        txy%w=txy%w**dataset%wexp
+      endif
+    endif
 
     ! Create masked transformed dataset.
     call kill_xy(dataset%rtxy)
@@ -1862,13 +1947,15 @@ CONTAINS
     rtxy%nxy=count(mask)
     rtxy%have_dx=txy%have_dx
     rtxy%have_dy=txy%have_dy
+    rtxy%have_w=txy%have_w
     allocate(rtxy%x(rtxy%nxy),rtxy%y(rtxy%nxy),rtxy%dx(rtxy%nxy),&
-       &rtxy%dy(rtxy%nxy))
+       &rtxy%dy(rtxy%nxy),rtxy%w(rtxy%nxy))
     if(rtxy%nxy>0)then
       rtxy%x=pack(txy%x,mask)
       rtxy%dx=pack(txy%dx,mask)
       rtxy%y=pack(txy%y,mask)
       rtxy%dy=pack(txy%dy,mask)
+      rtxy%w=pack(txy%w,mask)
     endif
 
   END SUBROUTINE refresh_dataset
@@ -1970,8 +2057,8 @@ CONTAINS
     ! Quick-access pointers.
     TYPE(dataset_type),POINTER :: dataset
     ! Local variables.
-    TYPE(eval_type) deval ! dummy arg
-    INTEGER tot_nparam,tot_nxy,iset,i
+    TYPE(eval_type) deval ! dummy arg.  FIXME - make optional in eval_...
+    INTEGER tot_nparam,tot_nxy,iset,i,ierr
     DOUBLE PRECISION chi2,chi2err,rmsy,rmsyerr,a(fit%npoly,ndataset),&
        &da(fit%npoly,ndataset)
 
@@ -1985,8 +2072,14 @@ CONTAINS
 
     ! Perform fit.
     call eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
-       &deval,chi2mean=chi2,chi2err=chi2err,amean=a,aerr=da,rmsymean=rmsy,&
-       &rmsyerr=rmsyerr)
+       &deval,ierr,chi2mean=chi2,chi2err=chi2err,amean=a,aerr=da,&
+       &rmsymean=rmsy,rmsyerr=rmsyerr)
+    if(ierr/=0)then
+      write(6,'()')
+      write(6,'(a)')'Could not perform fit.'
+      write(6,'()')
+      return
+    endif
 
     ! Print table header.
     write(6,'()')
@@ -2054,13 +2147,19 @@ CONTAINS
     TYPE(range_type),INTENT(in) :: drange
     TYPE(eval_type),INTENT(in) :: deval
     ! Local variables.
-    INTEGER iset,ix
+    INTEGER iset,ix,ierr
     DOUBLE PRECISION,ALLOCATABLE :: fmean(:,:),ferr(:,:)
 
     ! Evaluate.
     allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset))
     call eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
-       &deval,fmean,ferr)
+       &deval,ierr,fmean,ferr)
+    if(ierr/=0)then
+      write(6,'()')
+      write(6,'(a)')'Could not perform fit.'
+      write(6,'()')
+      return
+    endif
 
     ! Report.
     write(6,'()')
@@ -2161,7 +2260,14 @@ CONTAINS
        &a(fit%npoly,ndataset))
     if(trim(deval%what)/='shared')then
       call eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
-         &deval,fmean=fmean,ferr=ferr,amean=a)
+         &deval,ierr,fmean=fmean,ferr=ferr,amean=a)
+      if(ierr/=0)then
+        write(6,'()')
+        write(6,'(a)')'Could not perform fit.'
+        write(6,'()')
+        close(io,status='delete')
+        return
+      endif
       if(deval%nderiv==0)then
         ! Plot data.
         do iset=1,ndataset
@@ -2200,7 +2306,14 @@ CONTAINS
       enddo ! iset
     else
       call eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
-         &deval,fmean=fmean,ferr=ferr,amean=a)
+         &deval,ierr,fmean=fmean,ferr=ferr,amean=a)
+      if(ierr/=0)then
+        write(6,'()')
+        write(6,'(a)')'Could not perform fit.'
+        write(6,'()')
+        close(io,status='delete')
+        return
+      endif
       ! Plot data minus independent bit.
       if(deval%nderiv==0)then
         op_npoly=fit%npoly
@@ -2244,7 +2357,6 @@ CONTAINS
         write(io,*)deval%x(i),fmean(i,1),ferr(i,1)
       enddo ! i
     endif
-    deallocate(fmean,ferr,a)
     nullify(xy)
 
     ! Close file.
@@ -2274,7 +2386,7 @@ CONTAINS
     TYPE(dataset_type),POINTER :: dataset
     ! Local variables.
     TYPE(fit_form_type),POINTER :: tfit
-    INTEGER tot_nxy,tot_nparam,iset,npoly,ix,prev_npoly
+    INTEGER tot_nxy,tot_nparam,iset,npoly,ix,prev_npoly,ierr
     DOUBLE PRECISION chi2,chi2err,fmean(deval%n,ndataset),&
        &ferr(deval%n,ndataset),t1,t2,min_chi2
     DOUBLE PRECISION chi2_all(fit%npoly),chi2err_all(fit%npoly),&
@@ -2329,7 +2441,8 @@ CONTAINS
       if(tot_nparam<tot_nxy)then
         ! Perform fit and report.
         call eval_multifit_monte_carlo(ndataset,dlist,drange,tfit,mcparams,&
-           &deval,fmean,ferr,chi2,chi2err)
+           &deval,ierr,fmean,ferr,chi2,chi2err)
+        if(ierr/=0)cycle
         chi2_all(npoly)=chi2/dble(tot_nxy-tot_nparam)
         chi2err_all(npoly)=chi2err/dble(tot_nxy-tot_nparam)
         fmean_all(:,:,npoly)=fmean
@@ -2420,7 +2533,7 @@ CONTAINS
     ! Pointer-resizing pointers.
     TYPE(dataset_list_type),POINTER :: tmp_dlist(:)
     ! Local variables.
-    INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,ix,prev_igrid
+    INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,ix,prev_igrid,ierr
     INTEGER,ALLOCATABLE :: indx(:),tngrid(:),tot_nxy_grid(:)
     DOUBLE PRECISION chi2,chi2err,fmean(deval%n,ndataset),&
        &ferr(deval%n,ndataset),t1,t2,min_chi2
@@ -2522,7 +2635,8 @@ CONTAINS
       if(tot_nparam<tot_nxy)then
         ! Perform fit and report.
         call eval_multifit_monte_carlo(ndataset,tmp_dlist,drange,fit,mcparams,&
-           &deval,fmean,ferr,chi2,chi2err)
+           &deval,ierr,fmean,ferr,chi2,chi2err)
+        if(ierr/=0)cycle
         chi2_all(igrid)=chi2/dble(tot_nxy-tot_nparam)
         chi2err_all(igrid)=chi2err/dble(tot_nxy-tot_nparam)
         fmean_all(:,:,igrid)=fmean
@@ -2615,7 +2729,7 @@ CONTAINS
     TYPE(fit_form_type),POINTER :: tfit
     TYPE(dataset_list_type),POINTER :: tmp_dlist(:)
     INTEGER ixy,igrid,ngrid,tot_nxy,tot_nparam,iset,npoly,ix,prev_igrid,&
-       &prev_npoly,prev_prev_npoly
+       &prev_npoly,prev_prev_npoly,ierr
     INTEGER,ALLOCATABLE :: indx(:),tngrid(:),tot_nxy_grid(:)
     DOUBLE PRECISION chi2,chi2err,fmean(deval%n,ndataset),&
        &ferr(deval%n,ndataset),t1,t2,min_chi2
@@ -2727,7 +2841,8 @@ CONTAINS
         if(tot_nparam<tot_nxy)then
           ! Perform fit and report.
           call eval_multifit_monte_carlo(ndataset,tmp_dlist,drange,tfit,&
-             &mcparams,deval,fmean,ferr,chi2,chi2err)
+             &mcparams,deval,ierr,fmean,ferr,chi2,chi2err)
+          if(ierr/=0)cycle
           chi2_all(npoly,igrid)=chi2/dble(tot_nxy-tot_nparam)
           chi2err_all(npoly,igrid)=chi2err/dble(tot_nxy-tot_nparam)
           fmean_all(:,:,npoly,igrid)=fmean
@@ -2981,7 +3096,7 @@ CONTAINS
   ! COMPUTATION ROUTINES
 
 
-  SUBROUTINE perform_multifit(ndataset,dlist,fit,weighted,chi2,a,da)
+  SUBROUTINE perform_multifit(ndataset,dlist,fit,chi2,a,ierr)
     !----------------------------------------------------!
     ! Perform least-squares fit of sets of (weighted) xy !
     ! data to the polynomial of exponents pow(1:npoly),  !
@@ -2992,18 +3107,20 @@ CONTAINS
     INTEGER,INTENT(in) :: ndataset
     TYPE(dataset_list_type),INTENT(in) :: dlist(ndataset)
     TYPE(fit_form_type),INTENT(in) :: fit
-    LOGICAL,INTENT(in) :: weighted
     DOUBLE PRECISION,INTENT(inout) :: chi2,a(fit%npoly,ndataset)
-    DOUBLE PRECISION,INTENT(inout),OPTIONAL :: da(fit%npoly,ndataset)
+    INTEGER,INTENT(inout) :: ierr
     ! Quick-access pointers.
     TYPE(xy_type),POINTER :: xy
     ! Local variables.
-    DOUBLE PRECISION,ALLOCATABLE :: x(:,:),y(:,:),weight(:,:)
+    DOUBLE PRECISION,ALLOCATABLE :: x(:,:),y(:,:),w(:,:)
     INTEGER tot_nparam,max_nxy,tot_nxy,ieq,ip,jp,iset,jset,&
-       &ixy,ipoly,jpoly,i,j,lwork,ierr
+       &ixy,ipoly,jpoly,i,j,lwork
     DOUBLE PRECISION e_fit,set_weight
-    DOUBLE PRECISION,ALLOCATABLE :: M(:,:),Minv(:,:),c(:),dc(:),work(:)
+    DOUBLE PRECISION,ALLOCATABLE :: M(:,:),Minv(:,:),c(:),work(:)
     INTEGER,ALLOCATABLE :: ipiv(:)
+
+    ! Initialize.
+    ierr=0
 
     ! Extract fit properties.
     tot_nparam=count(fit%share)+ndataset*count(.not.fit%share)
@@ -3016,93 +3133,80 @@ CONTAINS
       max_nxy=max(max_nxy,xy%nxy)
       tot_nxy=tot_nxy+xy%nxy
     enddo ! iset
-    allocate(x(max_nxy,ndataset),y(max_nxy,ndataset),weight(max_nxy,ndataset))
+    allocate(x(max_nxy,ndataset),y(max_nxy,ndataset),w(max_nxy,ndataset))
     x=1.d0
     y=0.d0
-    weight=0.d0
+    w=0.d0
     do iset=1,ndataset
       set_weight=dlist(iset)%dataset%weight
       xy=>dlist(iset)%dataset%rtxy
       if(xy%nxy==0)cycle
       x(1:xy%nxy,iset)=xy%x(1:xy%nxy)-fit%X0
       y(1:xy%nxy,iset)=xy%y(1:xy%nxy)
-      if(.not.weighted)then
-        weight(1:xy%nxy,iset)=set_weight
-      else
-        if(xy%have_dx.and.xy%have_dy)then
-          weight(1:xy%nxy,iset)=set_weight/(xy%dx(1:xy%nxy)*xy%dy(1:xy%nxy))**2
-        elseif(xy%have_dx)then
-          weight(1:xy%nxy,iset)=set_weight/xy%dx(1:xy%nxy)**2
-        elseif(xy%have_dy)then
-          weight(1:xy%nxy,iset)=set_weight/xy%dy(1:xy%nxy)**2
-        else
-          weight(1:xy%nxy,iset)=set_weight
-        endif
-      endif
+      w(1:xy%nxy,iset)=set_weight*xy%w(1:xy%nxy)
     enddo ! iset
     nullify(xy)
 
     ! Construct c vector and M matrix.
     allocate(M(tot_nparam,tot_nparam),Minv(tot_nparam,tot_nparam),&
-       &ipiv(tot_nparam),c(tot_nparam),dc(tot_nparam))
+       &ipiv(tot_nparam),c(tot_nparam))
 
     ! Initialize equation counter.
     ieq=0
     ! Loop over shared parameters.
     do ipoly=1,fit%npoly
       if(.not.fit%share(ipoly))cycle
-      ! There is one equation for this parameter.
+      ! There is one equation associated with this parameter.
       ieq=ieq+1
       ! Right-hand side.
       c(ieq)=0.d0
       do iset=1,ndataset
-        c(ieq)=c(ieq)+sum(weight(:,iset)*y(:,iset)*x(:,iset)**fit%pow(ipoly))
+        c(ieq)=c(ieq)+sum(w(:,iset)*y(:,iset)*x(:,iset)**fit%pow(ipoly))
       enddo ! iset
-      ! Coefficients for shared parameters.
+      ! Coefficients of shared parameters.
       jp=0
       do jpoly=1,fit%npoly
         if(.not.fit%share(jpoly))cycle
         jp=jp+1
         M(jp,ieq)=0.d0
         do iset=1,ndataset
-          M(jp,ieq)=M(jp,ieq)+sum(weight(:,iset)*x(:,iset)**&
+          M(jp,ieq)=M(jp,ieq)+sum(w(:,iset)*x(:,iset)**&
              &(fit%pow(jpoly)+fit%pow(ipoly)))
         enddo ! iset
       enddo ! jpoly
-      ! Coefficients for independent parameters.
+      ! Coefficients of independent parameters.
       do jpoly=1,fit%npoly
         if(fit%share(jpoly))cycle
         do iset=1,ndataset
           jp=jp+1
-          M(jp,ieq)=sum(weight(:,iset)*x(:,iset)**&
-             &(fit%pow(jpoly)+fit%pow(ipoly)))
+          M(jp,ieq)=sum(w(:,iset)*x(:,iset)**(fit%pow(jpoly)+fit%pow(ipoly)))
         enddo ! iset
       enddo ! jpoly
     enddo ! ipoly
     ! Loop over independent parameters.
     do ipoly=1,fit%npoly
       if(fit%share(ipoly))cycle
-      ! There are ndataset equations for the ndataset instances of this
-      ! parameter.
+      ! There are ndataset equations associated with this parameter -- each
+      ! associated with each of the ndataset instances of the parameter.
       do iset=1,ndataset
         ieq=ieq+1
         ! Right-hand side.
-        c(ieq)=sum(weight(:,iset)*y(:,iset)*x(:,iset)**fit%pow(ipoly))
-        ! Coefficients for shared parameters.
+        c(ieq)=sum(w(:,iset)*y(:,iset)*x(:,iset)**fit%pow(ipoly))
+        ! Coefficients of shared parameters.
         jp=0
         do jpoly=1,fit%npoly
           if(.not.fit%share(jpoly))cycle
           jp=jp+1
-          M(jp,ieq)=M(jp,ieq)+sum(weight(:,iset)*x(:,iset)**&
+          M(jp,ieq)=M(jp,ieq)+sum(w(:,iset)*x(:,iset)**&
              &(fit%pow(jpoly)+fit%pow(ipoly)))
         enddo ! jpoly
-        ! Coefficients for independent parameters.
+        ! Coefficients of independent parameters.
         do jpoly=1,fit%npoly
           if(fit%share(jpoly))cycle
           do jset=1,ndataset
             jp=jp+1
             if(jset==iset)then
-              M(jp,ieq)=sum(weight(:,iset)*x(:,iset)**&
+              M(jp,ieq)=sum(w(:,iset)*x(:,iset)**&
                  &(fit%pow(jpoly)+fit%pow(ipoly)))
             else
               M(jp,ieq)=0.d0
@@ -3117,18 +3221,18 @@ CONTAINS
     allocate(work(1))
     lwork=-1
     call dsytrf('L',tot_nparam,Minv,tot_nparam,ipiv,work,lwork,ierr)
-    if(ierr/=0)call quit('DSYTRF error on workspace query call.')
+    if(ierr/=0)return
     lwork=nint(work(1))
     deallocate(work)
     allocate(work(lwork),stat=ierr)
-    if(ierr/=0)call quit('Allocation error (work).')
+    if(ierr/=0)return
     call dsytrf('L',tot_nparam,Minv,tot_nparam,ipiv,work,lwork,ierr)
-    if(ierr/=0)call quit('DSYTRF error.')
+    if(ierr/=0)return
     deallocate(work)
     allocate(work(tot_nparam),stat=ierr)
-    if(ierr/=0)call quit('Allocation error (work).')
+    if(ierr/=0)return
     call dsytri('L',tot_nparam,Minv,tot_nparam,ipiv,work,ierr)
-    if(ierr/=0)call quit('DSYTRI error.')
+    if(ierr/=0)return
     deallocate(work)
 
     ! Complete Minv and evaluate coefficients.
@@ -3139,14 +3243,6 @@ CONTAINS
     enddo ! i
     c=matmul(Minv,c)
 
-    ! Evaluate standard errors if data are weighted.
-    dc=0.d0
-    if(weighted)then
-      do i=1,tot_nparam
-        dc(i)=sqrt(Minv(i,i))
-      enddo ! i
-    endif ! weighted
-
     ! Put parameters in output arrays.
     ip=0
     ! Loop over shared parameters.
@@ -3154,7 +3250,6 @@ CONTAINS
       if(.not.fit%share(ipoly))cycle
       ip=ip+1
       a(ipoly,1:ndataset)=c(ip)
-      if(present(da))da(ipoly,1:ndataset)=dc(ip)
     enddo ! ipoly
     ! Loop over independent parameters.
     do ipoly=1,fit%npoly
@@ -3162,7 +3257,6 @@ CONTAINS
       do iset=1,ndataset
         ip=ip+1
         a(ipoly,iset)=c(ip)
-        if(present(da))da(ipoly,iset)=dc(ip)
       enddo ! iset
     enddo ! ipoly
 
@@ -3174,18 +3268,18 @@ CONTAINS
         do ipoly=1,fit%npoly
           e_fit=e_fit+a(ipoly,iset)*x(ixy,iset)**fit%pow(ipoly)
         enddo ! ipoly
-        chi2=chi2+(y(ixy,iset)-e_fit)**2*weight(ixy,iset)
+        chi2=chi2+(y(ixy,iset)-e_fit)**2*w(ixy,iset)
       enddo ! ixy
     enddo ! iset
 
     ! Free memory.
-    deallocate(M,Minv,ipiv,c,dc)
+    deallocate(M,Minv,ipiv,c)
 
   END SUBROUTINE perform_multifit
 
 
   SUBROUTINE eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
-     &deval,fmean,ferr,chi2mean,chi2err,rmsymean,rmsyerr,amean,aerr,&
+     &deval,ierr,fmean,ferr,chi2mean,chi2err,rmsymean,rmsyerr,amean,aerr,&
      &fmean_1s,ferr_1s,fmean_2s,ferr_2s,fmed,fskew,fkurt)
     !------------------------------------------------------!
     ! Perform Monte Carlo sampling of data space to obtain !
@@ -3199,6 +3293,7 @@ CONTAINS
     TYPE(fit_form_type),INTENT(in) :: fit
     TYPE(mc_params_type),INTENT(in) :: mcparams
     TYPE(eval_type),INTENT(in) :: deval
+    INTEGER,INTENT(inout) :: ierr
     DOUBLE PRECISION,INTENT(inout),OPTIONAL :: &
        &fmean(deval%n,ndataset),ferr(deval%n,ndataset),&
        &chi2mean,chi2err,rmsymean,rmsyerr,&
@@ -3222,10 +3317,12 @@ CONTAINS
     ! Distribution analysis.
     DOUBLE PRECISION var,skew,kurt,f2s_lo,f1s_lo,f1s_hi,f2s_hi
     ! Misc.
-    LOGICAL weighted,need_f,need_a,need_chi2,need_rmsy
+    LOGICAL need_f,need_a,need_chi2,need_rmsy
     INTEGER nsample,ipoly,ideriv,irandom,ix,iset
-    DOUBLE PRECISION chi2,t1,a(fit%npoly,ndataset),da(fit%npoly,ndataset),&
-       &f0,sum_weight
+    DOUBLE PRECISION chi2,t1,a(fit%npoly,ndataset),f0,sum_weight
+
+    ! Initialize.
+    ierr=0
 
     ! Make copy of datasets.
     call clone_dlist(dlist,tmp_dlist)
@@ -3260,13 +3357,6 @@ CONTAINS
       sum_weight=sum_weight+tmp_dlist(iset)%dataset%weight
     enddo ! iset
 
-    ! Override weights if not all sets have stderrs.
-    weighted=mcparams%weighted
-    do iset=1,ndataset
-      weighted=weighted.and.(tmp_dlist(iset)%dataset%xy%have_dx.or.&
-         &tmp_dlist(iset)%dataset%xy%have_dy)
-    enddo ! iset
-
     ! Initialize.
     f0=0.d0
     nsample=mcparams%nsample
@@ -3281,7 +3371,11 @@ CONTAINS
         if(xy%have_dy)xy%y=xy_orig%y+gaussian_random_number(xy_orig%dy)
         call refresh_dataset(dataset,drange)
       enddo ! iset
-      call perform_multifit(ndataset,tmp_dlist,fit,weighted,chi2,a,da)
+      call perform_multifit(ndataset,tmp_dlist,fit,chi2,a,ierr)
+      if(ierr/=0)then
+        call kill_dlist(tmp_dlist)
+        return
+      endif
       w_vector(irandom)=1.d0
       if(need_chi2)chi2_array(irandom)=chi2
       if(need_rmsy)rmsy_array(irandom)=sqrt(chi2/sum_weight)
@@ -3394,9 +3488,6 @@ CONTAINS
     enddo ! iset
 
     ! Clean up.
-    if(allocated(f_array))deallocate(f_array)
-    if(allocated(a_array))deallocate(a_array)
-    if(allocated(chi2_array))deallocate(chi2_array)
     call kill_dlist(tmp_dlist)
 
   END SUBROUTINE eval_multifit_monte_carlo
@@ -3462,14 +3553,14 @@ CONTAINS
   END SUBROUTINE check_file
 
 
-  SUBROUTINE read_file(fname,icol_x,icol_y,icol_dx,icol_dy,nsearch,fsearch,&
-     &search,ndiscr,fdiscr,ndataset,dlist,ierr)
+  SUBROUTINE read_file(fname,icol_x,icol_y,icol_dx,icol_dy,icol_w,&
+     &nsearch,fsearch,search,ndiscr,fdiscr,ndataset,dlist,ierr)
     !-------------------------------------!
     ! Read in the data in the input file. !
     !-------------------------------------!
     IMPLICIT NONE
     CHARACTER(*),INTENT(in) :: fname
-    INTEGER,INTENT(in) :: icol_x,icol_y,icol_dx,icol_dy,nsearch,&
+    INTEGER,INTENT(in) :: icol_x,icol_y,icol_dx,icol_dy,icol_w,nsearch,&
        &fsearch(nsearch),ndiscr,fdiscr(ndiscr)
     CHARACTER(*),INTENT(in) :: search(nsearch)
     INTEGER,INTENT(inout) :: ndataset,ierr
@@ -3552,7 +3643,7 @@ CONTAINS
         dataset=>dlist(iset)%dataset
       endif
       ! Enlarge arrays.
-      call increment_xy_size(icol_dx>0,icol_dy>0,dataset%xy)
+      call increment_xy_size(icol_dx>0,icol_dy>0,icol_w>0,dataset%xy)
       i=dataset%xy%nxy
       ! Read data point from string.
       if(icol_x>0)then
@@ -3582,8 +3673,8 @@ CONTAINS
           write(6,'()')
           exit
         endif
-        if(dataset%xy%dx(i)<=0.d0)then
-          write(6,'(a)')'Found non-positive dx in "'//trim(fname)//'".'
+        if(dataset%xy%dx(i)<0.d0.and..not.are_equal(dataset%xy%dx(i),0.d0))then
+          write(6,'(a)')'Found negative dx in "'//trim(fname)//'".'
           write(6,'()')
           ierr=-5
           exit
@@ -3592,17 +3683,31 @@ CONTAINS
       if(icol_dy>0)then
         dataset%xy%dy(i)=dble_field(icol_dy,line,ierr)
         if(ierr/=0)then
-          write(6,'(a)')'Failed to parse value of dx in "'//trim(fname)//'".'
+          write(6,'(a)')'Failed to parse value of dy in "'//trim(fname)//'".'
           write(6,'()')
           exit
         endif
-        if(dataset%xy%dy(i)<=0.d0)then
-          write(6,'(a)')'Found non-positive dy in "'//trim(fname)//'".'
+        if(dataset%xy%dy(i)<0.d0.and..not.are_equal(dataset%xy%dy(i),0.d0))then
+          write(6,'(a)')'Found negative dy in "'//trim(fname)//'".'
           write(6,'()')
           ierr=-6
           exit
         endif
       endif ! have_dy
+      if(icol_w>0)then
+        dataset%xy%w(i)=dble_field(icol_w,line,ierr)
+        if(ierr/=0)then
+          write(6,'(a)')'Failed to parse value of w in "'//trim(fname)//'".'
+          write(6,'()')
+          exit
+        endif
+        if(dataset%xy%w(i)<0.d0.or.are_equal(dataset%xy%w(i),0.d0))then
+          write(6,'(a)')'Found non-positive w in "'//trim(fname)//'".'
+          write(6,'()')
+          ierr=-7
+          exit
+        endif
+      endif ! have_w
     enddo ! i
 
     ! Close file.
@@ -3857,13 +3962,13 @@ CONTAINS
   ! DERIVED-TYPE TOOLS
 
 
-  SUBROUTINE increment_xy_size(have_dx,have_dy,xy)
+  SUBROUTINE increment_xy_size(have_dx,have_dy,have_w,xy)
     !--------------------------------------!
     ! Increment the size of pointers in an !
     ! xy_type-type pointer by 1.           !
     !--------------------------------------!
     IMPLICIT NONE
-    LOGICAL,INTENT(in) :: have_dx,have_dy
+    LOGICAL,INTENT(in) :: have_dx,have_dy,have_w
     TYPE(xy_type),POINTER :: xy
     INTEGER nxy
     if(.not.associated(xy))then
@@ -3876,13 +3981,16 @@ CONTAINS
     xy%nxy=nxy
     xy%have_dx=have_dx
     xy%have_dy=have_dy
+    xy%have_w=have_w
     call resize_pointer_dble1((/nxy/),xy%x)
     call resize_pointer_dble1((/nxy/),xy%y)
     call resize_pointer_dble1((/nxy/),xy%dx)
     call resize_pointer_dble1((/nxy/),xy%dy)
+    call resize_pointer_dble1((/nxy/),xy%w)
     ! Initialize x and y to index by default.
     xy%x(nxy)=dble(nxy)
     xy%y(nxy)=dble(nxy)
+    xy%w(nxy)=1.d0
   END SUBROUTINE increment_xy_size
 
 
@@ -3946,11 +4054,13 @@ CONTAINS
     xy2%nxy=xy1%nxy
     xy2%have_dx=xy1%have_dx
     xy2%have_dy=xy1%have_dy
-    allocate(xy2%x(xy2%nxy),xy2%dx(xy2%nxy),xy2%y(xy2%nxy),xy2%dy(xy2%nxy))
+    allocate(xy2%x(xy2%nxy),xy2%dx(xy2%nxy),xy2%y(xy2%nxy),xy2%dy(xy2%nxy),&
+       &xy2%w(xy2%nxy))
     xy2%x=xy1%x
     xy2%dx=xy1%dx
     xy2%y=xy1%y
     xy2%dy=xy1%dy
+    xy2%w=xy1%w
   END SUBROUTINE clone_xy
 
 
@@ -3966,6 +4076,7 @@ CONTAINS
     dataset2%itransfx=dataset1%itransfx
     dataset2%itransfy=dataset1%itransfy
     dataset2%weight=dataset1%weight
+    dataset2%wexp=dataset1%wexp
     call clone_xy(dataset1%xy,dataset2%xy)
     call clone_xy(dataset1%txy,dataset2%txy)
     call clone_xy(dataset1%rtxy,dataset2%rtxy)
@@ -4722,6 +4833,69 @@ CONTAINS
     endif
 
   END SUBROUTINE parse_xeval
+
+
+  CHARACTER(7) FUNCTION type_string(have_dx,have_dy,have_w)
+    !------------------------------------------------!
+    ! Produce a dataset type string "x[dx]y[dy][w]". !
+    !------------------------------------------------!
+    IMPLICIT NONE
+    LOGICAL,INTENT(in) :: have_dx,have_dy,have_w
+    type_string='x'
+    if(have_dx)type_string=trim(type_string)//'dx'
+    type_string=trim(type_string)//'y'
+    if(have_dy)type_string=trim(type_string)//'dy'
+    if(have_w)type_string=trim(type_string)//'w'
+  END FUNCTION type_string
+
+
+  SUBROUTINE parse_type_string(string,ipos_x,ipos_dx,ipos_y,ipos_dy,ipos_w,&
+     &ierr)
+    !---------------------------------------------------------!
+    ! Parse a dataset type string "x[dx]y[dy][w]" into flags. !
+    !---------------------------------------------------------!
+    IMPLICIT NONE
+    CHARACTER(*),INTENT(in) :: string
+    INTEGER,INTENT(inout) :: ipos_x,ipos_dx,ipos_y,ipos_dy,ipos_w,ierr
+    ! Local variables.
+    CHARACTER(len_trim(string)) remainder
+    INTEGER ipos
+    ierr=0
+    ipos_x=0
+    ipos_dx=0
+    ipos_y=0
+    ipos_dy=0
+    ipos_w=0
+    remainder=adjustl(trim(string))
+    ipos=0
+    do while(len_trim(remainder)>0)
+      ipos=ipos+1
+      if(remainder(1:1)=='x')then
+        if(ipos_x>0)ierr=1
+        ipos_x=ipos
+        remainder=adjustl(remainder(2:))
+      elseif(remainder(1:1)=='y')then
+        if(ipos_y>0)ierr=1
+        ipos_y=ipos
+        remainder=adjustl(remainder(2:))
+      elseif(remainder(1:2)=='dx')then
+        if(ipos_dx>0)ierr=1
+        ipos_dx=ipos
+        remainder=adjustl(remainder(3:))
+      elseif(remainder(1:2)=='dy')then
+        if(ipos_dy>0)ierr=1
+        ipos_dy=ipos
+        remainder=adjustl(remainder(3:))
+      elseif(remainder(1:1)=='w')then
+        if(ipos_w>0)ierr=1
+        ipos_w=ipos
+        remainder=adjustl(remainder(2:))
+      else
+        ierr=1
+      endif
+      if(ierr/=0)return
+    enddo
+  END SUBROUTINE parse_type_string
 
 
   CHARACTER(12) FUNCTION i2s(n)
