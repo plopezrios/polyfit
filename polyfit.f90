@@ -3114,7 +3114,7 @@ CONTAINS
     ! Local variables.
     DOUBLE PRECISION,ALLOCATABLE :: x(:,:),y(:,:),w(:,:)
     INTEGER tot_nparam,max_nxy,tot_nxy,ieq,ip,jp,iset,jset,&
-       &ixy,ipoly,jpoly,i,j,lwork
+       &ixy,ipoly,jpoly,lwork
     DOUBLE PRECISION e_fit,set_weight
     DOUBLE PRECISION,ALLOCATABLE :: M(:,:),Minv(:,:),c(:),work(:)
     INTEGER,ALLOCATABLE :: ipiv(:)
@@ -3124,8 +3124,6 @@ CONTAINS
 
     ! Extract fit properties.
     tot_nparam=count(fit%share)+ndataset*count(.not.fit%share)
-
-    ! Prepare combined dataset arrays.
     max_nxy=0
     tot_nxy=0
     do iset=1,ndataset
@@ -3133,6 +3131,14 @@ CONTAINS
       max_nxy=max(max_nxy,xy%nxy)
       tot_nxy=tot_nxy+xy%nxy
     enddo ! iset
+
+    ! Explicitly prevent fitting with insufficient data.
+    if(tot_nxy<tot_nparam)then
+      ierr=1
+      return
+    endif
+
+    ! Prepare combined dataset arrays.
     allocate(x(max_nxy,ndataset),y(max_nxy,ndataset),w(max_nxy,ndataset))
     x=1.d0
     y=0.d0
@@ -3218,29 +3224,21 @@ CONTAINS
 
     ! Invert M.
     Minv=M
+    call dgetrf(tot_nparam,tot_nparam,Minv,tot_nparam,ipiv,ierr)
+    if(ierr/=0)return
     allocate(work(1))
     lwork=-1
-    call dsytrf('L',tot_nparam,Minv,tot_nparam,ipiv,work,lwork,ierr)
+    call dgetri(tot_nparam,Minv,tot_nparam,ipiv,work,lwork,ierr)
     if(ierr/=0)return
     lwork=nint(work(1))
     deallocate(work)
     allocate(work(lwork),stat=ierr)
     if(ierr/=0)return
-    call dsytrf('L',tot_nparam,Minv,tot_nparam,ipiv,work,lwork,ierr)
-    if(ierr/=0)return
-    deallocate(work)
-    allocate(work(tot_nparam),stat=ierr)
-    if(ierr/=0)return
-    call dsytri('L',tot_nparam,Minv,tot_nparam,ipiv,work,ierr)
+    call dgetri(tot_nparam,Minv,tot_nparam,ipiv,work,lwork,ierr)
     if(ierr/=0)return
     deallocate(work)
 
-    ! Complete Minv and evaluate coefficients.
-    do i=1,tot_nparam-1
-      do j=i+1,tot_nparam
-        Minv(i,j)=Minv(j,i)
-      enddo ! j
-    enddo ! i
+    ! Evaluate fit coefficients.
     c=matmul(Minv,c)
 
     ! Put parameters in output arrays.
@@ -3271,9 +3269,6 @@ CONTAINS
         chi2=chi2+(y(ixy,iset)-e_fit)**2*w(ixy,iset)
       enddo ! ixy
     enddo ! iset
-
-    ! Free memory.
-    deallocate(M,Minv,ipiv,c)
 
   END SUBROUTINE perform_multifit
 
