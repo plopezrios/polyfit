@@ -3114,7 +3114,7 @@ CONTAINS
     ! Local variables.
     DOUBLE PRECISION,ALLOCATABLE :: x(:,:),y(:,:),w(:,:)
     INTEGER tot_nparam,max_nxy,tot_nxy,ieq,ip,jp,iset,jset,&
-       &ixy,ipoly,jpoly,lwork
+       &ixy,ipoly,jpoly,lwork,i,j
     DOUBLE PRECISION e_fit,set_weight
     DOUBLE PRECISION,ALLOCATABLE :: M(:,:),Minv(:,:),c(:),work(:)
     INTEGER,ALLOCATABLE :: ipiv(:)
@@ -3224,19 +3224,46 @@ CONTAINS
 
     ! Invert M.
     Minv=M
-    call dgetrf(tot_nparam,tot_nparam,Minv,tot_nparam,ipiv,ierr)
-    if(ierr/=0)return
     allocate(work(1))
     lwork=-1
-    call dgetri(tot_nparam,Minv,tot_nparam,ipiv,work,lwork,ierr)
+    call dsytrf('L',tot_nparam,Minv,tot_nparam,ipiv,work,lwork,ierr)
     if(ierr/=0)return
     lwork=nint(work(1))
     deallocate(work)
     allocate(work(lwork),stat=ierr)
     if(ierr/=0)return
-    call dgetri(tot_nparam,Minv,tot_nparam,ipiv,work,lwork,ierr)
+    call dsytrf('L',tot_nparam,Minv,tot_nparam,ipiv,work,lwork,ierr)
     if(ierr/=0)return
     deallocate(work)
+    allocate(work(tot_nparam),stat=ierr)
+    if(ierr/=0)return
+    call dsytri('L',tot_nparam,Minv,tot_nparam,ipiv,work,ierr)
+    if(ierr/=0)return
+    deallocate(work)
+    ! Complete Minv.
+    do i=1,tot_nparam-1
+      do j=i+1,tot_nparam
+        Minv(i,j)=Minv(j,i)
+      enddo ! j
+    enddo ! i
+
+    ! FIXME - for some reason the following does not work in the presence
+    ! of shared parameters.  I would have expected the opposite, if anything.
+    !! Invert M.
+    !Minv=M
+    !call dgetrf(tot_nparam,tot_nparam,Minv,tot_nparam,ipiv,ierr)
+    !if(ierr/=0)return
+    !allocate(work(1))
+    !lwork=-1
+    !call dgetri(tot_nparam,Minv,tot_nparam,ipiv,work,lwork,ierr)
+    !if(ierr/=0)return
+    !lwork=nint(work(1))
+    !deallocate(work)
+    !allocate(work(lwork),stat=ierr)
+    !if(ierr/=0)return
+    !call dgetri(tot_nparam,Minv,tot_nparam,ipiv,work,lwork,ierr)
+    !if(ierr/=0)return
+    !deallocate(work)
 
     ! Evaluate fit coefficients.
     c=matmul(Minv,c)
