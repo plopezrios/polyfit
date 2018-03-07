@@ -425,6 +425,9 @@ CONTAINS
           enddo ! iset
           ! Clean up and loop here to avoid giant if-block below.
           call kill_dlist(file_dlist)
+          write(6,'(a)')'Loaded data from "'//trim(fname)//&
+             &'" as dataset weights.'
+          write(6,'()')
           cycle user_loop
         endif
 
@@ -1624,7 +1627,7 @@ CONTAINS
              &sharedf'', or sharedf'''' for the value, first, and second &
              &derivative of the shared part of the fit function (for &
              &multi-dataset fits containing shared parameters). If &
-             &<function> is f or sharef, the original data are also &
+             &<function> is f or sharedf, the original data are also &
              &plotted.',2,2)
           call pprint('')
           call pprint('<xvalues> is specified as &
@@ -2075,7 +2078,6 @@ CONTAINS
        &deval,ierr,chi2mean=chi2,chi2err=chi2err,amean=a,aerr=da,&
        &rmsymean=rmsy,rmsyerr=rmsyerr)
     if(ierr/=0)then
-      write(6,'()')
       write(6,'(a)')'Could not perform fit.'
       write(6,'()')
       return
@@ -2155,7 +2157,6 @@ CONTAINS
     call eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
        &deval,ierr,fmean,ferr)
     if(ierr/=0)then
-      write(6,'()')
       write(6,'(a)')'Could not perform fit.'
       write(6,'()')
       return
@@ -2262,7 +2263,6 @@ CONTAINS
       call eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
          &deval,ierr,fmean=fmean,ferr=ferr,amean=a)
       if(ierr/=0)then
-        write(6,'()')
         write(6,'(a)')'Could not perform fit.'
         write(6,'()')
         close(io,status='delete')
@@ -2308,7 +2308,6 @@ CONTAINS
       call eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
          &deval,ierr,fmean=fmean,ferr=ferr,amean=a)
       if(ierr/=0)then
-        write(6,'()')
         write(6,'(a)')'Could not perform fit.'
         write(6,'()')
         close(io,status='delete')
