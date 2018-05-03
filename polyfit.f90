@@ -2203,7 +2203,7 @@ CONTAINS
     TYPE(dataset_type),POINTER :: dataset
     TYPE(xy_type),POINTER :: xy
     ! Local variables.
-    INTEGER tot_nparam,tot_nxy,iset,i,ierr,op_npoly
+    INTEGER iset,i,ierr,op_npoly
     DOUBLE PRECISION op_a(fit%npoly),op_pow(fit%npoly),tx0,tx1,t1
     DOUBLE PRECISION,ALLOCATABLE :: fmean(:,:),ferr(:,:),a(:,:)
     INTEGER,PARAMETER :: io=10
@@ -2216,14 +2216,6 @@ CONTAINS
       return
     endif
 
-    ! Initialize.
-    tot_nparam=count(fit%share)+ndataset*count(.not.fit%share)
-    tot_nxy=0
-    do iset=1,ndataset
-      dataset=>dlist(iset)%dataset
-      tot_nxy=tot_nxy+dataset%rtxy%nxy
-    enddo ! iset
-
     ! Define plot range if not provided.
     if(.not.associated(deval%x))then
       deval%var='X'
@@ -2231,12 +2223,12 @@ CONTAINS
       allocate(deval%x(deval%n))
       ! Get data range.
       dataset=>dlist(1)%dataset
-      tx0=minval(dataset%rtxy%x)
-      tx1=maxval(dataset%rtxy%x)
+      tx0=minval(dataset%txy%x)
+      tx1=maxval(dataset%txy%x)
       do iset=2,ndataset
         dataset=>dlist(iset)%dataset
-        tx0=min(tx0,minval(dataset%rtxy%x))
-        tx1=max(tx1,maxval(dataset%rtxy%x))
+        tx0=min(tx0,minval(dataset%txy%x))
+        tx1=max(tx1,maxval(dataset%txy%x))
       enddo ! iset
       ! Extend range past far end and ensure we get to zero on near end.
       t1=tx1-tx0
@@ -2271,7 +2263,7 @@ CONTAINS
       if(deval%nderiv==0)then
         ! Plot data.
         do iset=1,ndataset
-          xy=>dlist(iset)%dataset%rtxy
+          xy=>dlist(iset)%dataset%txy
           if(xy%have_dx.and.xy%have_dy)then
             write(io,'(a)')'@type xydxdy'
             do i=1,xy%nxy
@@ -2318,7 +2310,7 @@ CONTAINS
         op_npoly=fit%npoly
         op_pow=fit%pow
         do iset=1,ndataset
-          xy=>dlist(iset)%dataset%rtxy
+          xy=>dlist(iset)%dataset%txy
           op_a(1:op_npoly)=a(1:fit%npoly,iset)
           where(fit%share)op_a=0.d0
           if(xy%have_dx.and.xy%have_dy)then
