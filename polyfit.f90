@@ -62,6 +62,7 @@ PROGRAM polyfit
     DOUBLE PRECISION,POINTER :: x(:)=>null()
   END TYPE eval_type
   TYPE mc_params_type
+    ! NB, changing the default here does nothing since this is reset in main().
     INTEGER :: nsample=10000
   END TYPE mc_params_type
 
@@ -108,7 +109,7 @@ CONTAINS
     INTEGER i,ifield,ierr,ipos_x,ipos_y,ipos_dx,ipos_dy,ipos_w,&
        &ierr1,ierr2,ierr3,ierr4,ierr5
     INTEGER nxy,itransf,iset,i1,i2,ipos,npoly
-    DOUBLE PRECISION t1,wexp
+    DOUBLE PRECISION t1,t2,wexp
 
     ! Initialize.
     ndataset=0
@@ -842,6 +843,38 @@ CONTAINS
         endif
         ! Perform evaluation.
         call evaluate_fit(ndataset,dlist,fit,mcparams,drange,deval)
+
+      case('intersect')
+        ! This is only useful when two or more datasets are loaded.
+        if(ndataset<2)then
+          write(6,'(a)')'Need at least two datasets to find intersections.'
+          write(6,'()')
+          cycle user_loop
+        endif
+        ! Parse options.
+        select case(field(2,command))
+        case("between")
+          t1=dble_field(3,command,ierr1)
+          t2=dble_field(4,command,ierr2)
+          if(ierr1/=0.or.ierr2/=0)then
+            write(6,'(a)')'Syntax error: could not parse arguments of &
+               &"between" subcommand.'
+            write(6,'()')
+            cycle user_loop
+          endif
+          if(t1>=t2)then
+            write(6,'(a)')'Syntax error: intersection range has non-positive &
+               &length.'
+            write(6,'()')
+            cycle user_loop
+          endif
+        case default
+          write(6,'(a)')'Syntax error: "between" subcommand missing.'
+          write(6,'()')
+          cycle user_loop
+        end select
+        ! Perform intersection.
+        call intersect_fit(ndataset,dlist,fit,mcparams,drange,t1,t2)
 
       case('set')
 
@@ -1664,6 +1697,21 @@ CONTAINS
              &"<variable>=<comma-separated-list>" (e.g., "X=0,1,2,3") or as &
              &"<variable>=<first>:<last>:<count>" (e.g., "X=0:3:4").',2,2)
           call pprint('')
+        case('intersect')
+          call pprint('')
+          call pprint('Command: intersect between <X1> <X2>',0,9)
+          call pprint('')
+          call pprint('Evaluate the average location of the intersections &
+             &between each pair of datasets in the range X1:X2.',2,2)
+          call pprint('')
+          call pprint('The intersect command finds the intersection between &
+             &the fits to each pair of datasets and computes the average &
+             &location of the intersection.  This operation requires two or &
+             &more datasets to be loaded.  The difference between each pair &
+             &of fits is required to be of opposite signs at X1 and X2.  &
+             &This command will return an error message if this is &
+             &consistently not the case during random sampling.',2,2)
+          call pprint('')
         case('unset')
           call pprint('')
           call pprint('Command: unset <variable>',0,9)
@@ -2185,6 +2233,172 @@ CONTAINS
     deallocate(fmean,ferr)
 
   END SUBROUTINE evaluate_fit
+
+
+  SUBROUTINE intersect_fit(ndataset,dlist,fit,mcparams,drange,x1,x2)
+    !-----------------------------------------------------!
+    ! Find the (average) intersection of all datasets and !
+    ! report to stdout.                                   !
+    !-----------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: ndataset
+    TYPE(dataset_list_type),POINTER :: dlist(:)
+    TYPE(fit_form_type),INTENT(in) :: fit
+    TYPE(mc_params_type),INTENT(in) :: mcparams
+    TYPE(range_type),INTENT(in) :: drange
+    DOUBLE PRECISION,INTENT(in) :: x1,x2
+    ! Monte Carlo sample storage.
+    DOUBLE PRECISION,ALLOCATABLE :: x0_array(:),y0_array(:),w_vector(:)
+    ! Parameter vector.
+    DOUBLE PRECISION a(fit%npoly,ndataset)
+    ! Pointers.
+    TYPE(dataset_list_type),POINTER :: tmp_dlist(:)
+    TYPE(dataset_type),POINTER :: dataset
+    TYPE(xy_type),POINTER :: xy,xy_orig
+    ! Local variables.
+    INTEGER iset,jset,irandom,nsample,attempt_count,ierr
+    DOUBLE PRECISION x0,y0,dx0,dy0,sum_x0,sum_y0,sum_weight,var,chi2
+
+    ! Make copy of datasets.
+    call clone_dlist(dlist,tmp_dlist)
+
+    ! Allocate storage for location of intersection.
+    allocate(x0_array(mcparams%nsample),y0_array(mcparams%nsample),&
+       &w_vector(mcparams%nsample))
+
+    ! Compute total dataset weight.
+    sum_weight=0.d0
+    do iset=1,ndataset
+      sum_weight=sum_weight+tmp_dlist(iset)%dataset%weight
+    enddo ! iset
+
+    ! Initialize.
+    nsample=mcparams%nsample
+
+    ! Loop over random points.
+    irandom=0
+    attempt_count=0
+    irandom_loop: do
+      if(irandom==nsample)exit
+      irandom=irandom+1
+      do iset=1,ndataset
+        dataset=>tmp_dlist(iset)%dataset
+        xy=>dataset%xy
+        xy_orig=>dlist(iset)%dataset%xy
+        if(xy%have_dx)xy%x=xy_orig%x+gaussian_random_number(xy_orig%dx)
+        if(xy%have_dy)xy%y=xy_orig%y+gaussian_random_number(xy_orig%dy)
+        call refresh_dataset(dataset,drange)
+      enddo ! iset
+      call perform_multifit(ndataset,tmp_dlist,fit,chi2,a,ierr)
+      if(ierr/=0)then
+        call kill_dlist(tmp_dlist)
+        return
+      endif
+      w_vector(irandom)=1.d0
+      ! Loop over pairs of datasets.
+      sum_x0=0.d0
+      sum_y0=0.d0
+      do iset=1,ndataset-1
+        do jset=iset+1,ndataset
+          ! Find intersection between sets ISET and JSET.
+          call intersect(ndataset,fit,a,iset,jset,x1,x2,x0,y0,ierr)
+          if(ierr/=0)then
+            if(attempt_count<5)then
+              irandom=irandom-1
+              cycle irandom_loop
+            endif
+            write(6,'()')
+            write(6,'(a)')'Could not find intersection at random sample '//&
+               &trim(i2s(irandom))//'/'//trim(i2s(nsample))//'.'
+            write(6,'()')
+            call kill_dlist(tmp_dlist)
+            return
+          endif
+          sum_x0=sum_x0+x0
+          sum_y0=sum_y0+y0
+        enddo ! jset
+      enddo ! iset
+      ! Store average intersection over all pairs of datasets.
+      x0_array(irandom)=sum_x0*2.d0/dble(ndataset*(ndataset-1))
+      y0_array(irandom)=sum_y0*2.d0/dble(ndataset*(ndataset-1))
+      ! Reset counter.
+      attempt_count=0
+    enddo irandom_loop ! irandom
+
+    ! Return coefficients and statistical properties of requested function
+    ! of fit.
+    call characterize_dist(nsample,x0_array,w_vector,mean=x0,var=var)
+    dx0=sqrt(var)
+    call characterize_dist(nsample,y0_array,w_vector,mean=y0,var=var)
+    dy0=sqrt(var)
+
+    ! Report.
+    write(6,'(a)')'Intersection:'
+    write(6,'(a4)',advance='no')'INTR'
+    write(6,'(2x,"x = ",f16.12," +/- ",f16.12)')x0,dx0
+    write(6,'(a4)',advance='no')'INTR'
+    write(6,'(2x,"y = ",f16.12," +/- ",f16.12)')y0,dy0
+    write(6,'()')
+
+    ! Clean up.
+    call kill_dlist(tmp_dlist)
+
+  END SUBROUTINE intersect_fit
+
+
+  SUBROUTINE intersect(ndataset,fit,a,iset,jset,x1,x2,x0,y0,ierr)
+    !---------------------------------------------------!
+    ! Find intersection between datasets ISET and JSET. !
+    !---------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: ndataset
+    TYPE(fit_form_type),INTENT(in) :: fit
+    DOUBLE PRECISION,INTENT(in) :: a(fit%npoly,ndataset)
+    INTEGER,INTENT(in) :: iset,jset
+    DOUBLE PRECISION,INTENT(in) :: x1,x2
+    DOUBLE PRECISION,INTENT(inout) :: x0,y0
+    INTEGER,INTENT(inout) :: ierr
+    LOGICAL lplus,rplus
+    DOUBLE PRECISION xl,xr,yl,yr,a_diff(fit%npoly)
+
+    ! Initialize output variables.
+    ierr=1
+    x0=0.d0
+    y0=0.d0
+
+    ! Get coefficients of difference between the two relevant sets.
+    a_diff(1:fit%npoly)=a(1:fit%npoly,jset)-a(1:fit%npoly,iset)
+
+    ! Initialize bisection.
+    xl=x1
+    yl=eval_poly(fit%npoly,fit%pow,a_diff,xl-fit%x0)
+    xr=x2
+    yr=eval_poly(fit%npoly,fit%pow,a_diff,xr-fit%x0)
+    if(abs(yl)<=0.d0.or.abs(yr)<=0.d0)return
+    lplus=yl>0.d0
+    rplus=yr>0.d0
+    if(lplus.eqv.rplus)return
+
+    ! Loop over bisection iterations.
+    ierr=0
+    do
+      x0=0.5d0*(xl+xr)
+      y0=eval_poly(fit%npoly,fit%pow,a_diff,x0-fit%x0)
+      if(y0>0.d0.eqv.lplus)then
+        ! Replace left bracket.
+        xl=x0
+      else
+        ! Replace right bracket.
+        xr=x0
+      endif
+      if(abs(xl-xr)<1.d-10)exit
+    enddo
+
+    ! Evaluate final intersection point.
+    x0=0.5d0*(xl+xr)
+    y0=eval_poly(fit%npoly,fit%pow,a(:,iset),x0-fit%x0)
+
+  END SUBROUTINE intersect
 
 
   SUBROUTINE plot_multipoly(ndataset,dlist,drange,fit,deval,mcparams,fname)
