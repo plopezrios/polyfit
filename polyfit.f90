@@ -2219,7 +2219,7 @@ CONTAINS
     do iset=1,ndataset
       do ix=1,deval%n
         write(6,'(a4)',advance='no')'EVAL'
-        write(6,'(2x,i4,1x,3(1x,f16.12))')iset,deval%x(ix),&
+        write(6,'(2x,i4,1x,3(1x,es20.12))')iset,deval%x(ix),&
            &fmean(ix,iset),ferr(ix,iset)
       enddo ! ix
       select case(trim(deval%what))
@@ -2335,9 +2335,9 @@ CONTAINS
     ! Report.
     write(6,'(a)')'Intersection:'
     write(6,'(a4)',advance='no')'INTR'
-    write(6,'(2x,"x = ",f16.12," +/- ",f16.12)')x0,dx0
+    write(6,'(2x,"x = ",es20.12," +/- ",es20.12)')x0,dx0
     write(6,'(a4)',advance='no')'INTR'
-    write(6,'(2x,"y = ",f16.12," +/- ",f16.12)')y0,dy0
+    write(6,'(2x,"y = ",es20.12," +/- ",es20.12)')y0,dy0
     write(6,'()')
 
     ! Clean up.
