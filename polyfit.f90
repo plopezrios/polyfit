@@ -2248,7 +2248,7 @@ CONTAINS
     TYPE(range_type),INTENT(in) :: drange
     DOUBLE PRECISION,INTENT(in) :: x1,x2
     ! Monte Carlo sample storage.
-    DOUBLE PRECISION,ALLOCATABLE :: x0_array(:),y0_array(:),w_vector(:)
+    DOUBLE PRECISION,ALLOCATABLE :: x0_array(:,:),y0_array(:,:),w_vector(:)
     ! Parameter vector.
     DOUBLE PRECISION a(fit%npoly,ndataset)
     ! Pointers.
@@ -2256,15 +2256,17 @@ CONTAINS
     TYPE(dataset_type),POINTER :: dataset
     TYPE(xy_type),POINTER :: xy,xy_orig
     ! Local variables.
-    INTEGER iset,jset,irandom,nsample,attempt_count,ierr
+    INTEGER iset,jset,iintersect,nintersect,irandom,nsample,attempt_count,ierr
     DOUBLE PRECISION x0,y0,dx0,dy0,sum_x0,sum_y0,sum_weight,var,chi2
 
     ! Make copy of datasets.
     call clone_dlist(dlist,tmp_dlist)
 
     ! Allocate storage for location of intersection.
-    allocate(x0_array(mcparams%nsample),y0_array(mcparams%nsample),&
-       &w_vector(mcparams%nsample))
+    nintersect=(ndataset*(ndataset-1))/2
+    if(nintersect>1)nintersect=nintersect+1
+    allocate(x0_array(mcparams%nsample,nintersect),&
+       &y0_array(mcparams%nsample,nintersect),w_vector(mcparams%nsample))
 
     ! Compute total dataset weight.
     sum_weight=0.d0
@@ -2298,8 +2300,10 @@ CONTAINS
       ! Loop over pairs of datasets.
       sum_x0=0.d0
       sum_y0=0.d0
+      iintersect=0
       do iset=1,ndataset-1
         do jset=iset+1,ndataset
+          iintersect=iintersect+1
           ! Find intersection between sets ISET and JSET.
           call intersect(ndataset,fit,a,iset,jset,x1,x2,x0,y0,ierr)
           if(ierr/=0)then
@@ -2314,31 +2318,51 @@ CONTAINS
             call kill_dlist(tmp_dlist)
             return
           endif
+          x0_array(irandom,iintersect)=x0
+          y0_array(irandom,iintersect)=y0
           sum_x0=sum_x0+x0
           sum_y0=sum_y0+y0
         enddo ! jset
       enddo ! iset
-      ! Store average intersection over all pairs of datasets.
-      x0_array(irandom)=sum_x0*2.d0/dble(ndataset*(ndataset-1))
-      y0_array(irandom)=sum_y0*2.d0/dble(ndataset*(ndataset-1))
+      if(nintersect>1)then
+        ! Store average intersection over all pairs of datasets.
+        x0_array(irandom,nintersect)=sum_x0*2.d0/dble(ndataset*(ndataset-1))
+        y0_array(irandom,nintersect)=sum_y0*2.d0/dble(ndataset*(ndataset-1))
+      endif
       ! Reset counter.
       attempt_count=0
     enddo irandom_loop ! irandom
 
-    ! Return coefficients and statistical properties of requested function
-    ! of fit.
-    call characterize_dist(nsample,x0_array,w_vector,mean=x0,var=var)
-    dx0=sqrt(var)
-    call characterize_dist(nsample,y0_array,w_vector,mean=y0,var=var)
-    dy0=sqrt(var)
-
-    ! Report.
-    write(6,'(a)')'Intersection:'
-    write(6,'(a4)',advance='no')'INTR'
-    write(6,'(2x,"x = ",es20.12," +/- ",es20.12)')x0,dx0
-    write(6,'(a4)',advance='no')'INTR'
-    write(6,'(2x,"y = ",es20.12," +/- ",es20.12)')y0,dy0
-    write(6,'()')
+    ! Compute and report intersection(s).
+    write(6,'(a)')'Intersections:'
+    write(6,'(4x)',advance='no')
+    write(6,'(1x,a7,4(1x,a20))')'Sets ','X0          ','DX0         ',&
+       &'Y0          ','DY0         '
+    iintersect=0
+    do iset=1,ndataset-1
+      do jset=iset+1,ndataset
+        iintersect=iintersect+1
+        call characterize_dist(nsample,x0_array(1,iintersect),w_vector,&
+           &mean=x0,var=var)
+        dx0=sqrt(var)
+        call characterize_dist(nsample,y0_array(1,iintersect),w_vector,&
+           &mean=y0,var=var)
+        dy0=sqrt(var)
+        write(6,'(a4)',advance='no')'INTR'
+        write(6,'(2(1x,i3),4(1x,es20.12))')iset,jset,x0,dx0,y0,dy0
+      enddo ! jset
+    enddo ! iset
+    if(ndataset>2)then
+      iintersect=nintersect
+      call characterize_dist(nsample,x0_array(1,iintersect),w_vector,&
+         &mean=x0,var=var)
+      dx0=sqrt(var)
+      call characterize_dist(nsample,y0_array(1,iintersect),w_vector,&
+         &mean=y0,var=var)
+      dy0=sqrt(var)
+      write(6,'(a4)',advance='no')'INTR'
+      write(6,'(2(1x,a3),4(1x,es20.12))')'ALL','ALL',x0,dx0,y0,dy0
+    endif
 
     ! Clean up.
     call kill_dlist(tmp_dlist)
