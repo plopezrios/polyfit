@@ -5146,7 +5146,7 @@ CONTAINS
   END FUNCTION i2s
 
 
-  ! QUIT ROUTINE.
+  ! PRETTY-PRINT ROUTINE.
 
 
   SUBROUTINE pprint(text,indent1,indent)
@@ -5215,6 +5215,9 @@ CONTAINS
     enddo
     if(len_trim(line)>0)write(6,'(a)')trim(line)
   END SUBROUTINE pprint
+
+
+  ! QUIT ROUTINE.
 
 
   SUBROUTINE quit (msg)
