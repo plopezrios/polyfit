@@ -4921,9 +4921,8 @@ CONTAINS
     ! Parse a data range out of a string. The string !
     ! can take the form:                             !
     ! * <variable><operation><threshold>             !
-    !   X=1,2,3  gives  X={1,2,3}                    !
-    ! * <variable>=<first>:<last>:<count>, e.g.,     !
-    !   X=1:2:3  gives  X={1,1.5,2}                  !
+    !   e.g., X>1, y<=3, X]4 (the latter means "the  !
+    !   four largest values of X").                  !
     !------------------------------------------------!
     IMPLICIT NONE
     CHARACTER(*),INTENT(in) :: string
