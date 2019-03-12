@@ -2476,36 +2476,42 @@ CONTAINS
         do iset=1,ndataset
           xy=>dlist(iset)%dataset%txy
           if(xy%have_dx.and.xy%have_dy)then
-            write(io,'(a)')'@type xydxdy'
+            !write(io,'(a)')'@type xydxdy'
             do i=1,xy%nxy
               write(io,*)xy%x(i),xy%y(i),xy%dx(i),xy%dy(i)
             enddo ! i
           elseif(xy%have_dx)then
-            write(io,'(a)')'@type xydx'
+            !write(io,'(a)')'@type xydx'
             do i=1,xy%nxy
               write(io,*)xy%x(i),xy%y(i),xy%dx(i)
             enddo ! i
           elseif(xy%have_dy)then
-            write(io,'(a)')'@type xydy'
+            !write(io,'(a)')'@type xydy'
             do i=1,xy%nxy
               write(io,*)xy%x(i),xy%y(i),xy%dy(i)
             enddo ! i
           else
-            write(io,'(a)')'@type xy'
+            !write(io,'(a)')'@type xy'
             do i=1,xy%nxy
               write(io,*)xy%x(i),xy%y(i)
             enddo ! i
           endif
-          write(io,'(a)')'&'
+          !write(io,'(a)')'&'
+          write(io,'()')
+          write(io,'()')
         enddo ! iset
       endif
       ! Plot fit functions.
       do iset=1,ndataset
-        write(io,'(a)')'@type xydy'
+        !write(io,'(a)')'@type xydy'
         do i=1,deval%n
           write(io,*)deval%x(i),fmean(i,iset),ferr(i,iset)
         enddo ! i
-        write(io,'(a)')'&'
+        if(iset<ndataset)then
+          !write(io,'(a)')'&'
+          write(io,'()')
+          write(io,'()')
+        endif
       enddo ! iset
     else
       call eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
@@ -2525,36 +2531,38 @@ CONTAINS
           op_a(1:op_npoly)=a(1:fit%npoly,iset)
           where(fit%share)op_a=0.d0
           if(xy%have_dx.and.xy%have_dy)then
-            write(io,'(a)')'@type xydxdy'
+            !write(io,'(a)')'@type xydxdy'
             do i=1,xy%nxy
               write(io,*)xy%x(i),&
                  &xy%y(i)-eval_poly(op_npoly,op_pow,op_a,xy%x(i)),xy%dx(i),&
                  &xy%dy(i)
             enddo ! i
           elseif(xy%have_dx)then
-            write(io,'(a)')'@type xydx'
+            !write(io,'(a)')'@type xydx'
             do i=1,xy%nxy
               write(io,*)xy%x(i),&
                  &xy%y(i)-eval_poly(op_npoly,op_pow,op_a,xy%x(i)),xy%dx(i)
             enddo ! i
           elseif(xy%have_dy)then
-            write(io,'(a)')'@type xydy'
+            !write(io,'(a)')'@type xydy'
             do i=1,xy%nxy
               write(io,*)xy%x(i),&
                  &xy%y(i)-eval_poly(op_npoly,op_pow,op_a,xy%x(i)),xy%dy(i)
             enddo ! i
           else
-            write(io,'(a)')'@type xy'
+            !write(io,'(a)')'@type xy'
             do i=1,xy%nxy
               write(io,*)xy%x(i),&
                  &xy%y(i)-eval_poly(op_npoly,op_pow,op_a,xy%x(i))
             enddo ! i
           endif
-          write(io,'(a)')'&'
+          !write(io,'(a)')'&'
+          write(io,'()')
+          write(io,'()')
         enddo ! iset
       endif
       ! Plot shared part of fit functions.
-      write(io,'(a)')'@type xydy'
+      !write(io,'(a)')'@type xydy'
       do i=1,deval%n
         write(io,*)deval%x(i),fmean(i,1),ferr(i,1)
       enddo ! i
