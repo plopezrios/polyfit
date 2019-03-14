@@ -42,10 +42,14 @@ PROGRAM polyfit
   END TYPE dataset_list_type
   TYPE fit_form_type
     INTEGER :: npoly=0
-    DOUBLE PRECISION :: X0=0.d0
     DOUBLE PRECISION,ALLOCATABLE :: pow(:)
     LOGICAL,ALLOCATABLE :: share(:)
+    ! x-offset parameter.
+    DOUBLE PRECISION :: X0=0.d0
     CHARACTER(64) :: X0_string='0'
+    ! Quasi-random noise handling.
+    LOGICAL :: apply_qrandom=.false.
+    DOUBLE PRECISION :: qrandom_exp=0.d0
   END TYPE fit_form_type
   TYPE range_type
     CHARACTER :: var='X'
@@ -1341,6 +1345,18 @@ CONTAINS
           endif
           mcparams%nsample=i
 
+        case('qrandom')
+          ! Quasi-random noise handling.
+          t1=dble_field(3,command,ierr)
+          if(ierr/=0)then
+            write(6,'(a)')'Invalid value "'//trim(field(3,command))//'" for &
+               &variable qrandom.'
+            write(6,'()')
+            cycle user_loop
+          endif
+          fit%apply_qrandom=.true.
+          fit%qrandom_exp=t1
+
         case default
           write(6,'(a)')'Unknown variable "'//trim(field(2,command))//'".'
           write(6,'()')
@@ -1397,6 +1413,9 @@ CONTAINS
           call refresh_fit(ndataset,dlist,fit)
         case('nsample')
           mcparams%nsample=mcparams_default%nsample
+        case('qrandom')
+          fit%apply_qrandom=.false.
+          fit%qrandom_exp=0.d0
         case default
           write(6,'(a)')'Unknown variable "'//trim(field(2,command))//'".'
           write(6,'()')
@@ -1735,6 +1754,7 @@ CONTAINS
             call pprint('* shared',2,4)
             call pprint('* centre',2,4)
             call pprint('* nsample',2,4)
+            call pprint('* qrandom',2,4)
             call pprint('')
             call pprint('Type "help set <variable>" for detailed &
                &information.',2,2)
@@ -1891,6 +1911,26 @@ CONTAINS
                  &yields an uncertainty in the estimated uncertainty of 1% of &
                  &its value.',2,2)
               call pprint('')
+            case('qrandom')
+              call pprint('')
+              call pprint('Variable: qrandom',0,10)
+              call pprint('')
+              call pprint('"qrandom" is a real-valued exponent used to &
+                 &model the quasirandom noise in the data, which is assumed &
+                 &to follow sigma_Y = <alpha> * X^<qrandom>.  Coefficient &
+                 &alpha is obtained by a preliminary fit to the data, and the &
+                 &value of dY is adjusted to include sigma_Y.  The reported &
+                 &uncertainty of results (fit values, intersections, etc) &
+                 &will thus include a contribution from the bias due to &
+                 &quasirandom fluctuations of the data in addition to the &
+                 &purely statistical uncertainty.',2,2)
+              call pprint('')
+              call pprint('Note that quasirandom fluctuations in X are not &
+                 &accounted for by this facility.',2,2)
+              call pprint('')
+              call pprint('If "qrandom" is unset (default), no quasirandom &
+                 &noise handling is performed.',2,2)
+              call pprint('')
             case default
               call pprint('No help for variable "'//trim(field(3,command))//&
                  &'".')
@@ -1926,10 +1966,7 @@ CONTAINS
     TYPE(dataset_type),INTENT(inout) :: dataset
     TYPE(range_type),INTENT(in) :: drange
     TYPE(xy_type),POINTER :: xy,txy,rtxy
-    LOGICAL,ALLOCATABLE :: mask(:)
-    INTEGER,ALLOCATABLE :: indx(:)
-    DOUBLE PRECISION,POINTER :: sortvec(:)
-    INTEGER n
+    LOGICAL mask(dataset%xy%nxy)
 
     ! Transform.
     xy=>dataset%xy
@@ -1941,45 +1978,9 @@ CONTAINS
     call scale_transform(xy%nxy,dataset%itransfy,xy%y,txy%y,xy%have_dy,xy%dy,&
        &txy%dy)
 
-    ! Mask.
-    allocate(mask(xy%nxy))
-    mask=.true.
-    ! Point at sort variable.
-    select case(drange%var)
-    case('x')
-      sortvec=>xy%x
-    case('y')
-      sortvec=>xy%y
-    case('X')
-      sortvec=>txy%x
-    case('Y')
-      sortvec=>txy%y
-    end select
-    ! Act on sort operation.
-    select case(trim(drange%op))
-    case('<')
-      mask=sortvec<drange%thres.and..not.are_equal(sortvec,drange%thres)
-    case('<=')
-      mask=sortvec<drange%thres.or.are_equal(sortvec,drange%thres)
-    case('>')
-      mask=sortvec>drange%thres.and..not.are_equal(sortvec,drange%thres)
-    case('>=')
-      mask=sortvec>drange%thres.or.are_equal(sortvec,drange%thres)
-    case('[',']')
-      if(drange%size>0)then
-        n=min(drange%size,xy%nxy)
-        allocate(indx(xy%nxy))
-        call isort(xy%nxy,sortvec,indx)
-        mask=.false.
-        if(trim(drange%op)=='[')then
-          mask(indx(1:n))=.true.
-        elseif(trim(drange%op)==']')then
-          mask(indx(xy%nxy-n+1:xy%nxy))=.true.
-        endif
-        deallocate(indx)
-      endif
-    end select
-    nullify(sortvec)
+    ! Get mask.
+    call get_range_mask(drange,xy,txy,mask)
+
     ! Apply weight exponent.
     if(.not.are_equal(dataset%wexp,1.d0))then
       if(are_equal(dataset%wexp,0.d0))then
@@ -2008,6 +2009,62 @@ CONTAINS
     endif
 
   END SUBROUTINE refresh_dataset
+
+
+  SUBROUTINE get_range_mask(drange,xy,txy,mask)
+    !--------------------------------------!
+    ! Get the range-restriction mask which !
+    ! transforms TXY into RTXY.            !
+    !--------------------------------------!
+    IMPLICIT NONE
+    TYPE(range_type), INTENT(in) :: drange
+    TYPE(xy_type), POINTER :: xy,txy
+    LOGICAL, INTENT(inout) :: mask(xy%nxy)
+    DOUBLE PRECISION,POINTER :: sortvec(:)
+    INTEGER n,indx(xy%nxy)
+
+    ! Initialize.
+    mask=.true.
+
+    ! Point at sort variable.
+    select case(drange%var)
+    case('x')
+      sortvec=>xy%x
+    case('y')
+      sortvec=>xy%y
+    case('X')
+      sortvec=>txy%x
+    case('Y')
+      sortvec=>txy%y
+    end select
+
+    ! Act on sort operation.
+    select case(trim(drange%op))
+    case('<')
+      mask=sortvec<drange%thres.and..not.are_equal(sortvec,drange%thres)
+    case('<=')
+      mask=sortvec<drange%thres.or.are_equal(sortvec,drange%thres)
+    case('>')
+      mask=sortvec>drange%thres.and..not.are_equal(sortvec,drange%thres)
+    case('>=')
+      mask=sortvec>drange%thres.or.are_equal(sortvec,drange%thres)
+    case('[',']')
+      if(drange%size>0)then
+        n=min(drange%size,xy%nxy)
+        call isort(xy%nxy,sortvec,indx)
+        mask=.false.
+        if(trim(drange%op)=='[')then
+          mask(indx(1:n))=.true.
+        elseif(trim(drange%op)==']')then
+          mask(indx(xy%nxy-n+1:xy%nxy))=.true.
+        endif
+      endif
+    end select
+
+    ! Clean up (unnecessary).
+    nullify(sortvec)
+
+  END SUBROUTINE get_range_mask
 
 
   SUBROUTINE refresh_fit(ndataset,dlist,fit)
@@ -2091,6 +2148,82 @@ CONTAINS
     fit%X0=tx0
 
   END SUBROUTINE refresh_fit
+
+
+  SUBROUTINE qrandom_apply(ndataset,dlist,drange,fit)
+    !---------------------------------------------!
+    ! Apply a quasirandom noise correction to the !
+    ! standard error dy on all datasets.          !
+    !---------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: ndataset
+    TYPE(dataset_list_type),POINTER :: dlist(:)
+    TYPE(range_type),INTENT(in) :: drange
+    TYPE(fit_form_type),INTENT(in) :: fit
+    ! Quick-access pointers.
+    TYPE(dataset_type),POINTER :: dataset
+    ! Local variables.
+    INTEGER iset,ixy,jxy,ipoly,ierr
+    DOUBLE PRECISION sexp,alpha2,dy2,e_fit,chi2,t1,t2,a(fit%npoly,ndataset)
+    LOGICAL, ALLOCATABLE :: mask(:)
+    if(.not.fit%apply_qrandom)return
+    sexp=fit%qrandom_exp
+    ! Get un-resampled fit.
+    call perform_multifit(ndataset,dlist,fit,chi2,a,ierr)
+    do iset=1,ndataset
+      dataset=>dlist(iset)%dataset
+      if(dataset%rtxy%nxy<=fit%npoly)cycle
+      if(.not.dataset%rtxy%have_dy)then
+        ! Toggle have_dy on dataset.
+        dataset%rtxy%have_dy=.true.
+        dataset%rtxy%dy=0.d0
+        dataset%txy%have_dy=.true.
+        dataset%txy%dy=0.d0
+        dataset%xy%have_dy=.true.
+        dataset%xy%dy=0.d0
+      endif
+      ! Get alpha^2.
+      alpha2=0.d0
+      dy2=0.d0
+      do ixy=1,dataset%rtxy%nxy
+        e_fit=0.d0
+        do ipoly=1,fit%npoly
+          e_fit=e_fit+a(ipoly,iset)*&
+             &(dataset%rtxy%x(ixy)-fit%X0)**fit%pow(ipoly)
+        enddo ! ipoly
+        t1=(dataset%rtxy%y(ixy)-e_fit)**2
+        t2=dataset%rtxy%dy(ixy)**2
+        if(.not.are_equal(sexp,0.d0))then
+          t1=t1/dataset%rtxy%x(ixy)**(2*sexp)
+          t2=t2/dataset%rtxy%x(ixy)**(2*sexp)
+        endif
+        alpha2=alpha2+t1
+        dy2=dy2+t2
+      enddo ! ixy
+      alpha2=alpha2/dble(dataset%rtxy%nxy-fit%npoly)-dy2/dble(dataset%rtxy%nxy)
+      if(alpha2<0.d0)alpha2=0.d0
+      ! Adjust stderrs.
+      if(are_equal(sexp,0.d0))then
+        dataset%rtxy%dy=sqrt(dataset%rtxy%dy**2+alpha2)
+      else
+        dataset%rtxy%dy=sqrt(dataset%rtxy%dy**2+&
+           &alpha2*dataset%rtxy%x**(2*sexp))
+      endif
+      ! Unrestrict range to get txy.
+      allocate(mask(dataset%xy%nxy))
+      call get_range_mask(drange,dataset%xy,dataset%txy,mask)
+      jxy=0
+      do ixy=1,dataset%txy%nxy
+        if(.not.mask(ixy))cycle
+        jxy=jxy+1
+        dataset%txy%dy(ixy)=dataset%rtxy%dy(jxy)
+      enddo ! ixy
+      deallocate(mask)
+      ! Now transform back to xy.
+      call scale_untransform(dataset%txy%nxy,dataset%itransfy,dataset%txy%y,&
+         &dataset%xy%y,.true.,dataset%txy%dy,dataset%xy%dy)
+    enddo ! iset
+  END SUBROUTINE qrandom_apply
 
 
   SUBROUTINE show_multipoly(ndataset,dlist,drange,fit,mcparams)
@@ -2261,6 +2394,9 @@ CONTAINS
     ! Make copy of datasets.
     call clone_dlist(dlist,tmp_dlist)
 
+    ! Apply qrandom.
+    call qrandom_apply(ndataset,tmp_dlist,drange,fit)
+
     ! Allocate storage for location of intersection.
     nintersect=(ndataset*(ndataset-1))/2
     allocate(x0_array(mcparams%nsample,nintersect),&
@@ -2284,8 +2420,9 @@ CONTAINS
         dataset=>tmp_dlist(iset)%dataset
         xy=>dataset%xy
         xy_orig=>dlist(iset)%dataset%xy
-        if(xy%have_dx)xy%x=xy_orig%x+gaussian_random_number(xy_orig%dx)
-        if(xy%have_dy)xy%y=xy_orig%y+gaussian_random_number(xy_orig%dy)
+        ! Using xy%dx and xy%dy so we get qrandom accounted for.
+        if(xy%have_dx)xy%x=xy_orig%x+gaussian_random_number(xy%dx)
+        if(xy%have_dy)xy%y=xy_orig%y+gaussian_random_number(xy%dy)
         call refresh_dataset(dataset,drange)
       enddo ! iset
       call perform_multifit(ndataset,tmp_dlist,fit,chi2,a,ierr)
@@ -2586,7 +2723,7 @@ CONTAINS
     INTEGER,INTENT(in) :: ndataset
     TYPE(dataset_list_type),POINTER :: dlist(:)
     TYPE(range_type),INTENT(in) :: drange
-    TYPE(fit_form_type),INTENT(in) :: fit
+    TYPE(fit_form_type),POINTER :: fit
     TYPE(mc_params_type),INTENT(in) :: mcparams
     TYPE(eval_type),INTENT(in) :: deval
     INTEGER,INTENT(in) :: eval_iset
@@ -2633,17 +2770,12 @@ CONTAINS
     chi2err_all=-1.d0
     fmean_all=0.d0
     ferr_all=-1.d0
+    nullify(tfit)
 
     ! Loop over expansion orders.
     do npoly=1,fit%npoly
       ! Allocate work arrays.
-      allocate(tfit)
-      tfit%npoly=npoly
-      allocate(tfit%pow(npoly),tfit%share(npoly))
-      tfit%pow=fit%pow(1:npoly)
-      tfit%share=fit%share(1:npoly)
-      tfit%X0_string=fit%X0_string
-      call refresh_fit(ndataset,dlist,tfit)
+      call clone_fit_form(dlist,fit,tfit)
       ! Adjust counters.
       tot_nparam=count(tfit%share)+ndataset*count(.not.tfit%share)
       if(tot_nparam<tot_nxy)then
@@ -2666,9 +2798,7 @@ CONTAINS
         write(6,'()')
       endif
       ! Destroy work arrays.
-      deallocate(tfit%pow,tfit%share)
-      deallocate(tfit)
-      nullify(tfit)
+      call kill_fit_form(tfit)
     enddo ! npoly
 
     ! Print table footer.
@@ -3001,6 +3131,7 @@ CONTAINS
 
     ! Make copy of datasets.
     call clone_dlist(dlist,tmp_dlist)
+    nullify(tfit)
 
     ! Print table header.
     write(6,'()')
@@ -3037,13 +3168,7 @@ CONTAINS
       ! Loop over expansion orders.
       do npoly=1,fit%npoly
         ! Allocate work arrays.
-        allocate(tfit)
-        tfit%npoly=npoly
-        allocate(tfit%pow(npoly),tfit%share(npoly))
-        tfit%pow=fit%pow(1:npoly)
-        tfit%share=fit%share(1:npoly)
-        tfit%X0_string=fit%X0_string
-        call refresh_fit(ndataset,tmp_dlist,tfit)
+        call clone_fit_form(dlist,fit,tfit)
         ! Adjust counters.
         tot_nparam=count(tfit%share)+ndataset*count(.not.tfit%share)
         if(tot_nparam<tot_nxy)then
@@ -3067,9 +3192,7 @@ CONTAINS
           write(6,'()')
         endif
         ! Destroy work arrays.
-        deallocate(tfit%pow,tfit%share)
-        deallocate(tfit)
-        nullify(tfit)
+        call kill_fit_form(tfit)
       enddo ! npoly
     enddo ! igrid
 
@@ -3299,6 +3422,35 @@ CONTAINS
       if(have_dx.and.present(dx).and.present(dtx))dtx=dx*tx
     end select
   END SUBROUTINE scale_transform
+
+
+  SUBROUTINE scale_untransform(nxy,itransfx,tx,x,have_dx,dtx,dx)
+    !---------------------------------------!
+    ! Apply a scale transformation x <- tx. !
+    !---------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: nxy,itransfx
+    DOUBLE PRECISION,INTENT(in) :: tx(nxy)
+    DOUBLE PRECISION,INTENT(inout) :: x(nxy)
+    LOGICAL,INTENT(in) :: have_dx
+    DOUBLE PRECISION,INTENT(in),OPTIONAL :: dtx(nxy)
+    DOUBLE PRECISION,INTENT(inout),OPTIONAL :: dx(nxy)
+    if(present(dx))dx=0.d0
+    select case(itransfx)
+    case(ITRANSF_NONE)
+      x=tx
+      if(have_dx.and.present(dtx).and.present(dx))dx=dtx
+    case(ITRANSF_REC)
+      x=1.d0/tx
+      if(have_dx.and.present(dtx).and.present(dx))dx=dtx*x**2
+    case(ITRANSF_LOG)
+      x=exp(tx)
+      if(have_dx.and.present(dtx).and.present(dx))dx=dtx*x
+    case(ITRANSF_EXP)
+      x=log(tx)
+      if(have_dx.and.present(dtx).and.present(dx))dx=dtx/tx
+    end select
+  END SUBROUTINE scale_untransform
 
 
   ! COMPUTATION ROUTINES
@@ -3557,6 +3709,9 @@ CONTAINS
     ! Make copy of datasets.
     call clone_dlist(dlist,tmp_dlist)
 
+    ! Apply qrandom.
+    call qrandom_apply(ndataset,tmp_dlist,drange,fit)
+
     ! Figure out what we need and allocate arrays.
     need_f=present(fmean).or.present(ferr).or.present(fmean_1s).or.&
        &present(ferr_1s).or.present(fmean_2s).or.present(ferr_2s).or.&
@@ -3597,8 +3752,9 @@ CONTAINS
         dataset=>tmp_dlist(iset)%dataset
         xy=>dataset%xy
         xy_orig=>dlist(iset)%dataset%xy
-        if(xy%have_dx)xy%x=xy_orig%x+gaussian_random_number(xy_orig%dx)
-        if(xy%have_dy)xy%y=xy_orig%y+gaussian_random_number(xy_orig%dy)
+        ! Using xy%dx and xy%dy so we get qrandom accounted for.
+        if(xy%have_dx)xy%x=xy_orig%x+gaussian_random_number(xy%dx)
+        if(xy%have_dy)xy%y=xy_orig%y+gaussian_random_number(xy%dy)
         call refresh_dataset(dataset,drange)
       enddo ! iset
       call perform_multifit(ndataset,tmp_dlist,fit,chi2,a,ierr)
@@ -4328,6 +4484,41 @@ CONTAINS
       call clone_dataset(dlist1(iset)%dataset,dlist2(iset)%dataset)
     enddo ! iset
   END SUBROUTINE clone_dlist
+
+
+  SUBROUTINE clone_fit_form(dlist,fit1,fit2)
+    !-------------------------------------------!
+    ! Make an independent copy of fit1 as fit2. !
+    !-------------------------------------------!
+    IMPLICIT NONE
+    TYPE(dataset_list_type),POINTER :: dlist(:)
+    TYPE(fit_form_type),POINTER :: fit1,fit2
+    nullify(fit2)
+    if(.not.associated(fit1))return
+    allocate(fit2)
+    fit2%npoly=fit1%npoly
+    allocate(fit2%pow(fit2%npoly),fit2%share(fit2%npoly))
+    fit2%pow=fit1%pow(1:fit2%npoly)
+    fit2%share=fit1%share(1:fit2%npoly)
+    fit2%X0_string=fit1%X0_string
+    fit2%apply_qrandom=fit1%apply_qrandom
+    fit2%qrandom_exp=fit1%qrandom_exp
+    call refresh_fit(size(dlist),dlist,fit2)
+  END SUBROUTINE clone_fit_form
+
+
+  SUBROUTINE kill_fit_form(fit)
+    !---------------------------------------!
+    ! Destroy a fit_form_type-type pointer. !
+    !---------------------------------------!
+    IMPLICIT NONE
+    TYPE(fit_form_type),POINTER :: fit
+    if(.not.associated(fit))return
+    if(allocated(fit%pow))deallocate(fit%pow)
+    if(allocated(fit%share))deallocate(fit%share)
+    deallocate(fit)
+    nullify(fit)
+  END SUBROUTINE kill_fit_form
 
 
   ! GENERIC NUMERICAL UTILITIES.
