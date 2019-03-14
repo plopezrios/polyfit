@@ -62,7 +62,6 @@ PROGRAM polyfit
     DOUBLE PRECISION,POINTER :: x(:)=>null()
   END TYPE eval_type
   TYPE mc_params_type
-    ! NB, changing the default here does nothing since this is reset in main().
     INTEGER :: nsample=10000
   END TYPE mc_params_type
 
@@ -93,7 +92,7 @@ CONTAINS
     INTEGER eval_iset
     TYPE(eval_type) deval
     ! Monte Carlo parameters.
-    TYPE(mc_params_type) mcparams
+    TYPE(mc_params_type) mcparams,mcparams_default
     ! Input file information.
     INTEGER ncolumn,icol_x,icol_y,icol_dx,icol_dy,icol_w
     CHARACTER(256) fname
@@ -122,7 +121,6 @@ CONTAINS
     allocate(fit%pow(fit%npoly),fit%share(fit%npoly))
     fit%pow(1:2)=(/0.d0,1.d0/)
     fit%share=.false.
-    mcparams%nsample=10000
     nullify(fsearch,fdiscr,search)
 
     ! Write header.
@@ -1398,7 +1396,7 @@ CONTAINS
           fit%X0_string='0'
           call refresh_fit(ndataset,dlist,fit)
         case('nsample')
-          mcparams%nsample=10000
+          mcparams%nsample=mcparams_default%nsample
         case default
           write(6,'(a)')'Unknown variable "'//trim(field(2,command))//'".'
           write(6,'()')
