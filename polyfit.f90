@@ -480,15 +480,15 @@ CONTAINS
             endif
           endif
           if(dataset%xy%have_w)then
-            if(any(xy%w<0.d0.and..not.eq_dble(xy%w,0.d0)))then
-              if(.not.eq_dble(dataset%wexp,0.d0))then
+            if(any(lt_dble(xy%w,0.d0)))then
+              if(neq_dble(dataset%wexp,0.d0))then
                 dataset%wexp=0.d0
                 write(6,'(a)')'Note: zeroing weight exponent for set '//&
                    &trim(i2s(iset+ndataset))//' since it contains w<0.'
                 write(6,'()')
               endif
             elseif(any(eq_dble(xy%w,0.d0)))then
-              if(dataset%wexp<0.d0.and..not.eq_dble(dataset%wexp,0.d0))then
+              if(lt_dble(dataset%wexp,0.d0))then
                 dataset%wexp=1.d0
                 write(6,'(a)')'Note: setting weight exponent to 1 for set '//&
                    &trim(i2s(iset+ndataset))//' since it contains w=0.'
@@ -1081,7 +1081,7 @@ CONTAINS
                 write(6,'()')
                 cycle user_loop
               endif
-              if(wexp<0.d0.and..not.eq_dble(wexp,0.d0))then
+              if(lt_dble(wexp,0.d0))then
                 xy=>dlist(iset)%dataset%xy
                 if(any(eq_dble(xy%w,0.d0)))then
                   write(6,*)'Cannot apply weight exponent: set #'//&
@@ -1100,8 +1100,7 @@ CONTAINS
             enddo ! ifield
           else
             ! Check exponent is applicable.
-            ! FIXME - create functions eq_dble, le_dble, lt_dble, etc.
-            if(wexp<0.d0.and..not.eq_dble(wexp,0.d0))then
+            if(lt_dble(wexp,0.d0))then
               do iset=1,ndataset
                 xy=>dlist(iset)%dataset%xy
                 if(any(eq_dble(xy%w,0.d0)))then
@@ -2038,7 +2037,7 @@ CONTAINS
     call get_range_mask(drange,xy,txy,mask)
 
     ! Apply weight exponent.
-    if(.not.eq_dble(dataset%wexp,1.d0))then
+    if(neq_dble(dataset%wexp,1.d0))then
       if(eq_dble(dataset%wexp,0.d0))then
         txy%w=1.d0
       else
@@ -2097,13 +2096,13 @@ CONTAINS
     ! Act on sort operation.
     select case(trim(drange%op))
     case('<')
-      mask=sortvec<drange%thres.and..not.eq_dble(sortvec,drange%thres)
+      mask=lt_dble(sortvec,drange%thres)
     case('<=')
-      mask=sortvec<drange%thres.or.eq_dble(sortvec,drange%thres)
+      mask=le_dble(sortvec,drange%thres)
     case('>')
-      mask=sortvec>drange%thres.and..not.eq_dble(sortvec,drange%thres)
+      mask=gt_dble(sortvec,drange%thres)
     case('>=')
-      mask=sortvec>drange%thres.or.eq_dble(sortvec,drange%thres)
+      mask=ge_dble(sortvec,drange%thres)
     case('[',']')
       if(drange%size>0)then
         n=min(drange%size,xy%nxy)
@@ -2249,7 +2248,7 @@ CONTAINS
         enddo ! ipoly
         t1=(dataset%rtxy%y(ixy)-e_fit)**2
         t2=dataset%rtxy%dy(ixy)**2
-        if(.not.eq_dble(sexp,0.d0))then
+        if(neq_dble(sexp,0.d0))then
           t1=t1/dataset%rtxy%x(ixy)**(2*sexp)
           t2=t2/dataset%rtxy%x(ixy)**(2*sexp)
         endif
@@ -4116,7 +4115,7 @@ CONTAINS
           write(6,'()')
           exit
         endif
-        if(dataset%xy%dx(i)<0.d0.and..not.eq_dble(dataset%xy%dx(i),0.d0))then
+        if(lt_dble(dataset%xy%dx(i),0.d0))then
           write(6,'(a)')'Found negative dx in "'//trim(fname)//'".'
           write(6,'()')
           ierr=-5
@@ -4130,7 +4129,7 @@ CONTAINS
           write(6,'()')
           exit
         endif
-        if(dataset%xy%dy(i)<0.d0.and..not.eq_dble(dataset%xy%dy(i),0.d0))then
+        if(lt_dble(dataset%xy%dy(i),0.d0))then
           write(6,'(a)')'Found negative dy in "'//trim(fname)//'".'
           write(6,'()')
           ierr=-6
@@ -4144,7 +4143,7 @@ CONTAINS
           write(6,'()')
           exit
         endif
-        if(dataset%xy%w(i)<0.d0.or.eq_dble(dataset%xy%w(i),0.d0))then
+        if(le_dble(dataset%xy%w(i),0.d0))then
           write(6,'(a)')'Found non-positive w in "'//trim(fname)//'".'
           write(6,'()')
           ierr=-7
@@ -4394,7 +4393,7 @@ CONTAINS
       elseif(abs(anint(pow(ipoly))-pow(ipoly))<tol_zero)then
         ! For natural powers, force integer exponents to avoid issues.
         eval_poly=eval_poly+a(ipoly)*x_target**nint(pow(ipoly))
-      elseif(.not.eq_dble(x_target,0.d0))then
+      elseif(neq_dble(x_target,0.d0))then
         ! Fractional powers only evaluated for non-zero arguments.
         eval_poly=eval_poly+a(ipoly)*x_target**pow(ipoly)
       endif
@@ -4823,10 +4822,10 @@ CONTAINS
 
 
   LOGICAL ELEMENTAL FUNCTION eq_dble(x,y,tol)
-    !------------------------------------------------------!
-    ! Check if two floating-point numbers are equal within !
-    ! a reasonable tolerance.                              !
-    !------------------------------------------------------!
+    !---------------------------------------------------!
+    ! Check if two floating-point numbers are such that !
+    ! X == Y within a reasonable tolerance.             !
+    !---------------------------------------------------!
     IMPLICIT NONE
     DOUBLE PRECISION,INTENT(in) :: x,y
     DOUBLE PRECISION,OPTIONAL,INTENT(in) :: tol
@@ -4850,6 +4849,66 @@ CONTAINS
       endif
     endif
   END FUNCTION eq_dble
+
+
+  LOGICAL ELEMENTAL FUNCTION neq_dble(x,y,tol)
+    !---------------------------------------------------!
+    ! Check if two floating-point numbers are such that !
+    ! X /= Y within a reasonable tolerance.             !
+    !---------------------------------------------------!
+    IMPLICIT NONE
+    DOUBLE PRECISION,INTENT(in) :: x,y
+    DOUBLE PRECISION,OPTIONAL,INTENT(in) :: tol
+    neq_dble=.not.eq_dble(x,y,tol)
+  END FUNCTION neq_dble
+
+
+  LOGICAL ELEMENTAL FUNCTION lt_dble(x,y,tol)
+    !---------------------------------------------------!
+    ! Check if two floating-point numbers are such that !
+    ! X < Y within a reasonable tolerance.              !
+    !---------------------------------------------------!
+    IMPLICIT NONE
+    DOUBLE PRECISION,INTENT(in) :: x,y
+    DOUBLE PRECISION,OPTIONAL,INTENT(in) :: tol
+    lt_dble=x<y.and.neq_dble(x,y,tol)
+  END FUNCTION lt_dble
+
+
+  LOGICAL ELEMENTAL FUNCTION le_dble(x,y,tol)
+    !---------------------------------------------------!
+    ! Check if two floating-point numbers are such that !
+    ! X <= Y within a reasonable tolerance.             !
+    !---------------------------------------------------!
+    IMPLICIT NONE
+    DOUBLE PRECISION,INTENT(in) :: x,y
+    DOUBLE PRECISION,OPTIONAL,INTENT(in) :: tol
+    le_dble=x<y.or.eq_dble(x,y,tol)
+  END FUNCTION le_dble
+
+
+  LOGICAL ELEMENTAL FUNCTION gt_dble(x,y,tol)
+    !---------------------------------------------------!
+    ! Check if two floating-point numbers are such that !
+    ! X > Y within a reasonable tolerance.              !
+    !---------------------------------------------------!
+    IMPLICIT NONE
+    DOUBLE PRECISION,INTENT(in) :: x,y
+    DOUBLE PRECISION,OPTIONAL,INTENT(in) :: tol
+    gt_dble=x>y.and.neq_dble(x,y,tol)
+  END FUNCTION gt_dble
+
+
+  LOGICAL ELEMENTAL FUNCTION ge_dble(x,y,tol)
+    !---------------------------------------------------!
+    ! Check if two floating-point numbers are such that !
+    ! X >= Y within a reasonable tolerance.             !
+    !---------------------------------------------------!
+    IMPLICIT NONE
+    DOUBLE PRECISION,INTENT(in) :: x,y
+    DOUBLE PRECISION,OPTIONAL,INTENT(in) :: tol
+    ge_dble=x>y.or.eq_dble(x,y,tol)
+  END FUNCTION ge_dble
 
 
   ! POINTER RESIZING TOOLS.
