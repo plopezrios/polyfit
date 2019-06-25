@@ -2293,9 +2293,9 @@ CONTAINS
 
     ! Report.
     write(6,'(4x)',advance='no')
-    write(6,'(2x,a4,1x,3(1x,a16))')'set','X       ','f       ','df       '
+    write(6,'(2x,a4,1x,3(1x,a20))')'set','X       ','f       ','df       '
     write(6,'(4x)',advance='no')
-    write(6,'(2x,56("-"))')
+    write(6,'(2x,68("-"))')
     do iset=1,ndataset
       do ix=1,deval%n
         write(6,'(a4)',advance='no')'EVAL'
@@ -2308,7 +2308,7 @@ CONTAINS
       end select
     enddo ! iset
     write(6,'(4x)',advance='no')
-    write(6,'(2x,56("-"))')
+    write(6,'(2x,68("-"))')
     write(6,'()')
     deallocate(fmean,ferr)
 
