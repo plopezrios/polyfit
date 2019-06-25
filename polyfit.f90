@@ -105,6 +105,8 @@ CONTAINS
     INTEGER nsearch,ndiscr
     INTEGER,POINTER :: fsearch(:),fdiscr(:)
     CHARACTER(search_size),POINTER :: search(:)
+    ! Input echo.
+    LOGICAL input_echo
     ! Misc variables.
     CHARACTER(7) settype
     CHARACTER(8192) command,token
@@ -113,6 +115,14 @@ CONTAINS
        &ierr1,ierr2,ierr3,ierr4,ierr5
     INTEGER nxy,itransf,iset,i1,i2,ipos,npoly
     DOUBLE PRECISION t1,t2,wexp
+
+    ! Write header.
+    write(6,'(a)')'===================================='
+    write(6,'(a)')'POLYFIT - polynomial fitting toolbox'
+    write(6,'(a)')'===================================='
+    write(6,'()')
+    write(6,'(a)')'Type "help" for a list of commands.'
+    write(6,'()')
 
     ! Initialize.
     ndataset=0
@@ -126,14 +136,7 @@ CONTAINS
     fit%pow(1:2)=(/0.d0,1.d0/)
     fit%share=.false.
     nullify(fsearch,fdiscr,search)
-
-    ! Write header.
-    write(6,'(a)')'===================================='
-    write(6,'(a)')'POLYFIT - polynomial fitting toolbox'
-    write(6,'(a)')'===================================='
-    write(6,'()')
-    write(6,'(a)')'Type "help" for a list of commands.'
-    write(6,'()')
+    input_echo=.false.
 
     ! Loop over user actions.
     user_loop: do
@@ -149,12 +152,15 @@ CONTAINS
       nullify(deval%x)
 
       ! Read user command.
-      write(6,'(a)',advance='no')'polyfit> '
+      write(6,'(a)',advance='no')'POLYFIT> '
       read(5,'(a)',iostat=ierr)command
       if(ierr/=0)then
         write(6,'()')
         call quit()
       endif
+      command=adjustl(command)
+      if(input_echo)write(6,'(a)')trim(command)
+      if(command(1:1)=='#')cycle
 
       ! Execute command.
       select case(trim(field(1,command)))
@@ -1214,7 +1220,7 @@ CONTAINS
           ! Update X0.
           call refresh_fit(ndataset,dlist,fit)
           ! Report.
-          write(6,'(a)')'Range set.'
+          write(6,'(a)')'Range set for all sets.'
           write(6,'()')
 
         case('shared')
@@ -1328,6 +1334,7 @@ CONTAINS
           fit%x0_string=field(3,command)
           ! Update X0.
           call refresh_fit(ndataset,dlist,fit)
+          write(6,'(a)')'centre set to '//trim(field(3,command))//'.'
 
         case('nsample')
           ! Check value.
@@ -1344,18 +1351,27 @@ CONTAINS
             cycle user_loop
           endif
           mcparams%nsample=i
+          write(6,'(a)')'nsample set to '//trim(i2s(i))//'.'
 
         case('qrandom')
           ! Quasi-random noise handling.
-          t1=dble_field(3,command,ierr)
-          if(ierr/=0)then
-            write(6,'(a)')'Invalid value "'//trim(field(3,command))//'" for &
-               &variable qrandom.'
-            write(6,'()')
-            cycle user_loop
+          t1=0.d0
+          if(nfield(command)>2)then
+            t1=dble_field(3,command,ierr)
+            if(ierr/=0)then
+              write(6,'(a)')'Invalid value "'//trim(field(3,command))//'" for &
+                 &variable qrandom.'
+              write(6,'()')
+              cycle user_loop
+            endif
           endif
           fit%apply_qrandom=.true.
           fit%qrandom_exp=t1
+          write(6,'(a,es12.4,a)')'Set qrandom with exponent ',t1,'.'
+
+        case('echo')
+          input_echo=.true.
+          write(6,'(a)')'Enabled input echo.'
 
         case default
           write(6,'(a)')'Unknown variable "'//trim(field(2,command))//'".'
@@ -1385,18 +1401,28 @@ CONTAINS
             call refresh_dataset(dlist(iset)%dataset,drange)
           enddo ! iset
           call refresh_fit(ndataset,dlist,fit)
+          write(6,'(a)')'Reset '//trim(field(2,command))//' to '//&
+             &trim(TRANSF_NAME(ITRANSF_NONE))//' for all sets.'
+          write(6,'()')
         case('wexp')
           ! FIXME - "for" clause
           wexp_default=1.d0
           do iset=1,ndataset
             dlist(iset)%dataset%wexp=1.d0
           enddo ! ifield
+          write(6,'(a)')'Unset wexp for all sets.'
+          write(6,'()')
         case('fit')
           deallocate(fit%pow,fit%share)
           fit%npoly=2
           allocate(fit%pow(2),fit%share(2))
           fit%pow=(/0.d0,1.d0/)
           fit%share=.false.
+          ! Report.
+          write(6,'(a)')'Fit form reset to:'
+          write(6,'(2x,a)')trim(print_poly_sym(fit))
+          write(6,'(2x,a)')'Shared coefficients reset to: none'
+          write(6,'()')
         case('range')
           drange%var='X'
           drange%op=''
@@ -1406,25 +1432,40 @@ CONTAINS
             call refresh_dataset(dlist(iset)%dataset,drange)
           enddo ! iset
           call refresh_fit(ndataset,dlist,fit)
+          ! Report.
+          write(6,'(a)')'Range unset for all sets.'
+          write(6,'()')
         case('shared')
           fit%share=.false.
+          write(6,'(a)')'Shared coefficients reset to: none'
+          write(6,'()')
         case('centre')
           fit%X0_string='0'
           call refresh_fit(ndataset,dlist,fit)
+          write(6,'(a)')'centre reset to 0.'
+          write(6,'()')
         case('nsample')
           mcparams%nsample=mcparams_default%nsample
+          write(6,'(a)')'nsample reset to '//&
+             &trim(i2s(mcparams_default%nsample))//'.'
+          write(6,'()')
         case('qrandom')
           fit%apply_qrandom=.false.
           fit%qrandom_exp=0.d0
+          write(6,'(a,es12.4,a)')'Unset qrandom.'
+          write(6,'()')
+        case('echo')
+          input_echo=.false.
+          write(6,'(a)')'Disabled input echo.'
+          write(6,'()')
         case default
           write(6,'(a)')'Unknown variable "'//trim(field(2,command))//'".'
           write(6,'()')
           cycle user_loop
         end select
-        write(6,'(a)')'Variable "'//trim(field(2,command))//'" reset.'
-        write(6,'()')
 
       case('status')
+        ! Report status.
         write(6,'()')
         write(6,'(a,es11.4)')'Global settings:'
         select case(drange%op)
@@ -1480,6 +1521,12 @@ CONTAINS
           write(6,'()')
         endif
         write(6,'("  X0 = ",a," =",es12.4)')trim(fit%x0_string),fit%X0
+        if(fit%apply_qrandom)then
+          write(6,'(a,es12.4)')'Quasi-random noise handling enabled with &
+             &exponent ',fit%qrandom_exp
+        else
+          write(6,'(a)')'Quasi-random noise handling disabled.'
+        endif
         write(6,'()')
 
       case('help')
@@ -1504,15 +1551,16 @@ CONTAINS
           call pprint('* wload <file> [using <column>] [where <column> &
              &<value>]',0,2)
           call pprint('* unload <set-index>',0,2)
-          call pprint('* set <variable> <value> [for <set-list>]',0,2)
-          call pprint('* unset <variable>',0,2)
-          call pprint('* status',0,2)
+          call pprint('* fit',0,2)
+          call pprint('* plot <file-name>',0,2)
           call pprint('* assess <variables> [using <function> at X <X> &
              &[for <set>]]',0,2)
           call pprint('* report <report>',0,2)
-          call pprint('* fit',0,2)
-          call pprint('* plot <file-name>',0,2)
           call pprint('* evaluate <function> at X <X>',0,2)
+          call pprint('* intersect between <X1> <X2>',0,2)
+          call pprint('* set <variable> <value> [for <set-list>]',0,2)
+          call pprint('* unset <variable>',0,2)
+          call pprint('* status',0,2)
           call pprint('* help [<command> | set <variable>]',0,2)
           call pprint('')
           call pprint('Type help <command> for detailed information.')
@@ -1595,12 +1643,35 @@ CONTAINS
           call pprint('Unload datasets from memory.  If no sets are &
              &specified, all datasets are unloaded.',2,2)
           call pprint('')
-        case('status')
+        case('fit')
           call pprint('')
-          call pprint('Command: status',0,9)
+          call pprint('Command: fit',0,9)
           call pprint('')
-          call pprint('Report currently loaded datasets and values of &
-             &internal variables.',2,2)
+          call pprint('Perform fit of currently loaded datasets.',2,2)
+          call pprint('')
+        case('plot')
+          call pprint('')
+          call pprint('Command: plot <function> [at <xvalues>] &
+             &[to <filename>]',0,9)
+          call pprint('')
+          call pprint('Plot a function of the fit to <filename>.',2,2)
+          call pprint('')
+          call pprint('<function> can be f, f'', or f'''' for the value, &
+             &first, and second derivative, respectively, or sharedf, &
+             &sharedf'', or sharedf'''' for the value, first, and second &
+             &derivative of the shared part of the fit function (for &
+             &multi-dataset fits containing shared parameters). If &
+             &<function> is f or sharedf, the original data are also &
+             &plotted.',2,2)
+          call pprint('')
+          call pprint('<xvalues> is specified as &
+             &"<variable>=<comma-separated-list>" (e.g., "X=0,1,2,3") or as &
+             &"<variable>=<first>:<last>:<count>" (e.g., "X=0:3:4").',2,2)
+          call pprint('')
+          call pprint('If any fit parameters are shared among datasets, the &
+             &fit function is split into a shared part and a set-specific &
+             &part -- data points are offset by the value of the set-specific &
+             &part, and the shared part of the fit is plotted.',2,2)
           call pprint('')
         case('assess')
           call pprint('')
@@ -1659,36 +1730,6 @@ CONTAINS
           call pprint('* range : report basic range statistics of the data.',&
              &2,4)
           call pprint('')
-        case('fit')
-          call pprint('')
-          call pprint('Command: fit',0,9)
-          call pprint('')
-          call pprint('Perform fit of currently loaded datasets.',2,2)
-          call pprint('')
-        case('plot')
-          call pprint('')
-          call pprint('Command: plot <function> [at <xvalues>] &
-             &[to <filename>]',0,9)
-          call pprint('')
-          call pprint('Plot a function of the fit to <filename>.',2,2)
-          call pprint('')
-          call pprint('<function> can be f, f'', or f'''' for the value, &
-             &first, and second derivative, respectively, or sharedf, &
-             &sharedf'', or sharedf'''' for the value, first, and second &
-             &derivative of the shared part of the fit function (for &
-             &multi-dataset fits containing shared parameters). If &
-             &<function> is f or sharedf, the original data are also &
-             &plotted.',2,2)
-          call pprint('')
-          call pprint('<xvalues> is specified as &
-             &"<variable>=<comma-separated-list>" (e.g., "X=0,1,2,3") or as &
-             &"<variable>=<first>:<last>:<count>" (e.g., "X=0:3:4").',2,2)
-          call pprint('')
-          call pprint('If any fit parameters are shared among datasets, the &
-             &fit function is split into a shared part and a set-specific &
-             &part -- data points are offset by the value of the set-specific &
-             &part, and the shared part of the fit is plotted.',2,2)
-          call pprint('')
         case('evaluate')
           call pprint('')
           call pprint('Command: evaluate <function> at <xvalues>',0,9)
@@ -1729,15 +1770,6 @@ CONTAINS
              &This command will return an error message if this is &
              &consistently not the case during random sampling.',2,2)
           call pprint('')
-        case('unset')
-          call pprint('')
-          call pprint('Command: unset <variable>',0,9)
-          call pprint('')
-          call pprint('Sets <variable> to its default value.',2,2)
-          call pprint('')
-          call pprint('Type "help set <variable>" for detailed information on &
-             &variables and their default values.',2,2)
-          call pprint('')
         case('set')
           if(nfield(command)==2)then
             call pprint('')
@@ -1749,12 +1781,14 @@ CONTAINS
             call pprint('')
             call pprint('* xscale',2,4)
             call pprint('* yscale',2,4)
+            call pprint('* wexp',2,4)
             call pprint('* fit',2,4)
             call pprint('* range',2,4)
             call pprint('* shared',2,4)
             call pprint('* centre',2,4)
             call pprint('* nsample',2,4)
             call pprint('* qrandom',2,4)
+            call pprint('* echo',2,4)
             call pprint('')
             call pprint('Type "help set <variable>" for detailed &
                &information.',2,2)
@@ -1931,11 +1965,33 @@ CONTAINS
               call pprint('If "qrandom" is unset (default), no quasirandom &
                  &noise handling is performed.',2,2)
               call pprint('')
+            case('echo')
+              call pprint('Variable: echo',0,10)
+              call pprint('')
+              call pprint('Setting "echo" causes input commands to be echoed &
+                 &back to stdout, which is useful for scripts.')
+              call pprint('')
             case default
               call pprint('No help for variable "'//trim(field(3,command))//&
                  &'".')
             end select
           endif
+        case('unset')
+          call pprint('')
+          call pprint('Command: unset <variable>',0,9)
+          call pprint('')
+          call pprint('Sets <variable> to its default value.',2,2)
+          call pprint('')
+          call pprint('Type "help set <variable>" for detailed information on &
+             &variables and their default values.',2,2)
+          call pprint('')
+        case('status')
+          call pprint('')
+          call pprint('Command: status',0,9)
+          call pprint('')
+          call pprint('Report currently loaded datasets and values of &
+             &internal variables.',2,2)
+          call pprint('')
         case default
           call pprint('No help for command "'//trim(field(2,command))//'".')
         end select
