@@ -161,6 +161,7 @@ CONTAINS
       command=adjustl(command)
       if(input_echo)write(6,'(a)')trim(command)
       if(command(1:1)=='#')cycle
+      write(6,'()')
 
       ! Execute command.
       select case(trim(field(1,command)))
@@ -169,51 +170,39 @@ CONTAINS
         ! Report number of lines and columns in data file.
         fname=trim(field(2,command))
         call check_file(fname,nxy,ncolumn)
-        write(6,'()')
         select case(nxy)
         case(-1)
-          write(6,'(a)')'Could not open file "'//trim(fname)//'".'
-          write(6,'()')
+          call msg('Could not open file "'//trim(fname)//'".')
           cycle user_loop
         case(-2)
-          write(6,'(a)')'Problem reading file "'//trim(fname)//'".'
-          write(6,'()')
+          call msg('Problem reading file "'//trim(fname)//'".')
           cycle user_loop
         case(-3)
-          write(6,'(a)')'Column count problem in file "'//trim(fname)//'".'
-          write(6,'()')
+          call msg('Column count problem in file "'//trim(fname)//'".')
           cycle user_loop
         case(0)
-          write(6,'(a)')'File "'//trim(fname)//'" contains no useful data.'
-          write(6,'()')
+          call msg('File "'//trim(fname)//'" contains no useful data.')
           cycle user_loop
-        case default
-          write(6,'(a)')'File "'//trim(fname)//'" contains '//&
-             &trim(i2s(nxy))//' lines with '//trim(i2s(ncolumn))//' columns.'
-          write(6,'()')
         end select
+        call msg('File "'//trim(fname)//'" contains '//trim(i2s(nxy))//&
+           &' lines with '//trim(i2s(ncolumn))//' columns.')
 
       case('load','wload')
         ! Load data from specified columns of data file.
         fname=trim(field(2,command))
         call check_file(fname,nxy,ncolumn)
-        write(6,'()')
         select case(nxy)
         case(-1)
-          write(6,'(a)')'Could not open file "'//trim(fname)//'".'
-          write(6,'()')
+          call msg('Could not open file "'//trim(fname)//'".')
           cycle user_loop
         case(-2)
-          write(6,'(a)')'Problem reading file "'//trim(fname)//'".'
-          write(6,'()')
+          call msg('Problem reading file "'//trim(fname)//'".')
           cycle user_loop
         case(-3)
-          write(6,'(a)')'Column count problem in file "'//trim(fname)//'".'
-          write(6,'()')
+          call msg('Column count problem in file "'//trim(fname)//'".')
           cycle user_loop
         case(0)
-          write(6,'(a)')'File "'//trim(fname)//'" contains no useful data.'
-          write(6,'()')
+          call msg('File "'//trim(fname)//'" contains no useful data.')
           cycle user_loop
         end select
 
@@ -249,37 +238,32 @@ CONTAINS
           select case(trim(field(ifield,command)))
           case('using') ! lone "using" for wload only
             if(trim(field(1,command))=='load')then
-              write(6,'(a)')'Syntax error in load command: "using" without &
-                 &preceeding "type" not allowed.'
-              write(6,'()')
+              call msg('Syntax error in load command: "using" without &
+                 &preceeding "type" not allowed.')
               cycle user_loop
             endif
             icol_y=int_field(ifield+1,command,ierr1)
             ifield=ifield+1
             if(ierr1/=0)then
-              write(6,'(a)')'Problem parsing "using" index.'
-              write(6,'()')
+              call msg('Problem parsing "using" index.')
               cycle user_loop
             endif
             ! Check column index.
             if(icol_y>ncolumn.or.icol_y<0)then
-              write(6,'(a)')'Column indices out of range.'
-              write(6,'()')
+              call msg('Column indices out of range.')
               cycle user_loop
             endif
           case('type')
             if(trim(field(1,command))=='wload')then
-              write(6,'(a)')'Syntax error in wload command: "type" is not &
-                 &an allowed subcommand.'
-              write(6,'()')
+              call msg('Syntax error in wload command: "type" is not &
+                 &an allowed subcommand.')
               cycle user_loop
             endif
             call parse_type_string(field(ifield+1,command),ipos_x,ipos_dx,&
                &ipos_y,ipos_dy,ipos_w,ierr)
             if(ierr/=0)then
-              write(6,'(a)')'Syntax error in load command: unrecognized &
-                 &dataset type.'
-              write(6,'()')
+              call msg('Syntax error in load command: unrecognized &
+                 &dataset type.')
               cycle user_loop
             endif
             if(trim(field(ifield+2,command))=='using')then
@@ -299,8 +283,7 @@ CONTAINS
               if(ipos_dy>0)icol_dy=int_field(ifield+2+ipos_dy,command,ierr4)
               if(ipos_w>0)icol_w=int_field(ifield+2+ipos_w,command,ierr5)
               if(ierr1/=0.or.ierr2/=0.or.ierr3/=0.or.ierr4/=0.or.ierr5/=0)then
-                write(6,'(a)')'Problem parsing "using" indices.'
-                write(6,'()')
+                call msg('Problem parsing "using" indices.')
                 cycle user_loop
               endif
               ifield=ifield+2
@@ -321,29 +304,25 @@ CONTAINS
             if(icol_x>ncolumn.or.icol_x<0.or.icol_dx>ncolumn.or.icol_dx<0.or.&
                &icol_y>ncolumn.or.icol_y<0.or.icol_dy>ncolumn.or.icol_dy<0.or.&
                &icol_w>ncolumn.or.icol_w<0)then
-              write(6,'(a)')'Column indices out of range.'
-              write(6,'()')
+              call msg('Column indices out of range.')
               cycle user_loop
             endif
 
           case('where')
             ! Add a search clause.
             if(nfield(command)<ifield+2)then
-              write(6,'(a)')'Syntax error in load command: too few arguments &
-                 &for "where" subcommand"'
-              write(6,'()')
+              call msg('Syntax error in load command: too few arguments &
+                 &for "where" subcommand"')
               cycle user_loop
             endif
             i=int_field(ifield+1,command,ierr)
             if(ierr/=0)then
-              write(6,'(a)')'Syntax error in load command: invalid column &
-                 &index for "where".'
-              write(6,'()')
+              call msg('Syntax error in load command: invalid column &
+                 &index for "where".')
               cycle user_loop
             endif
             if(i<1.or.i>ncolumn)then
-              write(6,'(a)')'Column index out of range in "where" subcommand.'
-              write(6,'()')
+              call msg('Column index out of range in "where" subcommand.')
               cycle user_loop
             endif
             nsearch=nsearch+1
@@ -355,27 +334,23 @@ CONTAINS
           case('by')
             ! Add a discriminator clause.
             if(trim(field(1,command))=='wload')then
-              write(6,'(a)')'Syntax error in wload command: "by" is not &
-                 &an allowed subcommand.'
-              write(6,'()')
+              call msg('Syntax error in wload command: "by" is not &
+                 &an allowed subcommand.')
               cycle user_loop
             endif
             if(nfield(command)<ifield+1)then
-              write(6,'(a)')'Syntax error in load command: too few arguments &
-                 &for "by" subcommand"'
-              write(6,'()')
+              call msg('Syntax error in load command: too few arguments &
+                 &for "by" subcommand"')
               cycle user_loop
             endif
             i=int_field(ifield+1,command,ierr)
             if(ierr/=0)then
-              write(6,'(a)')'Syntax error in load command: invalid column &
-                 &index for "by".'
-              write(6,'()')
+              call msg('Syntax error in load command: invalid column &
+                 &index for "by".')
               cycle user_loop
             endif
             if(i<1.or.i>ncolumn)then
-              write(6,'(a)')'Column index out of range in "by" subcommand.'
-              write(6,'()')
+              call msg('Column index out of range in "by" subcommand.')
               cycle user_loop
             endif
             ndiscr=ndiscr+1
@@ -385,9 +360,8 @@ CONTAINS
           case('')
             exit
           case default
-            write(6,'(a)')'Syntax error in load command: unknown subcommand "'&
-               &//trim(field(ifield,command))//'".'
-            write(6,'()')
+            call msg('Syntax error in load command: unknown subcommand "'&
+               &//trim(field(ifield,command))//'".')
             cycle user_loop
           end select
         enddo ! ifield
@@ -399,8 +373,7 @@ CONTAINS
            &fsearch,search,ndiscr,fdiscr,file_ndataset,file_dlist,ierr)
         if(ierr/=0)cycle user_loop
         if(file_ndataset<1)then
-          write(6,'(a)')'No data loaded.'
-          write(6,'()')
+          call msg('No data loaded.')
           cycle user_loop
         endif
 
@@ -408,23 +381,20 @@ CONTAINS
           ! We are loading dataset weights, so lets see if we have the
           ! right number of them.
           if(file_ndataset/=1)then
-            write(6,'(a)')'Problem with wload: loaded too many datasets.'
-            write(6,'()')
+            call msg('Problem with wload: loaded too many datasets.')
             call kill_dlist(file_dlist)
             cycle user_loop
           endif
           if(file_dlist(1)%dataset%xy%nxy/=ndataset)then
-            write(6,'(a)')'Problem with wload: loaded '//&
+            call msg('Problem with wload: loaded '//&
                &trim(i2s(file_dlist(1)%dataset%xy%nxy))//' weights but &
-               &expected '//trim(i2s(ndataset))//'.'
-            write(6,'()')
+               &expected '//trim(i2s(ndataset))//'.')
             call kill_dlist(file_dlist)
             cycle user_loop
           endif
           ! Check that dataset weights are > 0.
           if(any(file_dlist(1)%dataset%xy%y<=0.d0))then
-            write(6,'(a)')'Problem with wload: found negative weights.'
-            write(6,'()')
+            call msg('Problem with wload: found negative weights.')
             call kill_dlist(file_dlist)
             cycle user_loop
           endif
@@ -434,9 +404,8 @@ CONTAINS
           enddo ! iset
           ! Clean up and loop here to avoid giant if-block below.
           call kill_dlist(file_dlist)
-          write(6,'(a)')'Loaded data from "'//trim(fname)//&
-             &'" as dataset weights.'
-          write(6,'()')
+          call msg('Loaded data from "'//trim(fname)//&
+             &'" as dataset weights.')
           cycle user_loop
         endif
 
@@ -450,49 +419,43 @@ CONTAINS
           if(TRANSF_REQ_NONZERO(dataset%itransfy))then
             if(any(eq_dble(xy%x,0.d0)))then
               dataset%itransfx=ITRANSF_NONE
-              write(6,'(a)')'Note: using linear X for set '//&
-                 &trim(i2s(iset+ndataset))//' since it contains x=0.'
-              write(6,'()')
+              call msg('Note: using linear X for set '//&
+                 &trim(i2s(iset+ndataset))//' since it contains x=0.')
             endif
           endif
           if(TRANSF_REQ_NONZERO(dataset%itransfy))then
             if(any(eq_dble(xy%y,0.d0)))then
               dataset%itransfy=ITRANSF_NONE
-              write(6,'(a)')'Note: using linear Y for set '//&
-                 &trim(i2s(iset+ndataset))//' since it contains y=0.'
-              write(6,'()')
+              call msg('Note: using linear Y for set '//&
+                 &trim(i2s(iset+ndataset))//' since it contains y=0.')
             endif
           endif
           if(TRANSF_REQ_POSITIVE(dataset%itransfx))then
             if(any(xy%x<0.d0))then
               dataset%itransfx=ITRANSF_NONE
-              write(6,'(a)')'Note: using linear X for set '//&
-                 &trim(i2s(iset+ndataset))//' since it contains x<0.'
-              write(6,'()')
+              call msg('Note: using linear X for set '//&
+                 &trim(i2s(iset+ndataset))//' since it contains x<0.')
             endif
           endif
           if(TRANSF_REQ_POSITIVE(dataset%itransfy))then
             if(any(xy%y<0.d0))then
               dataset%itransfy=ITRANSF_NONE
-              write(6,'(a)')'Note: using linear Y for set '//&
-                 &trim(i2s(iset+ndataset))//' since it contains y<0.'
-              write(6,'()')
+              call msg('Note: using linear Y for set '//&
+                 &trim(i2s(iset+ndataset))//' since it contains y<0.')
             endif
           endif
           if(dataset%xy%have_w)then
             if(any(lt_dble(xy%w,0.d0)))then
               if(neq_dble(dataset%wexp,0.d0))then
                 dataset%wexp=0.d0
-                write(6,'(a)')'Note: zeroing weight exponent for set '//&
-                   &trim(i2s(iset+ndataset))//' since it contains w<0.'
-                write(6,'()')
+                call msg('Note: zeroing weight exponent for set '//&
+                   &trim(i2s(iset+ndataset))//' since it contains w<0.')
               endif
             elseif(any(eq_dble(xy%w,0.d0)))then
               if(lt_dble(dataset%wexp,0.d0))then
                 dataset%wexp=1.d0
-                write(6,'(a)')'Note: setting weight exponent to 1 for set '//&
-                   &trim(i2s(iset+ndataset))//' since it contains w=0.'
-                write(6,'()')
+                call msg('Note: setting weight exponent to 1 for set '//&
+                   &trim(i2s(iset+ndataset))//' since it contains w=0.')
               endif
             endif
           endif
@@ -525,10 +488,8 @@ CONTAINS
         write(6,'()')
 
       case('unload')
-        write(6,'()')
         if(ndataset<1)then
-          write(6,'(a)')'No datasets loaded.'
-          write(6,'()')
+          call msg('No datasets loaded.')
           cycle user_loop
         endif
         allocate(smask(ndataset))
@@ -544,14 +505,12 @@ CONTAINS
             if(ifield>nfield(command))exit
             i=parse_int(field(ifield,command),ierr)
             if(ierr/=0)then
-              write(6,'(a)')'Invalid dataset index.'
-              write(6,'()')
+              call msg('Invalid dataset index.')
               deallocate(smask)
               cycle user_loop
             endif
             if(i<1.or.i>ndataset)then
-              write(6,'(a)')'Dataset index out of range.'
-              write(6,'()')
+              call msg('Dataset index out of range.')
               deallocate(smask)
               cycle user_loop
             endif
@@ -576,30 +535,24 @@ CONTAINS
         endif
         ndataset=count(.not.smask)
         call refresh_fit(ndataset,dlist,fit)
-        write(6,'(a)')trim(i2s(count(smask)))//' datasets unloaded.'
-        write(6,'()')
+        call msg(trim(i2s(count(smask)))//' datasets unloaded.')
         deallocate(smask)
 
       case('fit')
-        write(6,'()')
         if(ndataset<1)then
-          write(6,'(a)')'No datasets loaded.'
-          write(6,'()')
+          call msg('No datasets loaded.')
           cycle user_loop
         endif
         if(nfield(command)>1)then
-          write(6,'(a)')'Syntax error: subcommand "'//&
-             &trim(field(2,command))//'" not recognized.'
-          write(6,'()')
+          call msg('Syntax error: subcommand "'//trim(field(2,command))//&
+             &'" not recognized.')
           cycle user_loop
         endif ! nfield>1
         call show_multipoly(ndataset,dlist,drange,fit,mcparams)
 
       case('plot')
-        write(6,'()')
         if(ndataset<1)then
-          write(6,'(a)')'No datasets loaded.'
-          write(6,'()')
+          call msg('No datasets loaded.')
           cycle user_loop
         endif
         ! Initialize unused components.
@@ -625,9 +578,8 @@ CONTAINS
           deval%what='shared'
           deval%nderiv=2
         case default
-          write(6,'(a)')'Syntax error: unknown function "'//&
-             &trim(field(2,command))//'".'
-          write(6,'()')
+          call msg('Syntax error: unknown function "'//&
+             &trim(field(2,command))//'".')
           cycle user_loop
         end select
         ! Parse sub-commands.
@@ -639,31 +591,27 @@ CONTAINS
           select case(trim(field(ifield,command)))
           case('to')
             if(nfield(command)<ifield+1)then
-              write(6,'(a)')'Syntax error: "to" subcommand must be followed &
-                 &by a filename.'
-              write(6,'()')
+              call msg('Syntax error: "to" subcommand must be followed &
+                 &by a filename.')
               cycle user_loop
             endif
             fname=field(ifield+1,command)
             ifield=ifield+1
           case('at')
             if(nfield(command)<ifield+1)then
-              write(6,'(a)')'Syntax error: "at" subcommand must be followed &
-                 &by a data range.'
-              write(6,'()')
+              call msg('Syntax error: "at" subcommand must be followed &
+                 &by a data range.')
               cycle user_loop
             endif
             call parse_xeval(trim(field(ifield+1,command)),deval)
             if(.not.associated(deval%x))then
-              write(6,'(a)')'Syntax error: could not parse range.'
-              write(6,'()')
+              call msg('Syntax error: could not parse range.')
               cycle user_loop
             endif
             ifield=ifield+1
           case default
-            write(6,'(a)')'Syntax error: unknown subcommand "'//&
-               &trim(field(ifield,command))//'".'
-            write(6,'()')
+            call msg('Syntax error: unknown subcommand "'//&
+               &trim(field(ifield,command))//'".')
             cycle user_loop
           end select
         enddo
@@ -672,19 +620,15 @@ CONTAINS
 
       case('assess')
         if(ndataset<1)then
-          write(6,'()')
-          write(6,'(a)')'No datasets loaded.'
-          write(6,'()')
+          call msg('No datasets loaded.')
           cycle user_loop
         endif
         ! Check assessment target.
         select case(trim(field(2,command)))
         case('fit','range','range,fit','fit,range')
         case default
-          write(6,'()')
-          write(6,'(a)')'Unknown variable to assess "'//&
-             &trim(field(2,command))//'".'
-          write(6,'()')
+          call msg('Unknown variable to assess "'//&
+             &trim(field(2,command))//'".')
           cycle user_loop
         end select
         ! Initialize.
@@ -724,51 +668,44 @@ CONTAINS
               deval%what='sum'
               deval%nderiv=2
             case default
-              write(6,'(a)')'Syntax error: unknown function "'//&
-                 &trim(field(ifield+1,command))//'".'
-              write(6,'()')
+              call msg('Syntax error: unknown function "'//&
+                 &trim(field(ifield+1,command))//'".')
               cycle user_loop
             end select
             ! Get where to evaluate it at.
             if(trim(field(ifield+2,command))/='at')then
-              write(6,'(a)')'Syntax error: missing "at" subcommand.'
-              write(6,'()')
+              call msg('Syntax error: missing "at" subcommand.')
               cycle user_loop
             endif
             call parse_xeval(field(ifield+3,command),deval)
             if(.not.associated(deval%x))then
-              write(6,'(a)')'Syntax error: problem parsing list of X values.'
-              write(6,'()')
+              call msg('Syntax error: problem parsing list of X values.')
               cycle user_loop
             endif
             ifield=ifield+3
           case('by')
             call parse_range(field(ifield+1,command),tdrange)
             if(tdrange%op=='')then
-              write(6,'(a)')'Syntax error: problem parsing "by" argument.'
-              write(6,'()')
+              call msg('Syntax error: problem parsing "by" argument.')
               cycle user_loop
             endif
             ifield=ifield+1
           case('for')
             i=int_field(ifield+1,command,ierr)
             if(ierr/=0)then
-              write(6,'(a)')'Syntax error: invalid set index "'//&
-                 &trim(field(ifield+1,command))//'" specified.'
-              write(6,'()')
+              call msg('Syntax error: invalid set index "'//&
+                 &trim(field(ifield+1,command))//'" specified.')
               cycle user_loop
             endif
             if(i<1.or.i>ndataset)then
-              write(6,'(a)')'Syntax error: set index out of range.'
-              write(6,'()')
+              call msg('Syntax error: set index out of range.')
               cycle user_loop
             endif
             eval_iset=i
             ifield=ifield+1
           case default
-            write(6,'(a)')'Syntax error: unknown subcommand "'//&
-                 &trim(field(ifield,command))//'".'
-            write(6,'()')
+            call msg('Syntax error: unknown subcommand "'//&
+                 &trim(field(ifield,command))//'".')
             cycle user_loop
           end select
         enddo ! ifield
@@ -787,26 +724,20 @@ CONTAINS
 
       case('report')
         if(ndataset<1)then
-          write(6,'()')
-          write(6,'(a)')'No datasets loaded.'
-          write(6,'()')
+          call msg('No datasets loaded.')
           cycle user_loop
         endif
         select case(trim(field(2,command)))
         case('range')
           call report_statistics(ndataset,dlist)
         case default
-          write(6,'()')
-          write(6,'(a)')'Unknown report name "'//trim(field(2,command))//'".'
-          write(6,'()')
+          call msg('Unknown report name "'//trim(field(2,command))//'".')
           cycle user_loop
         end select
 
       case('evaluate')
-        write(6,'()')
         if(ndataset<1)then
-          write(6,'(a)')'No datasets loaded.'
-          write(6,'()')
+          call msg('No datasets loaded.')
           cycle user_loop
         endif
         ! Initialize unused components.
@@ -832,21 +763,18 @@ CONTAINS
           deval%what='sum'
           deval%nderiv=2
         case default
-          write(6,'(a)')'Syntax error: unknown function "'//&
-             &trim(field(2,command))//'".'
-          write(6,'()')
+          call msg('Syntax error: unknown function "'//&
+             &trim(field(2,command))//'".')
           cycle user_loop
         end select
         ! Get where to evaluate it at.
         if(trim(field(3,command))/='at')then
-          write(6,'(a)')'Syntax error: missing "at" subcommand.'
-          write(6,'()')
+          call msg('Syntax error: missing "at" subcommand.')
           cycle user_loop
         endif
         call parse_xeval(field(4,command),deval)
         if(.not.associated(deval%x))then
-          write(6,'(a)')'Syntax error: could not parse range.'
-          write(6,'()')
+          call msg('Syntax error: could not parse range.')
           cycle user_loop
         endif
         ! Perform evaluation.
@@ -855,8 +783,7 @@ CONTAINS
       case('intersect')
         ! This is only useful when two or more datasets are loaded.
         if(ndataset<2)then
-          write(6,'(a)')'Need at least two datasets to find intersections.'
-          write(6,'()')
+          call msg('Need at least two datasets to find intersections.')
           cycle user_loop
         endif
         ! Parse options.
@@ -865,20 +792,17 @@ CONTAINS
           t1=dble_field(3,command,ierr1)
           t2=dble_field(4,command,ierr2)
           if(ierr1/=0.or.ierr2/=0)then
-            write(6,'(a)')'Syntax error: could not parse arguments of &
-               &"between" subcommand.'
-            write(6,'()')
+            call msg('Syntax error: could not parse arguments of &
+               &"between" subcommand.')
             cycle user_loop
           endif
           if(t1>=t2)then
-            write(6,'(a)')'Syntax error: intersection range has non-positive &
-               &length.'
-            write(6,'()')
+            call msg('Syntax error: intersection range has non-positive &
+               &length.')
             cycle user_loop
           endif
         case default
-          write(6,'(a)')'Syntax error: "between" subcommand missing.'
-          write(6,'()')
+          call msg('Syntax error: "between" subcommand missing.')
           cycle user_loop
         end select
         ! Perform intersection.
@@ -887,7 +811,6 @@ CONTAINS
       case('set')
 
         ! Set variables.
-        write(6,'()')
         select case(trim(field(2,command)))
 
         case('xscale','yscale')
@@ -896,37 +819,32 @@ CONTAINS
             if(trim(field(3,command))==trim(TRANSF_NAME(itransf)))exit
           enddo ! itransf
           if(itransf>NTRANSF)then
-            write(6,'(a)')'Unknown value "'//trim(field(3,command))//'" for &
-               &variable "'//trim(field(2,command))//'".'
-            write(6,'()')
+            call msg('Unknown value "'//trim(field(3,command))//'" for &
+               &variable "'//trim(field(2,command))//'".')
             cycle user_loop
           endif
           if(nfield(command)>3)then
             ! Set-by-set setting.  Check syntax.
             if(trim(field(4,command))/='for')then
-              write(6,'(a)')'Syntax error in set command: unkwown subcommand &
-                 &"'//trim(field(4,command))//'".'
-              write(6,'()')
+              call msg('Syntax error in set command: unkwown subcommand &
+                 &"'//trim(field(4,command))//'".')
               cycle user_loop
             endif
             if(nfield(command)<5)then
-              write(6,'(a)')'Syntax error in set command: "for" subcommand &
-                 &requires arguments.'
-              write(6,'()')
+              call msg('Syntax error in set command: "for" subcommand &
+                 &requires arguments.')
               cycle user_loop
             endif
             ! Check transformation is applicable.
             do ifield=5,nfield(command)
               iset=int_field(ifield,command,ierr)
               if(ierr/=0)then
-                write(6,'(a)')'Syntax error in set command: could not parse &
-                   &set values.'
-                write(6,'()')
+                call msg('Syntax error in set command: could not parse &
+                   &set values.')
                 cycle user_loop
               endif
               if(iset<1.or.iset>ndataset)then
-                write(6,'(a)')'Set index out of range.'
-                write(6,'()')
+                call msg('Set index out of range.')
                 cycle user_loop
               endif
               xy=>dlist(iset)%dataset%xy
@@ -934,16 +852,14 @@ CONTAINS
                 select case(trim(field(2,command)))
                 case('xscale')
                   if(any(eq_dble(xy%x,0.d0)))then
-                    write(6,*)'Cannot apply axis transformation: set #'//&
-                       &trim(i2s(iset))//' contains x=0.'
-                    write(6,'()')
+                    call msg('Cannot apply axis transformation: set #'//&
+                       &trim(i2s(iset))//' contains x=0.')
                     cycle user_loop
                   endif
                 case('yscale')
                   if(any(eq_dble(xy%y,0.d0)))then
-                    write(6,*)'Cannot apply axis transformation: set #'//&
-                       &trim(i2s(iset))//' contains y=0.'
-                    write(6,'()')
+                    call msg('Cannot apply axis transformation: set #'//&
+                       &trim(i2s(iset))//' contains y=0.')
                     cycle user_loop
                   endif
                 end select
@@ -952,16 +868,14 @@ CONTAINS
                 select case(trim(field(2,command)))
                 case('xscale')
                   if(any(xy%x<0.d0))then
-                    write(6,*)'Cannot apply axis transformation: set #'//&
-                       &trim(i2s(iset))//' contains x<0.'
-                    write(6,'()')
+                    call msg('Cannot apply axis transformation: set #'//&
+                       &trim(i2s(iset))//' contains x<0.')
                     cycle user_loop
                   endif
                 case('yscale')
                   if(any(xy%y<0.d0))then
-                    write(6,*)'Cannot apply axis transformation: set #'//&
-                       &trim(i2s(iset))//' contains y<0.'
-                    write(6,'()')
+                    call msg('Cannot apply axis transformation: set #'//&
+                       &trim(i2s(iset))//' contains y<0.')
                     cycle user_loop
                   endif
                 end select
@@ -978,8 +892,10 @@ CONTAINS
                 dataset%itransfy=itransf
               end select
               write(6,'(a)')'Set '//trim(field(2,command))//' to '//&
-                 &trim(TRANSF_NAME(itransf))//' for set #'//trim(i2s(iset))//'.'
+                 &trim(TRANSF_NAME(itransf))//' for set #'//&
+                 &trim(i2s(iset))//'.'
             enddo ! ifield
+            write(6,'()')
           else
             ! Check transformation is applicable.
             do iset=1,ndataset
@@ -988,16 +904,14 @@ CONTAINS
                 select case(trim(field(2,command)))
                 case('xscale')
                   if(any(eq_dble(xy%x,0.d0)))then
-                    write(6,*)'Cannot apply axis transformation: set #'//&
-                       &trim(i2s(iset))//' contains x=0.'
-                    write(6,'()')
+                    call msg('Cannot apply axis transformation: set #'//&
+                       &trim(i2s(iset))//' contains x=0.')
                     cycle user_loop
                   endif
                 case('yscale')
                   if(any(eq_dble(xy%y,0.d0)))then
-                    write(6,*)'Cannot apply axis transformation: set #'//&
-                       &trim(i2s(iset))//' contains y=0.'
-                    write(6,'()')
+                    call msg('Cannot apply axis transformation: set #'//&
+                       &trim(i2s(iset))//' contains y=0.')
                     cycle user_loop
                   endif
                 end select
@@ -1006,16 +920,14 @@ CONTAINS
                 select case(trim(field(2,command)))
                 case('xscale')
                   if(any(xy%x<0.d0))then
-                    write(6,*)'Cannot apply axis transformation: set #'//&
-                       &trim(i2s(iset))//' contains x<0.'
-                    write(6,'()')
+                    call msg('Cannot apply axis transformation: set #'//&
+                       &trim(i2s(iset))//' contains x<0.')
                     cycle user_loop
                   endif
                 case('yscale')
                   if(any(xy%y<0.d0))then
-                    write(6,*)'Cannot apply axis transformation: set #'//&
-                       &trim(i2s(iset))//' contains y<0.'
-                    write(6,'()')
+                    call msg('Cannot apply axis transformation: set #'//&
+                       &trim(i2s(iset))//' contains y<0.')
                     cycle user_loop
                   endif
                 end select
@@ -1034,10 +946,9 @@ CONTAINS
                 dlist(iset)%dataset%itransfy=itransf
               enddo ! iset
             end select
-            write(6,'(a)')'Set '//trim(field(2,command))//' to '//&
-               &trim(TRANSF_NAME(itransf))//' for all sets.'
+            call msg('Set '//trim(field(2,command))//' to '//&
+               &trim(TRANSF_NAME(itransf))//' for all sets.')
           endif
-          write(6,'()')
           ! Apply transformations.
           do iset=1,ndataset
             call refresh_dataset(dlist(iset)%dataset,drange)
@@ -1049,44 +960,38 @@ CONTAINS
           ! Set weight exponent.
           wexp=parse_dble(field(3,command),ierr)
           if(ierr/=0)then
-            write(6,'(a)')'Problem parsing value of weight exponent.'
-            write(6,'()')
+            call msg('Problem parsing value of weight exponent.')
             cycle user_loop
           endif
           if(nfield(command)>3)then
             ! Set-by-set setting.  Check syntax.
             if(trim(field(4,command))/='for')then
-              write(6,'(a)')'Syntax error in set command: unkwown subcommand &
-                 &"'//trim(field(4,command))//'".'
-              write(6,'()')
+              call msg('Syntax error in set command: unkwown subcommand &
+                 &"'//trim(field(4,command))//'".')
               cycle user_loop
             endif
             if(nfield(command)<5)then
-              write(6,'(a)')'Syntax error in set command: "for" subcommand &
-                 &requires arguments.'
-              write(6,'()')
+              call msg('Syntax error in set command: "for" subcommand &
+                 &requires arguments.')
               cycle user_loop
             endif
             ! Check exponent is applicable.
             do ifield=5,nfield(command)
               iset=int_field(ifield,command,ierr)
               if(ierr/=0)then
-                write(6,'(a)')'Syntax error in set command: could not parse &
-                   &set values.'
-                write(6,'()')
+                call msg('Syntax error in set command: could not parse &
+                   &set values.')
                 cycle user_loop
               endif
               if(iset<1.or.iset>ndataset)then
-                write(6,'(a)')'Set index out of range.'
-                write(6,'()')
+                call msg('Set index out of range.')
                 cycle user_loop
               endif
               if(lt_dble(wexp,0.d0))then
                 xy=>dlist(iset)%dataset%xy
                 if(any(eq_dble(xy%w,0.d0)))then
-                  write(6,*)'Cannot apply weight exponent: set #'//&
-                     &trim(i2s(iset))//' contains w=0.'
-                  write(6,'()')
+                  call msg('Cannot apply weight exponent: set #'//&
+                     &trim(i2s(iset))//' contains w=0.')
                   cycle user_loop
                 endif
               endif
@@ -1098,15 +1003,15 @@ CONTAINS
               dataset%wexp=wexp
               write(6,'(a)')'Set wexp for set #'//trim(i2s(iset))//'.'
             enddo ! ifield
+            write(6,'()')
           else
             ! Check exponent is applicable.
             if(lt_dble(wexp,0.d0))then
               do iset=1,ndataset
                 xy=>dlist(iset)%dataset%xy
                 if(any(eq_dble(xy%w,0.d0)))then
-                  write(6,*)'Cannot apply weight exponent: set #'//&
-                     &trim(i2s(iset))//' contains w=0.'
-                  write(6,'()')
+                  call msg('Cannot apply weight exponent: set #'//&
+                     &trim(i2s(iset))//' contains w=0.')
                   cycle user_loop
                 endif
               enddo ! iset
@@ -1116,9 +1021,8 @@ CONTAINS
             do iset=1,ndataset
               dlist(iset)%dataset%wexp=wexp
             enddo ! iset
-            write(6,'(a)')'Set wexp for all sets.'
+            call msg('Set wexp for all sets.')
           endif
-          write(6,'()')
 
         case('fit')
           ! Set fit exponents.
@@ -1126,8 +1030,7 @@ CONTAINS
           ierr=0
           select case(nfield(command))
           case(2)
-            write(6,'(a)')'Syntax error: no value given for "fit".'
-            write(6,'()')
+            call msg('Syntax error: no value given for "fit".')
             cycle user_loop
           case(3)
             t1=dble_field(3,command,ierr)
@@ -1138,8 +1041,7 @@ CONTAINS
             do ifield=3,nfield(command)
               t1=dble_field(ifield,command,ierr)
               if(ierr/=0)then
-                write(6,'(a)')'Syntax error: could not parse exponents.'
-                write(6,'()')
+                call msg('Syntax error: could not parse exponents.')
                 cycle user_loop
               endif
             enddo ! ifield
@@ -1151,29 +1053,25 @@ CONTAINS
             token=field(3,command)
             ipos=scan(token,':')
             if(ipos<1)then
-              write(6,'(a)')'Syntax error: could not parse range.'
-              write(6,'()')
+              call msg('Syntax error: could not parse range.')
               cycle user_loop
             endif
             i1=0
             if(ipos>1)then
               i1=parse_int(token(1:ipos-1),ierr)
               if(ierr/=0)then
-                write(6,'(a)')'Syntax error: could not parse range.'
-                write(6,'()')
+                call msg('Syntax error: could not parse range.')
                 cycle user_loop
               endif
             endif
             i2=parse_int(token(ipos+1:),ierr)
             if(ierr/=0)then
-              write(6,'(a)')'Syntax error: could not parse range.'
-              write(6,'()')
+              call msg('Syntax error: could not parse range.')
               cycle user_loop
             endif
             npoly=i2-i1+1
             if(npoly<1)then
-              write(6,'(a)')'Exponent range runs backwards.'
-              write(6,'()')
+              call msg('Exponent range runs backwards.')
               cycle user_loop
             endif
           endif
@@ -1201,13 +1099,11 @@ CONTAINS
           ! Check sort variable.
           call parse_range(trim(field(3,command)),drange)
           if(drange%op=='')then
-            write(6,'(a)')'Syntax error parsing range string.'
-            write(6,'()')
+            call msg('Syntax error parsing range string.')
             cycle user_loop
           endif
           if(drange%no_rhs)then
-            write(6,'(a)')'Syntax error parsing right-hand side of range.'
-            write(6,'()')
+            call msg('Syntax error parsing right-hand side of range.')
             drange%op=''
             drange%no_rhs=.false.
             cycle user_loop
@@ -1219,8 +1115,7 @@ CONTAINS
           ! Update X0.
           call refresh_fit(ndataset,dlist,fit)
           ! Report.
-          write(6,'(a)')'Range set for all sets.'
-          write(6,'()')
+          call msg('Range set for all sets.')
 
         case('shared')
           ! Set shared coefficients.
@@ -1231,8 +1126,7 @@ CONTAINS
           else
             select case(nfield(command))
             case(2)
-              write(6,'(a)')'Syntax error: no value given for "shared".'
-              write(6,'()')
+              call msg('Syntax error: no value given for "shared".')
               cycle user_loop
             case(3)
               i1=int_field(3,command,ierr)
@@ -1243,13 +1137,11 @@ CONTAINS
               do ifield=3,nfield(command)
                 i1=int_field(ifield,command,ierr)
                 if(ierr/=0)then
-                  write(6,'(a)')'Syntax error: could not parse indices.'
-                  write(6,'()')
+                  call msg('Syntax error: could not parse indices.')
                   cycle user_loop
                 endif
                 if(i1<1.or.i1>fit%npoly)then
-                  write(6,'(a)')'Indices out of range.'
-                  write(6,'()')
+                  call msg('Indices out of range.')
                   cycle user_loop
                 endif
               enddo ! ifield
@@ -1264,16 +1156,14 @@ CONTAINS
               token=field(3,command)
               ipos=scan(token,':')
               if(ipos<1)then
-                write(6,'(a)')'Syntax error: could not parse range.'
-                write(6,'()')
+                call msg('Syntax error: could not parse range.')
                 cycle user_loop
               endif
               i1=1
               if(ipos>1)then
                 i1=parse_int(token(1:ipos-1),ierr)
                 if(ierr/=0)then
-                  write(6,'(a)')'Syntax error: could not parse range.'
-                  write(6,'()')
+                  call msg('Syntax error: could not parse range.')
                   cycle user_loop
                 endif
               endif
@@ -1281,19 +1171,16 @@ CONTAINS
               if(ipos<len_trim(token))then
                 i2=parse_int(token(ipos+1:),ierr)
                 if(ierr/=0)then
-                  write(6,'(a)')'Syntax error: could not parse range.'
-                  write(6,'()')
+                  call msg('Syntax error: could not parse range.')
                   cycle user_loop
                 endif
               endif
               if(i2<i1)then
-                write(6,'(a)')'Index range runs backwards.'
-                write(6,'()')
+                call msg('Index range runs backwards.')
                 cycle user_loop
               endif
               if(i1<1.or.i2>fit%npoly)then
-                write(6,'(a)')'Indices out of range.'
-                write(6,'()')
+                call msg('Indices out of range.')
                 cycle user_loop
               endif
               ! Apply.
@@ -1323,9 +1210,8 @@ CONTAINS
           case default
             t1=dble_field(3,command,ierr)
             if(ierr/=0)then
-              write(6,'(a)')'Invalid value "'//trim(field(3,command))//'" for &
-                 &variable "'//trim(field(2,command))//'".'
-              write(6,'()')
+              call msg('Invalid value "'//trim(field(3,command))//'" for &
+                 &variable "'//trim(field(2,command))//'".')
               cycle user_loop
             endif
           end select
@@ -1333,24 +1219,22 @@ CONTAINS
           fit%x0_string=field(3,command)
           ! Update X0.
           call refresh_fit(ndataset,dlist,fit)
-          write(6,'(a)')'centre set to '//trim(field(3,command))//'.'
+          call msg('centre set to '//trim(field(3,command))//'.')
 
         case('nsample')
           ! Check value.
           i=int_field(3,command,ierr)
           if(ierr/=0)then
-            write(6,'(a)')'Invalid value "'//trim(field(3,command))//'" for &
-               &variable nsample.'
-            write(6,'()')
+            call msg('Invalid value "'//trim(field(3,command))//'" for &
+               &variable nsample.')
             cycle user_loop
           endif
           if(i<10)then
-            write(6,'(a)')'nsample value too small.'
-            write(6,'()')
+            call msg('nsample value too small.')
             cycle user_loop
           endif
           mcparams%nsample=i
-          write(6,'(a)')'nsample set to '//trim(i2s(i))//'.'
+          call msg('nsample set to '//trim(i2s(i))//'.')
 
         case('qrandom')
           ! Quasi-random noise handling.
@@ -1358,29 +1242,27 @@ CONTAINS
           if(nfield(command)>2)then
             t1=dble_field(3,command,ierr)
             if(ierr/=0)then
-              write(6,'(a)')'Invalid value "'//trim(field(3,command))//'" for &
-                 &variable qrandom.'
-              write(6,'()')
+              call msg('Invalid value "'//trim(field(3,command))//'" for &
+                 &variable qrandom.')
               cycle user_loop
             endif
           endif
           fit%apply_qrandom=.true.
           fit%qrandom_exp=t1
           write(6,'(a,es12.4,a)')'Set qrandom with exponent ',t1,'.'
+          write(6,'()')
 
         case('echo')
           input_echo=.true.
-          write(6,'(a)')'Enabled input echo.'
+          call msg('Enabled input echo.')
 
         case default
-          write(6,'(a)')'Unknown variable "'//trim(field(2,command))//'".'
-          write(6,'()')
+          call msg('Unknown variable "'//trim(field(2,command))//'".')
           cycle user_loop
         end select ! variable to set
 
       case('unset')
         ! Set variables.
-        write(6,'()')
         select case(trim(field(2,command)))
         case('xscale','yscale')
           ! FIXME - "for" clause
@@ -1400,17 +1282,15 @@ CONTAINS
             call refresh_dataset(dlist(iset)%dataset,drange)
           enddo ! iset
           call refresh_fit(ndataset,dlist,fit)
-          write(6,'(a)')'Reset '//trim(field(2,command))//' to '//&
-             &trim(TRANSF_NAME(ITRANSF_NONE))//' for all sets.'
-          write(6,'()')
+          call msg('Reset '//trim(field(2,command))//' to '//&
+             &trim(TRANSF_NAME(ITRANSF_NONE))//' for all sets.')
         case('wexp')
           ! FIXME - "for" clause
           wexp_default=1.d0
           do iset=1,ndataset
             dlist(iset)%dataset%wexp=1.d0
           enddo ! ifield
-          write(6,'(a)')'Unset wexp for all sets.'
-          write(6,'()')
+          call msg('Unset wexp for all sets.')
         case('fit')
           deallocate(fit%pow,fit%share)
           fit%npoly=2
@@ -1432,40 +1312,32 @@ CONTAINS
           enddo ! iset
           call refresh_fit(ndataset,dlist,fit)
           ! Report.
-          write(6,'(a)')'Range unset for all sets.'
-          write(6,'()')
+          call msg('Range unset for all sets.')
         case('shared')
           fit%share=.false.
-          write(6,'(a)')'Shared coefficients reset to: none'
-          write(6,'()')
+          call msg('Shared coefficients reset to: none')
         case('centre')
           fit%X0_string='0'
           call refresh_fit(ndataset,dlist,fit)
-          write(6,'(a)')'centre reset to 0.'
-          write(6,'()')
+          call msg('centre reset to 0.')
         case('nsample')
           mcparams%nsample=mcparams_default%nsample
-          write(6,'(a)')'nsample reset to '//&
-             &trim(i2s(mcparams_default%nsample))//'.'
-          write(6,'()')
+          call msg('nsample reset to '//&
+             &trim(i2s(mcparams_default%nsample))//'.')
         case('qrandom')
           fit%apply_qrandom=.false.
           fit%qrandom_exp=0.d0
-          write(6,'(a,es12.4,a)')'Unset qrandom.'
-          write(6,'()')
+          call msg('Unset qrandom.')
         case('echo')
           input_echo=.false.
-          write(6,'(a)')'Disabled input echo.'
-          write(6,'()')
+          call msg('Disabled input echo.')
         case default
-          write(6,'(a)')'Unknown variable "'//trim(field(2,command))//'".'
-          write(6,'()')
+          call msg('Unknown variable "'//trim(field(2,command))//'".')
           cycle user_loop
         end select
 
       case('status')
         ! Report status.
-        write(6,'()')
         write(6,'(a,es11.4)')'Global settings:'
         select case(drange%op)
         case('')
@@ -2002,9 +1874,7 @@ CONTAINS
         continue
 
       case default
-        write(6,'()')
-        write(6,'(a)')'Command "'//trim(field(1,command))//'" not recognized.'
-        write(6,'()')
+        call msg('Command "'//trim(field(1,command))//'" not recognized.')
       end select
 
     enddo user_loop
@@ -2312,13 +2182,11 @@ CONTAINS
        &deval,ierr,chi2mean=chi2,chi2err=chi2err,amean=a,aerr=da,&
        &rmsymean=rmsy,rmsyerr=rmsyerr)
     if(ierr/=0)then
-      write(6,'(a)')'Could not perform fit.'
-      write(6,'()')
+      call msg('Could not perform fit.')
       return
     endif
 
     ! Print table header.
-    write(6,'()')
     write(6,'(a)')'Fit parameters:'
     write(6,'()')
     write(6,'(a)',advance='no')'   '
@@ -2391,13 +2259,11 @@ CONTAINS
     call eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
        &deval,ierr,fmean,ferr)
     if(ierr/=0)then
-      write(6,'(a)')'Could not perform fit.'
-      write(6,'()')
+      call msg('Could not perform fit.')
       return
     endif
 
     ! Report.
-    write(6,'()')
     write(6,'(4x)',advance='no')
     write(6,'(2x,a4,1x,3(1x,a16))')'set','X       ','f       ','df       '
     write(6,'(4x)',advance='no')
@@ -2483,6 +2349,7 @@ CONTAINS
       call perform_multifit(ndataset,tmp_dlist,fit,chi2,a,ierr)
       if(ierr/=0)then
         call kill_dlist(tmp_dlist)
+        call msg('Could not perform fit.')
         return
       endif
       w_vector(irandom)=1.d0
@@ -2612,8 +2479,7 @@ CONTAINS
     ! Open plot file.
     open(unit=io,file=fname,status='replace',iostat=ierr)
     if(ierr/=0)then
-      write(6,'(a)')'Problem opening file.'
-      write(6,'()')
+      call msg('Problem opening file.')
       return
     endif
 
@@ -2656,8 +2522,7 @@ CONTAINS
       call eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
          &deval,ierr,fmean=fmean,ferr=ferr,amean=a)
       if(ierr/=0)then
-        write(6,'(a)')'Could not perform fit.'
-        write(6,'()')
+        call msg('Could not perform fit.')
         close(io,status='delete')
         return
       endif
@@ -2707,8 +2572,7 @@ CONTAINS
       call eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
          &deval,ierr,fmean=fmean,ferr=ferr,amean=a)
       if(ierr/=0)then
-        write(6,'(a)')'Could not perform fit.'
-        write(6,'()')
+        call msg('Could not perform fit.')
         close(io,status='delete')
         return
       endif
@@ -2763,8 +2627,7 @@ CONTAINS
     close(io)
 
     ! Report.
-    write(6,'(a)')'Plot saved to "'//trim(fname)//'".'
-    write(6,'()')
+    call msg('Plot saved to "'//trim(fname)//'".')
 
   END SUBROUTINE plot_multipoly
 
@@ -2801,7 +2664,6 @@ CONTAINS
     enddo ! iset
 
     ! Print table header.
-    write(6,'()')
     write(6,'(2x,a5,1x,2(1x,a12))',advance='no')'Order','chi^2/Ndf',&
        &'dchi^2/Ndf'
     do iset=1,ndataset
@@ -2898,11 +2760,10 @@ CONTAINS
       prev_npoly=npoly
     enddo ! npoly
     if(npoly<=fit%npoly)then
-      write(6,'(a)')'Suggested fit: '//trim(i2s(prev_npoly-1))
+      call msg('Suggested fit: '//trim(i2s(prev_npoly-1)))
     else
-      write(6,'(a)')'Could not find optimal fit by criteria.'
+      call msg('Could not find optimal fit by criteria.')
     endif
-    write(6,'()')
 
   END SUBROUTINE assess_fit
 
@@ -2995,7 +2856,6 @@ CONTAINS
     call clone_dlist(dlist,tmp_dlist)
 
     ! Print table header.
-    write(6,'()')
     write(6,'(2x,a5,1x,2(1x,a12))',advance='no')'Ndata','chi^2/Ndf',&
        &'dchi^2/Ndf'
     do ix=1,deval%n
@@ -3087,12 +2947,10 @@ CONTAINS
       prev_igrid=igrid
     enddo ! igrid
     if(igrid>=1)then
-      write(6,'(a)')'Suggested grid point: '//&
-         &trim(i2s(tot_nxy_grid(prev_igrid)))
+      call msg('Suggested grid point: '//trim(i2s(tot_nxy_grid(prev_igrid))))
     else
-      write(6,'(a)')'Could not find optimal range by criteria.'
+      call msg('Could not find optimal range by criteria.')
     endif
-    write(6,'()')
 
     ! Clean up.
     call kill_dlist(tmp_dlist)
@@ -3189,7 +3047,6 @@ CONTAINS
     nullify(tfit)
 
     ! Print table header.
-    write(6,'()')
     write(6,'(2x,a5,2x,a5,1x,2(1x,a12))',advance='no')'Ndata','Order',&
        &'chi^2/Ndf','dchi^2/Ndf'
     do ix=1,deval%n
@@ -3364,10 +3221,10 @@ CONTAINS
       write(6,'(a)')'Suggested fit: '//trim(i2s(prev_prev_npoly-1))
       write(6,'(a)')'Suggested grid point: '//&
          &trim(i2s(tot_nxy_grid(prev_igrid)))
+      write(6,'()')
     else
-      write(6,'(a)')'Could not find optimal range by criteria.'
+      call msg('Could not find optimal range by criteria.')
     endif
-    write(6,'()')
 
     ! Clean up.
     call kill_dlist(tmp_dlist)
@@ -3390,7 +3247,6 @@ CONTAINS
     DOUBLE PRECISION vmin,vmax,vcentre,vmean,vmedian
 
     ! Print stats.
-    write(6,'()')
     write(6,'(a)')'Data-range statistics (ignoring user-provided range):'
     write(6,'()')
     write(6,'(2x,a3,1x,a4,5(1x,a12))')'var','set','min','mean','median',&
@@ -4018,8 +3874,7 @@ CONTAINS
     ! Open file.
     open(unit=io,file=trim(fname),status='old',iostat=ierr)
     if(ierr/=0)then
-      write(6,'(a)')'Problem opening "'//trim(fname)//'".'
-      write(6,'()')
+      call msg('Problem opening "'//trim(fname)//'".')
       return
     endif
 
@@ -4035,8 +3890,7 @@ CONTAINS
         exit
       endif
       if(ierr>0)then
-        write(6,'(a)')'Problem getting line from "'//trim(fname)//'".'
-        write(6,'()')
+        call msg('Problem getting line from "'//trim(fname)//'".')
         exit
       endif
       line=adjustl(line)
@@ -4091,8 +3945,7 @@ CONTAINS
       if(icol_x>0)then
         dataset%xy%x(i)=dble_field(icol_x,line,ierr)
         if(ierr/=0)then
-          write(6,'(a)')'Failed to parse value of x in "'//trim(fname)//'".'
-          write(6,'()')
+          call msg('Failed to parse value of x in "'//trim(fname)//'".')
           exit
         endif
       else
@@ -4101,8 +3954,7 @@ CONTAINS
       if(icol_y>0)then
         dataset%xy%y(i)=dble_field(icol_y,line,ierr)
         if(ierr/=0)then
-          write(6,'(a)')'Failed to parse value of y in "'//trim(fname)//'".'
-          write(6,'()')
+          call msg('Failed to parse value of y in "'//trim(fname)//'".')
           exit
         endif
       else
@@ -4111,13 +3963,11 @@ CONTAINS
       if(icol_dx>0)then
         dataset%xy%dx(i)=dble_field(icol_dx,line,ierr)
         if(ierr/=0)then
-          write(6,'(a)')'Failed to parse value of dx in "'//trim(fname)//'".'
-          write(6,'()')
+          call msg('Failed to parse value of dx in "'//trim(fname)//'".')
           exit
         endif
         if(lt_dble(dataset%xy%dx(i),0.d0))then
-          write(6,'(a)')'Found negative dx in "'//trim(fname)//'".'
-          write(6,'()')
+          call msg('Found negative dx in "'//trim(fname)//'".')
           ierr=-5
           exit
         endif
@@ -4125,13 +3975,11 @@ CONTAINS
       if(icol_dy>0)then
         dataset%xy%dy(i)=dble_field(icol_dy,line,ierr)
         if(ierr/=0)then
-          write(6,'(a)')'Failed to parse value of dy in "'//trim(fname)//'".'
-          write(6,'()')
+          call msg('Failed to parse value of dy in "'//trim(fname)//'".')
           exit
         endif
         if(lt_dble(dataset%xy%dy(i),0.d0))then
-          write(6,'(a)')'Found negative dy in "'//trim(fname)//'".'
-          write(6,'()')
+          call msg('Found negative dy in "'//trim(fname)//'".')
           ierr=-6
           exit
         endif
@@ -4139,13 +3987,11 @@ CONTAINS
       if(icol_w>0)then
         dataset%xy%w(i)=dble_field(icol_w,line,ierr)
         if(ierr/=0)then
-          write(6,'(a)')'Failed to parse value of w in "'//trim(fname)//'".'
-          write(6,'()')
+          call msg('Failed to parse value of w in "'//trim(fname)//'".')
           exit
         endif
         if(le_dble(dataset%xy%w(i),0.d0))then
-          write(6,'(a)')'Found non-positive w in "'//trim(fname)//'".'
-          write(6,'()')
+          call msg('Found non-positive w in "'//trim(fname)//'".')
           ierr=-7
           exit
         endif
@@ -5527,6 +5373,18 @@ CONTAINS
     enddo
     if(len_trim(line)>0)write(6,'(a)')trim(line)
   END SUBROUTINE pprint
+
+
+  SUBROUTINE msg(messg)
+    !----------------------------------------!
+    ! Write a single-line message to stdout, !
+    ! followed by a blank line.              !
+    !----------------------------------------!
+    IMPlICIT NONE
+    CHARACTER(*), INTENT(in), OPTIONAL :: messg
+    write(6,'(a)')messg
+    write(6,'()')
+  END SUBROUTINE msg
 
 
   ! QUIT ROUTINE.
