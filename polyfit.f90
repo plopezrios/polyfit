@@ -1,18 +1,21 @@
 PROGRAM polyfit
-  !-------------------------------------------------!
-  ! POLYFIT                                         !
-  ! =======                                         !
-  ! Toolbox for performing and manipulating fits to !
-  ! polynomials of data with error bars.            !
-  !                                                 !
-  ! PLR 09.2015                                     !
-  !-------------------------------------------------!
+  !----------------------------------------------------!
+  ! POLYFIT                                            !
+  ! =======                                            !
+  ! Toolbox for performing and manipulating polynomial !
+  ! fits of data with statistical uncertainties        !
+  !                                                    !
+  ! PLR 09.2015                                        !
+  !----------------------------------------------------!
   IMPLICIT NONE
 
-  ! Global variables.
-  ! Precision for real-to-integer conversions and exponent comparisons.
+  ! Global variables
+  ! ================
+
+  ! * Precision for real-to-integer conversions and exponent comparisons.
   DOUBLE PRECISION,PARAMETER :: tol_zero=1.d-10
-  ! Scale transformations.
+
+  ! * Scale transformations.
   INTEGER,PARAMETER :: NTRANSF=3
   INTEGER,PARAMETER :: ITRANSF_NONE=0,ITRANSF_REC=1,ITRANSF_LOG=2,ITRANSF_EXP=3
   CHARACTER(32),PARAMETER :: TRANSF_NAME(0:NTRANSF)=&
@@ -22,13 +25,22 @@ PROGRAM polyfit
   LOGICAL,PARAMETER :: TRANSF_REQ_POSITIVE(0:NTRANSF)=&
      &(/.false.,.false.,.true.,.false./)
 
-  ! Derived types.
+  ! Derived types
+  ! =============
+
+  ! * xy[dx][dy][w] data.  NB, all pointers are allocated regardless of
+  !   have_{dx,dy,w}, to simplify logic.
   TYPE xy_type
     INTEGER :: nxy=0
     LOGICAL :: have_dx=.false.,have_dy=.false.,have_w=.false.
     DOUBLE PRECISION,POINTER :: x(:)=>null(),y(:)=>null(),dx(:)=>null(),&
        &dy(:)=>null(),w(:)=>null()
   END TYPE xy_type
+
+  ! * Dataset - comprising original data, dataset weight, weight exponent,
+  !   x/y transformation info, transformed data, and range-restricted
+  !   transformed data.
+  !   FIXME - compute txy / rtxy on the fly and drop from derived type.
   TYPE dataset_type
     INTEGER :: itransfx=ITRANSF_NONE,itransfy=ITRANSF_NONE
     DOUBLE PRECISION :: wexp=1.d0
@@ -37,10 +49,16 @@ PROGRAM polyfit
     TYPE(xy_type),POINTER :: txy=>null() ! transformed data
     TYPE(xy_type),POINTER :: rtxy=>null() ! range-restricted transformed data
   END TYPE dataset_type
+
+  ! * Dataset list item - this enables defining "arrays" of datasets.
   TYPE dataset_list_type
     TYPE(dataset_type),POINTER :: dataset=>null()
   END TYPE dataset_list_type
+
+  ! * Global fit form (applies to all datasets)
+  !   FIXME - implement per-dataset fit forms?
   TYPE fit_form_type
+    ! Polynomial order, powers of X in polynomial, shared parameter indices.
     INTEGER :: npoly=0
     DOUBLE PRECISION,ALLOCATABLE :: pow(:)
     LOGICAL,ALLOCATABLE :: share(:)
@@ -51,6 +69,9 @@ PROGRAM polyfit
     LOGICAL :: apply_qrandom=.false.
     DOUBLE PRECISION :: qrandom_exp=0.d0
   END TYPE fit_form_type
+
+  ! * Global range restriction info (applies to all datasets).
+  !   FIXME - implement per-dataset ranges?
   TYPE range_type
     CHARACTER :: var='X'
     CHARACTER(2) :: op=''
@@ -58,13 +79,22 @@ PROGRAM polyfit
     DOUBLE PRECISION :: thres=0.d0
     INTEGER :: size=0
   END TYPE range_type
+
+  ! * Information defining functions of fit to evaluate.
   TYPE eval_type
-    CHARACTER :: var='X'
+    ! Target function of fit (function/shared).
     CHARACTER(10) :: what='function'
+    ! Relative to value at X0?
     LOGICAL :: rel=.false.
-    INTEGER :: nderiv=0,n=0
-    DOUBLE PRECISION,POINTER :: x(:)=>null()
+    ! Derivative (0 for function, 1 for first, etc.).
+    INTEGER :: nderiv=0
+    ! Plot range definition.
+    INTEGER :: n=0 ! number of points
+    CHARACTER :: var='X' ! variable defining grid
+    DOUBLE PRECISION,POINTER :: x(:)=>null() ! grid point values
   END TYPE eval_type
+
+  ! * Monte Carlo sampling parameters.
   TYPE mc_params_type
     INTEGER :: nsample=10000
   END TYPE mc_params_type
@@ -1095,7 +1125,6 @@ CONTAINS
 
         case('range')
           ! Set fit range.
-          ! FIXME - "for" clause
           ! Check sort variable.
           call parse_range(trim(field(3,command)),drange)
           if(drange%op=='')then
@@ -1203,7 +1232,6 @@ CONTAINS
 
         case('centre')
           ! Check value.
-          ! FIXME - "for" clause
           select case(field(3,command))
           case('left','right','max','min','centre','mean','median')
             continue
