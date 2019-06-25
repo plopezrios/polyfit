@@ -448,7 +448,7 @@ CONTAINS
           dataset%itransfy=itransfy_default
           dataset%wexp=wexp_default
           if(TRANSF_REQ_NONZERO(dataset%itransfy))then
-            if(any(are_equal(xy%x,0.d0)))then
+            if(any(eq_dble(xy%x,0.d0)))then
               dataset%itransfx=ITRANSF_NONE
               write(6,'(a)')'Note: using linear X for set '//&
                  &trim(i2s(iset+ndataset))//' since it contains x=0.'
@@ -456,7 +456,7 @@ CONTAINS
             endif
           endif
           if(TRANSF_REQ_NONZERO(dataset%itransfy))then
-            if(any(are_equal(xy%y,0.d0)))then
+            if(any(eq_dble(xy%y,0.d0)))then
               dataset%itransfy=ITRANSF_NONE
               write(6,'(a)')'Note: using linear Y for set '//&
                  &trim(i2s(iset+ndataset))//' since it contains y=0.'
@@ -480,15 +480,15 @@ CONTAINS
             endif
           endif
           if(dataset%xy%have_w)then
-            if(any(xy%w<0.d0.and..not.are_equal(xy%w,0.d0)))then
-              if(.not.are_equal(dataset%wexp,0.d0))then
+            if(any(xy%w<0.d0.and..not.eq_dble(xy%w,0.d0)))then
+              if(.not.eq_dble(dataset%wexp,0.d0))then
                 dataset%wexp=0.d0
                 write(6,'(a)')'Note: zeroing weight exponent for set '//&
                    &trim(i2s(iset+ndataset))//' since it contains w<0.'
                 write(6,'()')
               endif
-            elseif(any(are_equal(xy%w,0.d0)))then
-              if(dataset%wexp<0.d0.and..not.are_equal(dataset%wexp,0.d0))then
+            elseif(any(eq_dble(xy%w,0.d0)))then
+              if(dataset%wexp<0.d0.and..not.eq_dble(dataset%wexp,0.d0))then
                 dataset%wexp=1.d0
                 write(6,'(a)')'Note: setting weight exponent to 1 for set '//&
                    &trim(i2s(iset+ndataset))//' since it contains w=0.'
@@ -933,14 +933,14 @@ CONTAINS
               if(TRANSF_REQ_NONZERO(itransf))then
                 select case(trim(field(2,command)))
                 case('xscale')
-                  if(any(are_equal(xy%x,0.d0)))then
+                  if(any(eq_dble(xy%x,0.d0)))then
                     write(6,*)'Cannot apply axis transformation: set #'//&
                        &trim(i2s(iset))//' contains x=0.'
                     write(6,'()')
                     cycle user_loop
                   endif
                 case('yscale')
-                  if(any(are_equal(xy%y,0.d0)))then
+                  if(any(eq_dble(xy%y,0.d0)))then
                     write(6,*)'Cannot apply axis transformation: set #'//&
                        &trim(i2s(iset))//' contains y=0.'
                     write(6,'()')
@@ -987,14 +987,14 @@ CONTAINS
               if(TRANSF_REQ_NONZERO(itransf))then
                 select case(trim(field(2,command)))
                 case('xscale')
-                  if(any(are_equal(xy%x,0.d0)))then
+                  if(any(eq_dble(xy%x,0.d0)))then
                     write(6,*)'Cannot apply axis transformation: set #'//&
                        &trim(i2s(iset))//' contains x=0.'
                     write(6,'()')
                     cycle user_loop
                   endif
                 case('yscale')
-                  if(any(are_equal(xy%y,0.d0)))then
+                  if(any(eq_dble(xy%y,0.d0)))then
                     write(6,*)'Cannot apply axis transformation: set #'//&
                        &trim(i2s(iset))//' contains y=0.'
                     write(6,'()')
@@ -1081,9 +1081,9 @@ CONTAINS
                 write(6,'()')
                 cycle user_loop
               endif
-              if(wexp<0.d0.and..not.are_equal(wexp,0.d0))then
+              if(wexp<0.d0.and..not.eq_dble(wexp,0.d0))then
                 xy=>dlist(iset)%dataset%xy
-                if(any(are_equal(xy%w,0.d0)))then
+                if(any(eq_dble(xy%w,0.d0)))then
                   write(6,*)'Cannot apply weight exponent: set #'//&
                      &trim(i2s(iset))//' contains w=0.'
                   write(6,'()')
@@ -1101,10 +1101,10 @@ CONTAINS
           else
             ! Check exponent is applicable.
             ! FIXME - create functions eq_dble, le_dble, lt_dble, etc.
-            if(wexp<0.d0.and..not.are_equal(wexp,0.d0))then
+            if(wexp<0.d0.and..not.eq_dble(wexp,0.d0))then
               do iset=1,ndataset
                 xy=>dlist(iset)%dataset%xy
-                if(any(are_equal(xy%w,0.d0)))then
+                if(any(eq_dble(xy%w,0.d0)))then
                   write(6,*)'Cannot apply weight exponent: set #'//&
                      &trim(i2s(iset))//' contains w=0.'
                   write(6,'()')
@@ -2038,8 +2038,8 @@ CONTAINS
     call get_range_mask(drange,xy,txy,mask)
 
     ! Apply weight exponent.
-    if(.not.are_equal(dataset%wexp,1.d0))then
-      if(are_equal(dataset%wexp,0.d0))then
+    if(.not.eq_dble(dataset%wexp,1.d0))then
+      if(eq_dble(dataset%wexp,0.d0))then
         txy%w=1.d0
       else
         txy%w=txy%w**dataset%wexp
@@ -2097,13 +2097,13 @@ CONTAINS
     ! Act on sort operation.
     select case(trim(drange%op))
     case('<')
-      mask=sortvec<drange%thres.and..not.are_equal(sortvec,drange%thres)
+      mask=sortvec<drange%thres.and..not.eq_dble(sortvec,drange%thres)
     case('<=')
-      mask=sortvec<drange%thres.or.are_equal(sortvec,drange%thres)
+      mask=sortvec<drange%thres.or.eq_dble(sortvec,drange%thres)
     case('>')
-      mask=sortvec>drange%thres.and..not.are_equal(sortvec,drange%thres)
+      mask=sortvec>drange%thres.and..not.eq_dble(sortvec,drange%thres)
     case('>=')
-      mask=sortvec>drange%thres.or.are_equal(sortvec,drange%thres)
+      mask=sortvec>drange%thres.or.eq_dble(sortvec,drange%thres)
     case('[',']')
       if(drange%size>0)then
         n=min(drange%size,xy%nxy)
@@ -2249,7 +2249,7 @@ CONTAINS
         enddo ! ipoly
         t1=(dataset%rtxy%y(ixy)-e_fit)**2
         t2=dataset%rtxy%dy(ixy)**2
-        if(.not.are_equal(sexp,0.d0))then
+        if(.not.eq_dble(sexp,0.d0))then
           t1=t1/dataset%rtxy%x(ixy)**(2*sexp)
           t2=t2/dataset%rtxy%x(ixy)**(2*sexp)
         endif
@@ -2259,7 +2259,7 @@ CONTAINS
       alpha2=alpha2/dble(dataset%rtxy%nxy-fit%npoly)-dy2/dble(dataset%rtxy%nxy)
       if(alpha2<0.d0)alpha2=0.d0
       ! Adjust stderrs.
-      if(are_equal(sexp,0.d0))then
+      if(eq_dble(sexp,0.d0))then
         dataset%rtxy%dy=sqrt(dataset%rtxy%dy**2+alpha2)
       else
         dataset%rtxy%dy=sqrt(dataset%rtxy%dy**2+&
@@ -2295,7 +2295,7 @@ CONTAINS
     ! Quick-access pointers.
     TYPE(dataset_type),POINTER :: dataset
     ! Local variables.
-    TYPE(eval_type) deval ! dummy arg.  FIXME - make optional in eval_...
+    TYPE(eval_type) deval ! (dummy arg.)
     INTEGER tot_nparam,tot_nxy,iset,i,ierr
     DOUBLE PRECISION chi2,chi2err,rmsy,rmsyerr,a(fit%npoly,ndataset),&
        &da(fit%npoly,ndataset)
@@ -2965,7 +2965,7 @@ CONTAINS
       ngrid=1
       txgrid(1)=txall(indx(1))
       do ixy=2,tot_nxy
-        if(are_equal(txall(indx(ixy)),txgrid(ngrid)))cycle
+        if(eq_dble(txall(indx(ixy)),txgrid(ngrid)))cycle
         ngrid=ngrid+1
         txgrid(ngrid)=txall(indx(ixy))
       enddo ! ixy
@@ -3158,7 +3158,7 @@ CONTAINS
       ngrid=1
       txgrid(1)=txall(indx(1))
       do ixy=2,tot_nxy
-        if(are_equal(txall(indx(ixy)),txgrid(ngrid)))cycle
+        if(eq_dble(txall(indx(ixy)),txgrid(ngrid)))cycle
         ngrid=ngrid+1
         txgrid(ngrid)=txall(indx(ixy))
       enddo ! ixy
@@ -3663,8 +3663,9 @@ CONTAINS
       enddo ! j
     enddo ! i
 
-    ! FIXME - for some reason the following does not work in the presence
-    ! of shared parameters.  I would have expected the opposite, if anything.
+    ! NB, for some reason the following does not work in the presence of
+    ! shared parameters.  I would have expected this to work more reliably
+    ! than the above, if anything..
     !! Invert M.
     !Minv=M
     !call dgetrf(tot_nparam,tot_nparam,Minv,tot_nparam,ipiv,ierr)
@@ -4048,14 +4049,14 @@ CONTAINS
       if(len_trim(line)==0)cycle
       ! Verify that this line contains all search strings.
       do isearch=1,nsearch
-        if(.not.are_equal_string(trim(field(fsearch(isearch),line)),&
+        if(.not.eq_dble_string(trim(field(fsearch(isearch),line)),&
           &trim(search(isearch))))exit
       enddo ! isearch
       if(isearch<=nsearch)cycle
       ! Decide which dataset this goes in.
       do iset=1,ndataset
         do idiscr=1,ndiscr
-          if(.not.are_equal_string(trim(field(fdiscr(idiscr),line)),&
+          if(.not.eq_dble_string(trim(field(fdiscr(idiscr),line)),&
              &trim(discr(idiscr,iset))))exit
         enddo ! idiscr
         if(idiscr>ndiscr)exit
@@ -4115,7 +4116,7 @@ CONTAINS
           write(6,'()')
           exit
         endif
-        if(dataset%xy%dx(i)<0.d0.and..not.are_equal(dataset%xy%dx(i),0.d0))then
+        if(dataset%xy%dx(i)<0.d0.and..not.eq_dble(dataset%xy%dx(i),0.d0))then
           write(6,'(a)')'Found negative dx in "'//trim(fname)//'".'
           write(6,'()')
           ierr=-5
@@ -4129,7 +4130,7 @@ CONTAINS
           write(6,'()')
           exit
         endif
-        if(dataset%xy%dy(i)<0.d0.and..not.are_equal(dataset%xy%dy(i),0.d0))then
+        if(dataset%xy%dy(i)<0.d0.and..not.eq_dble(dataset%xy%dy(i),0.d0))then
           write(6,'(a)')'Found negative dy in "'//trim(fname)//'".'
           write(6,'()')
           ierr=-6
@@ -4143,7 +4144,7 @@ CONTAINS
           write(6,'()')
           exit
         endif
-        if(dataset%xy%w(i)<0.d0.or.are_equal(dataset%xy%w(i),0.d0))then
+        if(dataset%xy%w(i)<0.d0.or.eq_dble(dataset%xy%w(i),0.d0))then
           write(6,'(a)')'Found non-positive w in "'//trim(fname)//'".'
           write(6,'()')
           ierr=-7
@@ -4393,7 +4394,7 @@ CONTAINS
       elseif(abs(anint(pow(ipoly))-pow(ipoly))<tol_zero)then
         ! For natural powers, force integer exponents to avoid issues.
         eval_poly=eval_poly+a(ipoly)*x_target**nint(pow(ipoly))
-      elseif(.not.are_equal(x_target,0.d0))then
+      elseif(.not.eq_dble(x_target,0.d0))then
         ! Fractional powers only evaluated for non-zero arguments.
         eval_poly=eval_poly+a(ipoly)*x_target**pow(ipoly)
       endif
@@ -4821,7 +4822,7 @@ CONTAINS
   END SUBROUTINE iswap1
 
 
-  LOGICAL ELEMENTAL FUNCTION are_equal(x,y,tol)
+  LOGICAL ELEMENTAL FUNCTION eq_dble(x,y,tol)
     !------------------------------------------------------!
     ! Check if two floating-point numbers are equal within !
     ! a reasonable tolerance.                              !
@@ -4834,21 +4835,21 @@ CONTAINS
     DOUBLE PRECISION,PARAMETER :: tol_zero=1.d-12
     DOUBLE PRECISION,PARAMETER :: tol_rel=1.d-9
     if(present(tol))then
-      are_equal=abs(x-y)<=tol
+      eq_dble=abs(x-y)<=tol
     else
       abs_x=abs(x)
       abs_y=abs(y)
       if(abs_x<=tol_zero.and.abs_y<=tol_zero)then
-        are_equal=.true.
+        eq_dble=.true.
       elseif(x>0.d0.eqv.y>0.d0)then
         big=max(abs_x,abs_y)
         small=min(abs_x,abs_y)
-        are_equal=big-small<=big*tol_rel
+        eq_dble=big-small<=big*tol_rel
       else
-        are_equal=.false.
+        eq_dble=.false.
       endif
     endif
-  END FUNCTION are_equal
+  END FUNCTION eq_dble
 
 
   ! POINTER RESIZING TOOLS.
@@ -5140,7 +5141,7 @@ CONTAINS
       if(ierr/=0)return
       read(string(ipos+1:),*,iostat=ierr)t2
       if(ierr/=0)return
-      if(are_equal(t2,0.d0))then
+      if(eq_dble(t2,0.d0))then
         ierr=-1
         return
       endif
@@ -5149,7 +5150,7 @@ CONTAINS
   END FUNCTION parse_dble
 
 
-  LOGICAL FUNCTION are_equal_string(cx,cy,tol)
+  LOGICAL FUNCTION eq_dble_string(cx,cy,tol)
     !-------------------------------------------------------!
     ! Check if two strings are equal, or if their numerical !
     ! values are equal within a reasonable tolerance.       !
@@ -5159,14 +5160,14 @@ CONTAINS
     DOUBLE PRECISION,OPTIONAL,INTENT(in) :: tol
     DOUBLE PRECISION x,y
     INTEGER ierr
-    are_equal_string=trim(cx)==trim(cy)
-    if(are_equal_string)return
+    eq_dble_string=trim(cx)==trim(cy)
+    if(eq_dble_string)return
     x=parse_dble(cx,ierr)
     if(ierr/=0)return
     y=parse_dble(cy,ierr)
     if(ierr/=0)return
-    are_equal_string=are_equal(x,y,tol)
-  END FUNCTION are_equal_string
+    eq_dble_string=eq_dble(x,y,tol)
+  END FUNCTION eq_dble_string
 
 
   SUBROUTINE parse_range(string,drange)
@@ -5278,7 +5279,7 @@ CONTAINS
       it1=parse_int(remainder,ierr)
       if(ierr/=0)return
       if(it1<1)return
-      if(it1==1.and..not.are_equal(t1,t2))return
+      if(it1==1.and..not.eq_dble(t1,t2))return
       deval%n=it1
       allocate(deval%x(deval%n))
       if(deval%n==1)then
