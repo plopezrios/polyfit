@@ -2103,7 +2103,7 @@ CONTAINS
   END SUBROUTINE refresh_fit
 
 
-  SUBROUTINE qrandom_apply(ndataset,dlist,drange,fit)
+  SUBROUTINE qrandom_apply(ndataset,dlist,drange,fit,alpha_list)
     !---------------------------------------------!
     ! Apply a quasirandom noise correction to the !
     ! standard error dy on all datasets.          !
@@ -2113,12 +2113,14 @@ CONTAINS
     TYPE(dataset_list_type),POINTER :: dlist(:)
     TYPE(range_type),INTENT(in) :: drange
     TYPE(fit_form_type),INTENT(in) :: fit
+    DOUBLE PRECISION,INTENT(inout) :: alpha_list(ndataset)
     ! Quick-access pointers.
     TYPE(dataset_type),POINTER :: dataset
     ! Local variables.
     INTEGER iset,ixy,jxy,ipoly,ierr
     DOUBLE PRECISION sexp,alpha2,dy2,e_fit,chi2,t1,t2,a(fit%npoly,ndataset)
     LOGICAL, ALLOCATABLE :: mask(:)
+    alpha_list=0.d0
     if(.not.fit%apply_qrandom)return
     sexp=fit%qrandom_exp
     ! Get un-resampled fit.
@@ -2155,6 +2157,7 @@ CONTAINS
       enddo ! ixy
       alpha2=alpha2/dble(dataset%rtxy%nxy-fit%npoly)-dy2/dble(dataset%rtxy%nxy)
       if(alpha2<0.d0)alpha2=0.d0
+      alpha_list(iset)=sqrt(alpha2)
       ! Adjust stderrs.
       if(eq_dble(sexp,0.d0))then
         dataset%rtxy%dy=sqrt(dataset%rtxy%dy**2+alpha2)
@@ -2338,13 +2341,22 @@ CONTAINS
     TYPE(xy_type),POINTER :: xy,xy_orig
     ! Local variables.
     INTEGER iset,jset,iintersect,nintersect,irandom,nsample,ierr
-    DOUBLE PRECISION x0,y0,dx0,dy0,sum_weight,var,chi2
+    DOUBLE PRECISION x0,y0,dx0,dy0,sum_weight,var,chi2,alpha_list(ndataset)
 
     ! Make copy of datasets.
     call clone_dlist(dlist,tmp_dlist)
 
     ! Apply qrandom.
-    call qrandom_apply(ndataset,tmp_dlist,drange,fit)
+    call qrandom_apply(ndataset,tmp_dlist,drange,fit,alpha_list)
+    if(fit%apply_qrandom)then
+      write(6,'(a)')'Quasi-random noise'
+      write(6,'(a)')'------------------'
+      write(6,'(2x,a5,1x,1(1x,a20))')'Set','alpha       '
+      do iset=1,ndataset
+        write(6,'(2x,i5,1x,1(1x,es20.12))')iset,alpha_list(iset)
+      enddo ! iset
+      write(6,'()')
+    endif
 
     ! Allocate storage for location of intersection.
     nintersect=(ndataset*(ndataset-1))/2
@@ -2388,7 +2400,7 @@ CONTAINS
           iintersect=iintersect+1
           if(.not.valid(iintersect))cycle
           ! Find intersection between sets ISET and JSET.
-          call intersect(ndataset,fit,a,iset,jset,x1,x2,x0,y0,ierr)
+          call intersect(fit,a(1,iset),a(1,jset),x1,x2,x0,y0,ierr)
           if(ierr/=0)valid(iintersect)=.false.
           x0_array(irandom,iintersect)=x0
           y0_array(irandom,iintersect)=y0
@@ -2428,15 +2440,14 @@ CONTAINS
   END SUBROUTINE intersect_fit
 
 
-  SUBROUTINE intersect(ndataset,fit,a,iset,jset,x1,x2,x0,y0,ierr)
-    !---------------------------------------------------!
-    ! Find intersection between datasets ISET and JSET. !
-    !---------------------------------------------------!
+  SUBROUTINE intersect(fit,a1,a2,x1,x2,x0,y0,ierr)
+    !------------------------------------------------!
+    ! Find intersection between fits with parameters !
+    ! A1(:) and A2(:).                               !
+    !------------------------------------------------!
     IMPLICIT NONE
-    INTEGER,INTENT(in) :: ndataset
     TYPE(fit_form_type),INTENT(in) :: fit
-    DOUBLE PRECISION,INTENT(in) :: a(fit%npoly,ndataset)
-    INTEGER,INTENT(in) :: iset,jset
+    DOUBLE PRECISION,INTENT(in) :: a1(fit%npoly),a2(fit%npoly)
     DOUBLE PRECISION,INTENT(in) :: x1,x2
     DOUBLE PRECISION,INTENT(inout) :: x0,y0
     INTEGER,INTENT(inout) :: ierr
@@ -2449,7 +2460,7 @@ CONTAINS
     y0=0.d0
 
     ! Get coefficients of difference between the two relevant sets.
-    a_diff(1:fit%npoly)=a(1:fit%npoly,jset)-a(1:fit%npoly,iset)
+    a_diff(1:fit%npoly)=a2(1:fit%npoly)-a1(1:fit%npoly)
 
     ! Initialize bisection.
     xl=x1
@@ -2478,7 +2489,7 @@ CONTAINS
 
     ! Evaluate final intersection point.
     x0=0.5d0*(xl+xr)
-    y0=eval_poly(fit%npoly,fit%pow,a(:,iset),x0-fit%x0)
+    y0=eval_poly(fit%npoly,fit%pow,a1,x0-fit%x0)
 
   END SUBROUTINE intersect
 
@@ -3641,7 +3652,8 @@ CONTAINS
     ! Misc.
     LOGICAL need_f,need_a,need_chi2,need_rmsy
     INTEGER nsample,ipoly,ideriv,irandom,ix,iset
-    DOUBLE PRECISION chi2,t1,a(fit%npoly,ndataset),f0,sum_weight
+    DOUBLE PRECISION chi2,t1,a(fit%npoly,ndataset),f0,sum_weight,&
+       &alpha_list(ndataset)
 
     ! Initialize.
     ierr=0
@@ -3650,7 +3662,16 @@ CONTAINS
     call clone_dlist(dlist,tmp_dlist)
 
     ! Apply qrandom.
-    call qrandom_apply(ndataset,tmp_dlist,drange,fit)
+    call qrandom_apply(ndataset,tmp_dlist,drange,fit,alpha_list)
+    if(fit%apply_qrandom)then
+      write(6,'(a)')'Quasi-random noise'
+      write(6,'(a)')'------------------'
+      write(6,'(2x,a5,1x,1(1x,a20))')'Set','alpha       '
+      do iset=1,ndataset
+        write(6,'(2x,i5,1x,1(1x,es20.12))')iset,alpha_list(iset)
+      enddo ! iset
+      write(6,'()')
+    endif
 
     ! Figure out what we need and allocate arrays.
     need_f=present(fmean).or.present(ferr).or.present(fmean_1s).or.&
