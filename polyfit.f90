@@ -1266,16 +1266,17 @@ CONTAINS
 
         case('qrandom')
           ! Quasi-random noise handling.
-          t1=0.d0
-          if(nfield(command)>2)then
-            t1=dble_field(3,command,ierr)
-            if(ierr/=0)then
-              call msg('Invalid value "'//trim(field(3,command))//'" for &
-                 &variable qrandom.')
-              cycle user_loop
-            endif
-          endif
           fit%apply_qrandom=.true.
+          call msg('Enabled quasi-random error handling.')
+
+        case('qrandom_exp')
+          ! Quasi-random noise handling (exponent).
+          t1=dble_field(3,command,ierr)
+          if(ierr/=0)then
+            call msg('Invalid value "'//trim(field(3,command))//'" for &
+               &variable qrandom.')
+            cycle user_loop
+          endif
           fit%qrandom_exp=t1
           write(6,'(a,es12.4,a)')'Set qrandom with exponent ',t1,'.'
           write(6,'()')
@@ -1354,8 +1355,10 @@ CONTAINS
              &trim(i2s(mcparams_default%nsample))//'.')
         case('qrandom')
           fit%apply_qrandom=.false.
-          fit%qrandom_exp=0.d0
           call msg('Unset qrandom.')
+        case('qrandom_exp')
+          fit%qrandom_exp=0.d0
+          call msg('qrandom_exp reset to 0.')
         case('echo')
           input_echo=.false.
           call msg('Disabled input echo.')
@@ -1848,21 +1851,28 @@ CONTAINS
               call pprint('')
               call pprint('Variable: qrandom',0,10)
               call pprint('')
-              call pprint('"qrandom" is a real-valued exponent used to &
-                 &model the quasirandom noise in the data, which is assumed &
-                 &to follow sigma_Y = <alpha> * X^<qrandom>.  Coefficient &
-                 &alpha is obtained by a preliminary fit to the data, and the &
-                 &value of dY is adjusted to include sigma_Y.  The reported &
+              call pprint('"qrandom" is a Boolean variable which activates &
+                 &handling of quasirandom noise in the data.  The reported &
                  &uncertainty of results (fit values, intersections, etc) &
-                 &will thus include a contribution from the bias due to &
-                 &quasirandom fluctuations of the data in addition to the &
+                 &includes a contribution from the bias due to quasirandom &
+                 &fluctuations of the data in addition to the &
                  &purely statistical uncertainty.',2,2)
               call pprint('')
               call pprint('Note that quasirandom fluctuations in X are not &
                  &accounted for by this facility.',2,2)
               call pprint('')
-              call pprint('If "qrandom" is unset (default), no quasirandom &
-                 &noise handling is performed.',2,2)
+              call pprint('See "help set qrandom_exp" for details of the &
+                 &form used to model quasirandom noise.',2,2)
+              call pprint('')
+            case('qrandom_exp')
+              call pprint('')
+              call pprint('Variable: qrandom_exp',0,10)
+              call pprint('')
+              call pprint('"qrandom_exp" is a real-valued exponent used to &
+                 &model the quasirandom noise in the data, which is assumed &
+                 &to follow sigma_Y = <alpha> * X^<qrandom>.  Coefficient &
+                 &alpha is obtained by a preliminary fit to the data, and the &
+                 &value of dY is adjusted to include sigma_Y.',2,2)
               call pprint('')
             case('echo')
               call pprint('Variable: echo',0,10)
@@ -2156,7 +2166,7 @@ CONTAINS
         dy2=dy2+t2
       enddo ! ixy
       alpha2=alpha2/dble(dataset%rtxy%nxy-fit%npoly)-dy2/dble(dataset%rtxy%nxy)
-      if(alpha2<0.d0)alpha2=0.d0
+      if(le_dble(alpha2,0.d0))alpha2=0.d0
       alpha_list(iset)=sqrt(alpha2)
       ! Adjust stderrs.
       if(eq_dble(sexp,0.d0))then
@@ -2179,6 +2189,7 @@ CONTAINS
       call scale_untransform(dataset%txy%nxy,dataset%itransfy,dataset%txy%y,&
          &dataset%xy%y,.true.,dataset%txy%dy,dataset%xy%dy)
     enddo ! iset
+
   END SUBROUTINE qrandom_apply
 
 
