@@ -137,6 +137,10 @@ CONTAINS
     CHARACTER(search_size),POINTER :: search(:)
     ! Input echo.
     LOGICAL input_echo
+    ! Plotz facility.
+    TYPE(dataset_list_type),POINTER :: dlist_z(:)
+    TYPE(fit_form_type),POINTER :: fit_z
+    LOGICAL,ALLOCATABLE :: have_z(:)
     ! Misc variables.
     CHARACTER(7) settype
     CHARACTER(8192) command,token
@@ -647,6 +651,69 @@ CONTAINS
         enddo
         call plot_multipoly(ndataset,dlist,drange,fit,deval,mcparams,&
            &trim(fname))
+
+      case('plotz')
+        if(ndataset<2)then
+          call msg('Not enough datasets loaded.')
+          cycle user_loop
+        endif
+        ! Initialize unused components.
+        deval%rel=.false.
+        ! Get object to evaluate.
+        select case(field(2,command))
+        case("f")
+          deval%what='function'
+          deval%nderiv=0
+        case("f'")
+          deval%what='function'
+          deval%nderiv=1
+        case("f''")
+          deval%what='function'
+          deval%nderiv=2
+        case default
+          call msg('Syntax error: unknown function "'//&
+             &trim(field(2,command))//'".')
+          cycle user_loop
+        end select
+        ! Parse sub-commands.
+        fname='fitz.plot'
+        ifield=2
+        do
+          ifield=ifield+1
+          if(ifield>nfield(command))exit
+          select case(trim(field(ifield,command)))
+          case('to')
+            if(nfield(command)<ifield+1)then
+              call msg('Syntax error: "to" subcommand must be followed &
+                 &by a filename.')
+              cycle user_loop
+            endif
+            fname=field(ifield+1,command)
+            ifield=ifield+1
+          case('at')
+            if(nfield(command)<ifield+1)then
+              call msg('Syntax error: "at" subcommand must be followed &
+                 &by a data range.')
+              cycle user_loop
+            endif
+            call parse_xeval(trim(field(ifield+1,command)),deval)
+            if(.not.associated(deval%x))then
+              call msg('Syntax error: could not parse range.')
+              cycle user_loop
+            endif
+            ifield=ifield+1
+          case default
+            call msg('Syntax error: unknown subcommand "'//&
+               &trim(field(ifield,command))//'".')
+            cycle user_loop
+          end select
+        enddo
+        call construct_z_datasets(drange,fit,dlist,fit_z,dlist_z,have_z)
+        call plot_multipoly(size(dlist_z),dlist_z,drange,fit_z,deval,mcparams,&
+           &trim(fname))
+        call kill_dlist(dlist_z)
+        call kill_fit_form(fit_z)
+        deallocate(have_z)
 
       case('assess')
         if(ndataset<1)then
@@ -1454,7 +1521,8 @@ CONTAINS
              &<value>]',0,2)
           call pprint('* unload <set-index>',0,2)
           call pprint('* fit',0,2)
-          call pprint('* plot <file-name>',0,2)
+          call pprint('* plot <object> at <values> to <file-name>',0,2)
+          call pprint('* plotz <object> at <values> to <file-name>',0,2)
           call pprint('* assess <variables> [using <function> at X <X> &
              &[for <set>]]',0,2)
           call pprint('* report <report>',0,2)
@@ -1575,6 +1643,15 @@ CONTAINS
              &part -- data points are offset by the value of the set-specific &
              &part, and the shared part of the fit is plotted.',2,2)
           call pprint('')
+        case('plotz')
+          call pprint('')
+          call pprint('Command: plotz <function> [at <xvalues>] &
+             &[to <filename>]',0,9)
+          call pprint('')
+          call pprint('"plotz" works as "plot" but operates on the "z" linear &
+             &combinations of datasets used in the "intersect" facility for &
+             &correlated quasirandom noise.  Refer to "plot", "intersect", &
+             &"qrandom", and "qrandom_exp" for more information.',2,2)
         case('assess')
           call pprint('')
           call pprint('Command: assess <variables> [by <criterion>] [using &
@@ -2127,14 +2204,16 @@ CONTAINS
     ! Quick-access pointers.
     TYPE(dataset_type),POINTER :: dataset
     ! Local variables.
-    INTEGER iset,ixy,jxy,ipoly,ierr
+    INTEGER iset,ixy,ipoly,ierr
     DOUBLE PRECISION sexp,alpha2,dy2,e_fit,chi2,t1,t2,a(fit%npoly,ndataset),&
        &alpha(ndataset)
-    LOGICAL, ALLOCATABLE :: mask(:)
+
+    ! Initialize.
     alpha=0.d0
     if(present(alpha_list))alpha_list=0.d0
     if(.not.fit%apply_qrandom)return
     sexp=fit%qrandom_exp
+
     ! Get un-resampled fit.
     call perform_multifit(ndataset,dlist,fit,chi2,a,ierr)
     do iset=1,ndataset
@@ -2183,18 +2262,7 @@ CONTAINS
            &alpha2*dataset%rtxy%x**(2*sexp))
       endif
       ! Unrestrict range to get txy.
-      allocate(mask(dataset%xy%nxy))
-      call get_range_mask(drange,dataset%xy,dataset%txy,mask)
-      jxy=0
-      do ixy=1,dataset%txy%nxy
-        if(.not.mask(ixy))cycle
-        jxy=jxy+1
-        dataset%txy%dy(ixy)=dataset%rtxy%dy(jxy)
-      enddo ! ixy
-      deallocate(mask)
-      ! Now transform back to xy.
-      call scale_untransform(dataset%txy%nxy,dataset%itransfy,dataset%txy%y,&
-         &dataset%xy%y,.true.,dataset%txy%dy,dataset%xy%dy)
+      call back_transform(drange,dataset)
     enddo ! iset
 
     ! Report.
@@ -2372,11 +2440,10 @@ CONTAINS
     TYPE(xy_type),POINTER :: xy,xy_orig
     TYPE(fit_form_type),POINTER :: fit_z
     ! Local variables.
-    LOGICAL,ALLOCATABLE :: have_z(:),mask(:)
-    INTEGER iset,jset,iyy,nyy,irandom,nsample,ierr,ixy,jxy,&
-       &nyz,nzz,jyy,iyz,izz
+    LOGICAL,ALLOCATABLE :: have_z(:)
+    INTEGER iset,jset,iyy,nyy,irandom,nsample,ierr,nyz,nzz,jyy,iyz,izz
     DOUBLE PRECISION x0,y0,dx0,dy0,sum_weight,var,chi2,alpha_list(ndataset),&
-       &beta,x0_best,y0_best,dx0_best,dy0_best
+       &x0_best,y0_best,dx0_best,dy0_best
 
     ! Make copy of datasets.
     call clone_dlist(dlist,tmp_dlist)
@@ -2400,51 +2467,11 @@ CONTAINS
     w_vector=1.d0
 
     ! Construct z datasets.
-    allocate(dlist_z(nyy),have_z(nyy),a_z(fit%npoly,nyy))
-    have_z=.false.
-    iyy=0
-    do iset=1,ndataset
-      do jset=iset+1,ndataset
-        iyy=iyy+1
-        call clone_dataset(dlist(iset)%dataset,dlist_z(iyy)%dataset)
-        dataset=>dlist_z(iyy)%dataset
-        if(.not.fit%apply_qrandom)cycle
-        if(eq_dble(alpha_list(iset),alpha_list(jset)))cycle
-        if(dlist(iset)%dataset%rtxy%nxy/=dlist(jset)%dataset%rtxy%nxy)cycle
-        if(any(neq_dble(dlist(iset)%dataset%rtxy%x,&
-           &dlist(jset)%dataset%rtxy%x)))cycle
-        have_z(iyy)=.true.
-        beta=-alpha_list(iset)/(alpha_list(jset)-alpha_list(iset))
-        do ixy=1,dlist(iset)%dataset%rtxy%nxy
-          dataset%rtxy%y(ixy)=dlist(iset)%dataset%rtxy%y(ixy)+&
-            &beta*(dlist(jset)%dataset%rtxy%y(ixy)-&
-            &      dlist(iset)%dataset%rtxy%y(ixy))
-          dataset%rtxy%dy(ixy)=sqrt(&
-            &(1.d0-beta)**2*dlist(iset)%dataset%rtxy%dy(ixy)**2+&
-            &       beta**2*dlist(jset)%dataset%rtxy%dy(ixy)**2)
-        enddo ! ixy
-        ! Unrestrict range to get txy.
-        allocate(mask(dataset%xy%nxy))
-        call get_range_mask(drange,dataset%xy,dataset%txy,mask)
-        jxy=0
-        do ixy=1,dataset%txy%nxy
-          if(.not.mask(ixy))cycle
-          jxy=jxy+1
-          dataset%txy%y(ixy)=dataset%rtxy%y(jxy)
-          dataset%txy%dy(ixy)=dataset%rtxy%dy(jxy)
-        enddo ! ixy
-        deallocate(mask)
-        ! Now transform back to xy.
-        call scale_untransform(dataset%txy%nxy,dataset%itransfy,dataset%txy%y,&
-           &dataset%xy%y,.true.,dataset%txy%dy,dataset%xy%dy)
-      enddo ! jset
-    enddo ! iset
+    call construct_z_datasets(drange,fit,dlist,fit_z,dlist_z,have_z)
+    allocate(a_z(fit%npoly,nyy))
 
     ! Make clone of z datasets for sampling.
     call clone_dlist(dlist_z,tmp_dlist_z)
-    call clone_fit_form(dlist,fit,fit_z)
-    fit_z%share=.false.
-    fit_z%apply_qrandom=.false.
     call qrandom_apply(nyy,tmp_dlist_z,drange,fit_z)
 
     ! Compute total dataset weight.
@@ -2486,8 +2513,7 @@ CONTAINS
         if(xy%have_dy)xy%y=xy_orig%y+gaussian_random_number(xy%dy)
         call refresh_dataset(dataset,drange)
       enddo ! iyy
-      call perform_multifit(nyy,tmp_dlist_z,fit_z,chi2,a_z,&
-         &ierr)
+      call perform_multifit(nyy,tmp_dlist_z,fit_z,chi2,a_z,ierr)
       if(ierr/=0)then
         call kill_dlist(tmp_dlist)
         call kill_dlist(dlist_z)
@@ -3613,6 +3639,32 @@ CONTAINS
   END SUBROUTINE scale_untransform
 
 
+  SUBROUTINE back_transform(drange,dataset)
+    !-----------------------------------------------------!
+    ! Copy/transform data in dataset%rtxy to %txy and %xy !
+    ! (i.e., in reverse).                                 !
+    !-----------------------------------------------------!
+    IMPLICIT NONE
+    TYPE(range_type),INTENT(in) :: drange
+    TYPE(dataset_type),POINTER :: dataset
+    LOGICAL,ALLOCATABLE :: mask(:)
+    INTEGER ixy,jxy
+    ! Unrestrict range to get txy.
+    allocate(mask(dataset%xy%nxy))
+    call get_range_mask(drange,dataset%xy,dataset%txy,mask)
+    jxy=0
+    do ixy=1,dataset%txy%nxy
+      if(.not.mask(ixy))cycle
+      jxy=jxy+1
+      dataset%txy%y(ixy)=dataset%rtxy%y(jxy)
+      dataset%txy%dy(ixy)=dataset%rtxy%dy(jxy)
+    enddo ! ixy
+    deallocate(mask)
+    ! Now transform back to xy.
+    call scale_untransform(dataset%txy%nxy,dataset%itransfy,dataset%txy%y,&
+       &dataset%xy%y,.true.,dataset%txy%dy,dataset%xy%dy)
+  END SUBROUTINE back_transform
+
   ! COMPUTATION ROUTINES
 
 
@@ -4038,6 +4090,68 @@ CONTAINS
     call kill_dlist(tmp_dlist)
 
   END SUBROUTINE eval_multifit_monte_carlo
+
+
+  SUBROUTINE construct_z_datasets(drange,fit,dlist,fit_z,dlist_z,have_z)
+    !-----------------------------------------------------------!
+    ! Construct dlist_z containing linear combinations of each  !
+    ! pair of datasets in dlist.  These "z" linear combinations !
+    ! are such that quasirandom noise should not be present.    !
+    !-----------------------------------------------------------!
+    IMPLICIT NONE
+    TYPE(range_type),INTENT(in) :: drange
+    TYPE(fit_form_type),POINTER :: fit,fit_z
+    TYPE(dataset_list_type),POINTER :: dlist(:),dlist_z(:)
+    LOGICAL,ALLOCATABLE,INTENT(inout) :: have_z(:)
+    ! Local variables.
+    TYPE(dataset_list_type),POINTER :: tmp_dlist(:)
+    INTEGER ndataset,nyy,ixy,iyy,iset,jset
+    DOUBLE PRECISION beta,alpha_list(size(dlist))
+    TYPE(dataset_type),POINTER :: dataset
+
+    ! Make copy of datasets.
+    ndataset=size(dlist)
+    nullify(tmp_dlist)
+    call clone_dlist(dlist,tmp_dlist)
+    call qrandom_apply(ndataset,tmp_dlist,drange,fit,alpha_list)
+    call kill_dlist(tmp_dlist)
+
+    ! Now create dlist_z.
+    nyy=(ndataset*(ndataset-1))/2
+    allocate(dlist_z(nyy),have_z(nyy))
+    have_z=.false.
+    iyy=0
+    do iset=1,ndataset
+      do jset=iset+1,ndataset
+        iyy=iyy+1
+        call clone_dataset(dlist(iset)%dataset,dlist_z(iyy)%dataset)
+        dataset=>dlist_z(iyy)%dataset
+        if(.not.fit%apply_qrandom)cycle
+        if(eq_dble(alpha_list(iset),alpha_list(jset)))cycle
+        if(dlist(iset)%dataset%rtxy%nxy/=dlist(jset)%dataset%rtxy%nxy)cycle
+        if(any(neq_dble(dlist(iset)%dataset%rtxy%x,&
+           &dlist(jset)%dataset%rtxy%x)))cycle
+        have_z(iyy)=.true.
+        beta=-alpha_list(iset)/(alpha_list(jset)-alpha_list(iset))
+        do ixy=1,dlist(iset)%dataset%rtxy%nxy
+          dataset%rtxy%y(ixy)=dlist(iset)%dataset%rtxy%y(ixy)+&
+            &beta*(dlist(jset)%dataset%rtxy%y(ixy)-&
+            &      dlist(iset)%dataset%rtxy%y(ixy))
+          dataset%rtxy%dy(ixy)=sqrt(&
+            &(1.d0-beta)**2*dlist(iset)%dataset%rtxy%dy(ixy)**2+&
+            &       beta**2*dlist(jset)%dataset%rtxy%dy(ixy)**2)
+        enddo ! ixy
+        ! Copy results back to txy/xy.
+        call back_transform(drange,dataset)
+      enddo ! jset
+    enddo ! iset
+
+    ! Create clone of fit.
+    call clone_fit_form(dlist,fit,fit_z)
+    fit_z%share=.false.
+    fit_z%apply_qrandom=.false.
+
+  END SUBROUTINE construct_z_datasets
 
 
   ! INPUT FILE HANDLING ROUTINES.
