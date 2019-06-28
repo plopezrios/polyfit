@@ -2123,14 +2123,16 @@ CONTAINS
     TYPE(dataset_list_type),POINTER :: dlist(:)
     TYPE(range_type),INTENT(in) :: drange
     TYPE(fit_form_type),INTENT(in) :: fit
-    DOUBLE PRECISION,INTENT(inout) :: alpha_list(ndataset)
+    DOUBLE PRECISION,INTENT(inout),OPTIONAL :: alpha_list(ndataset)
     ! Quick-access pointers.
     TYPE(dataset_type),POINTER :: dataset
     ! Local variables.
     INTEGER iset,ixy,jxy,ipoly,ierr
-    DOUBLE PRECISION sexp,alpha2,dy2,e_fit,chi2,t1,t2,a(fit%npoly,ndataset)
+    DOUBLE PRECISION sexp,alpha2,dy2,e_fit,chi2,t1,t2,a(fit%npoly,ndataset),&
+       &alpha(ndataset)
     LOGICAL, ALLOCATABLE :: mask(:)
-    alpha_list=0.d0
+    alpha=0.d0
+    if(present(alpha_list))alpha_list=0.d0
     if(.not.fit%apply_qrandom)return
     sexp=fit%qrandom_exp
     ! Get un-resampled fit.
@@ -2165,9 +2167,14 @@ CONTAINS
         alpha2=alpha2+t1
         dy2=dy2+t2
       enddo ! ixy
-      alpha2=alpha2/dble(dataset%rtxy%nxy-fit%npoly)-dy2/dble(dataset%rtxy%nxy)
+      alpha2=alpha2/dble(dataset%rtxy%nxy-fit%npoly)
+      ! Report alpha pre dy correction, since this is for correlated-qrandom
+      ! corrections.
+      if(present(alpha_list))alpha_list(iset)=sqrt(alpha2)
+      alpha2=alpha2-dy2/dble(dataset%rtxy%nxy)
       if(le_dble(alpha2,0.d0))alpha2=0.d0
-      alpha_list(iset)=sqrt(alpha2)
+      ! Store locally for reporting.
+      alpha(iset)=sqrt(alpha2)
       ! Adjust stderrs.
       if(eq_dble(sexp,0.d0))then
         dataset%rtxy%dy=sqrt(dataset%rtxy%dy**2+alpha2)
@@ -2189,6 +2196,15 @@ CONTAINS
       call scale_untransform(dataset%txy%nxy,dataset%itransfy,dataset%txy%y,&
          &dataset%xy%y,.true.,dataset%txy%dy,dataset%xy%dy)
     enddo ! iset
+
+    ! Report.
+    write(6,'(a)')'Quasi-random noise'
+    write(6,'(a)')'------------------'
+    write(6,'(2x,a5,1x,1(1x,a20))')'Set','alpha       '
+    do iset=1,ndataset
+      write(6,'(2x,i5,1x,1(1x,es20.12))')iset,alpha(iset)
+    enddo ! iset
+    write(6,'()')
 
   END SUBROUTINE qrandom_apply
 
@@ -2337,44 +2353,99 @@ CONTAINS
     IMPLICIT NONE
     INTEGER,INTENT(in) :: ndataset
     TYPE(dataset_list_type),POINTER :: dlist(:)
-    TYPE(fit_form_type),INTENT(in) :: fit
+    TYPE(fit_form_type),POINTER :: fit
     TYPE(mc_params_type),INTENT(in) :: mcparams
     TYPE(range_type),INTENT(in) :: drange
     DOUBLE PRECISION,INTENT(in) :: x1,x2
     ! Monte Carlo sample storage.
     DOUBLE PRECISION,ALLOCATABLE :: x0_array(:,:),y0_array(:,:),w_vector(:)
-    LOGICAL,ALLOCATABLE :: valid(:)
+    DOUBLE PRECISION,ALLOCATABLE :: x0_yz_array(:,:),y0_yz_array(:,:)
+    DOUBLE PRECISION,ALLOCATABLE :: x0_zz_array(:,:),y0_zz_array(:,:)
+    LOGICAL,ALLOCATABLE :: valid(:),valid_yz(:),valid_zz(:)
     ! Parameter vector.
     DOUBLE PRECISION a(fit%npoly,ndataset)
+    DOUBLE PRECISION,ALLOCATABLE :: a_z(:,:)
     ! Pointers.
-    TYPE(dataset_list_type),POINTER :: tmp_dlist(:)
+    TYPE(dataset_list_type),POINTER :: tmp_dlist(:),dlist_z(:),&
+       &tmp_dlist_z(:)
     TYPE(dataset_type),POINTER :: dataset
     TYPE(xy_type),POINTER :: xy,xy_orig
+    TYPE(fit_form_type),POINTER :: fit_z
     ! Local variables.
-    INTEGER iset,jset,iintersect,nintersect,irandom,nsample,ierr
-    DOUBLE PRECISION x0,y0,dx0,dy0,sum_weight,var,chi2,alpha_list(ndataset)
+    LOGICAL,ALLOCATABLE :: have_z(:),mask(:)
+    INTEGER iset,jset,iyy,nyy,irandom,nsample,ierr,ixy,jxy,&
+       &nyz,nzz,jyy,iyz,izz
+    DOUBLE PRECISION x0,y0,dx0,dy0,sum_weight,var,chi2,alpha_list(ndataset),&
+       &beta,x0_best,y0_best,dx0_best,dy0_best
 
     ! Make copy of datasets.
     call clone_dlist(dlist,tmp_dlist)
 
     ! Apply qrandom.
     call qrandom_apply(ndataset,tmp_dlist,drange,fit,alpha_list)
-    if(fit%apply_qrandom)then
-      write(6,'(a)')'Quasi-random noise'
-      write(6,'(a)')'------------------'
-      write(6,'(2x,a5,1x,1(1x,a20))')'Set','alpha       '
-      do iset=1,ndataset
-        write(6,'(2x,i5,1x,1(1x,es20.12))')iset,alpha_list(iset)
-      enddo ! iset
-      write(6,'()')
-    endif
 
     ! Allocate storage for location of intersection.
-    nintersect=(ndataset*(ndataset-1))/2
-    allocate(x0_array(mcparams%nsample,nintersect),&
-       &y0_array(mcparams%nsample,nintersect),w_vector(mcparams%nsample),&
-       &valid(nintersect))
+    nyy=(ndataset*(ndataset-1))/2
+    nyz=nyy*ndataset
+    nzz=(nyy*(nyy-1))/2
+    allocate(x0_array(mcparams%nsample,nyy),y0_array(mcparams%nsample,nyy),&
+       &w_vector(mcparams%nsample),valid(nyy),&
+       &x0_yz_array(mcparams%nsample,nyz),y0_yz_array(mcparams%nsample,nyz),&
+       &valid_yz(nyz),&
+       &x0_zz_array(mcparams%nsample,nzz),y0_zz_array(mcparams%nsample,nzz),&
+       &valid_zz(nzz))
     valid=.true.
+    valid_yz=.true.
+    valid_zz=.true.
+    w_vector=1.d0
+
+    ! Construct z datasets.
+    allocate(dlist_z(nyy),have_z(nyy),a_z(fit%npoly,nyy))
+    have_z=.false.
+    iyy=0
+    do iset=1,ndataset
+      do jset=iset+1,ndataset
+        iyy=iyy+1
+        call clone_dataset(dlist(iset)%dataset,dlist_z(iyy)%dataset)
+        dataset=>dlist_z(iyy)%dataset
+        if(.not.fit%apply_qrandom)cycle
+        if(eq_dble(alpha_list(iset),alpha_list(jset)))cycle
+        if(dlist(iset)%dataset%rtxy%nxy/=dlist(jset)%dataset%rtxy%nxy)cycle
+        if(any(neq_dble(dlist(iset)%dataset%rtxy%x,&
+           &dlist(jset)%dataset%rtxy%x)))cycle
+        have_z(iyy)=.true.
+        beta=-alpha_list(iset)/(alpha_list(jset)-alpha_list(iset))
+        do ixy=1,dlist(iset)%dataset%rtxy%nxy
+          dataset%rtxy%y(ixy)=dlist(iset)%dataset%rtxy%y(ixy)+&
+            &beta*(dlist(jset)%dataset%rtxy%y(ixy)-&
+            &      dlist(iset)%dataset%rtxy%y(ixy))
+          dataset%rtxy%dy(ixy)=sqrt(&
+            &(1.d0-beta)**2*dlist(iset)%dataset%rtxy%dy(ixy)**2+&
+            &       beta**2*dlist(jset)%dataset%rtxy%dy(ixy)**2)
+        enddo ! ixy
+        ! Unrestrict range to get txy.
+        allocate(mask(dataset%xy%nxy))
+        call get_range_mask(drange,dataset%xy,dataset%txy,mask)
+        jxy=0
+        do ixy=1,dataset%txy%nxy
+          if(.not.mask(ixy))cycle
+          jxy=jxy+1
+          dataset%txy%y(ixy)=dataset%rtxy%y(jxy)
+          dataset%txy%dy(ixy)=dataset%rtxy%dy(jxy)
+        enddo ! ixy
+        deallocate(mask)
+        ! Now transform back to xy.
+        call scale_untransform(dataset%txy%nxy,dataset%itransfy,dataset%txy%y,&
+           &dataset%xy%y,.true.,dataset%txy%dy,dataset%xy%dy)
+      enddo ! jset
+    enddo ! iset
+
+    ! Make clone of z datasets for sampling.
+    call clone_dlist(dlist_z,tmp_dlist_z)
+    call clone_fit_form(dlist,fit,fit_z)
+    fit_z%share=.false.
+    fit_z%apply_qrandom=.false.
+    call qrandom_apply(nyy,tmp_dlist_z,drange,fit_z)
 
     ! Compute total dataset weight.
     sum_weight=0.d0
@@ -2400,23 +2471,78 @@ CONTAINS
       call perform_multifit(ndataset,tmp_dlist,fit,chi2,a,ierr)
       if(ierr/=0)then
         call kill_dlist(tmp_dlist)
+        call kill_dlist(dlist_z)
+        call kill_dlist(tmp_dlist_z)
+        call kill_fit_form(fit_z)
         call msg('Could not perform fit.')
         return
       endif
-      w_vector(irandom)=1.d0
+      do iyy=1,nyy
+        dataset=>tmp_dlist_z(iyy)%dataset
+        xy=>dataset%xy
+        xy_orig=>dlist_z(iyy)%dataset%xy
+        ! Using xy%dx and xy%dy so we get qrandom accounted for.
+        if(xy%have_dx)xy%x=xy_orig%x+gaussian_random_number(xy%dx)
+        if(xy%have_dy)xy%y=xy_orig%y+gaussian_random_number(xy%dy)
+        call refresh_dataset(dataset,drange)
+      enddo ! iyy
+      call perform_multifit(nyy,tmp_dlist_z,fit_z,chi2,a_z,&
+         &ierr)
+      if(ierr/=0)then
+        call kill_dlist(tmp_dlist)
+        call kill_dlist(dlist_z)
+        call kill_dlist(tmp_dlist_z)
+        call kill_fit_form(fit_z)
+        call msg('Could not perform fit.')
+        return
+      endif
       ! Loop over pairs of datasets.
-      iintersect=0
-      do iset=1,ndataset-1
+      iyy=0
+      do iset=1,ndataset
         do jset=iset+1,ndataset
-          iintersect=iintersect+1
-          if(.not.valid(iintersect))cycle
+          iyy=iyy+1
+          if(.not.valid(iyy))cycle
           ! Find intersection between sets ISET and JSET.
           call intersect(fit,a(1,iset),a(1,jset),x1,x2,x0,y0,ierr)
-          if(ierr/=0)valid(iintersect)=.false.
-          x0_array(irandom,iintersect)=x0
-          y0_array(irandom,iintersect)=y0
+          if(ierr/=0)valid(iyy)=.false.
+          x0_array(irandom,iyy)=x0
+          y0_array(irandom,iyy)=y0
         enddo ! jset
       enddo ! iset
+      ! Loop over datasets-z pairs.
+      iyz=0
+      do iset=1,ndataset
+        do iyy=1,nyy
+          iyz=iyz+1
+          if(.not.have_z(iyy))then
+            valid_yz(iyz)=.false.
+            cycle
+          endif
+          if(.not.valid_yz(iyz))cycle
+          ! Find intersection between set ISET and mixed set IYY.
+          call intersect(fit,a(1,iset),a_z(1,iyy),x1,x2,x0,y0,ierr)
+          if(ierr/=0)valid_yz(iyz)=.false.
+          x0_yz_array(irandom,iyz)=x0
+          y0_yz_array(irandom,iyz)=y0
+        enddo ! iyy
+      enddo ! iset
+      ! Loop over z-z pairs.
+      izz=0
+      do iyy=1,nyy
+        do jyy=iyy+1,nyy
+          izz=izz+1
+          if(.not.have_z(iyy).or..not.have_z(jyy))then
+            valid_zz(izz)=.false.
+            cycle
+          endif
+          if(.not.valid_zz(izz))cycle
+          ! Find intersection between mized sets IYY and IZZ.
+          call intersect(fit,a_z(1,iyy),a_z(1,jyy),x1,x2,x0,y0,ierr)
+          if(ierr/=0)valid_zz(izz)=.false.
+          x0_zz_array(irandom,izz)=x0
+          y0_zz_array(irandom,izz)=y0
+        enddo ! jyy
+      enddo ! iyy
     enddo ! irandom
 
     ! Compute and report intersection(s).
@@ -2424,17 +2550,27 @@ CONTAINS
     write(6,'(4x)',advance='no')
     write(6,'(1x,a7,4(1x,a20))')'Sets ','X0          ','DX0         ',&
        &'Y0          ','DY0         '
-    iintersect=0
-    do iset=1,ndataset-1
+    x0_best=0.d0
+    dx0_best=0.d0
+    y0_best=0.d0
+    dy0_best=0.d0
+    iyy=0
+    do iset=1,ndataset
       do jset=iset+1,ndataset
-        iintersect=iintersect+1
-        if(valid(iintersect))then
-          call characterize_dist(nsample,x0_array(1,iintersect),w_vector,&
-             &mean=x0,var=var)
+        iyy=iyy+1
+        if(valid(iyy))then
+          call characterize_dist(nsample,x0_array(1,iyy),&
+             &w_vector,mean=x0,var=var)
           dx0=sqrt(var)
-          call characterize_dist(nsample,y0_array(1,iintersect),w_vector,&
-             &mean=y0,var=var)
+          call characterize_dist(nsample,y0_array(1,iyy),&
+             &w_vector,mean=y0,var=var)
           dy0=sqrt(var)
+          if(dy0_best<=0.d0.or.dy0<dy0_best)then
+            x0_best=x0
+            dx0_best=dx0
+            y0_best=y0
+            dy0_best=dy0
+          endif
           write(6,'(a4)',advance='no')'INTR'
           write(6,'(2(1x,i3),4(1x,es20.12))')iset,jset,x0,dx0,y0,dy0
         else
@@ -2444,9 +2580,72 @@ CONTAINS
         endif
       enddo ! jset
     enddo ! iset
+    if(fit%apply_qrandom)then
+      iyz=0
+      do iset=1,ndataset
+        do iyy=1,nyy
+          iyz=iyz+1
+          if(valid_yz(iyy))then
+            call characterize_dist(nsample,x0_yz_array(1,iyz),&
+               &w_vector,mean=x0,var=var)
+            dx0=sqrt(var)
+            call characterize_dist(nsample,y0_yz_array(1,iyz),&
+               &w_vector,mean=y0,var=var)
+            dy0=sqrt(var)
+            if(dy0_best<=0.d0.or.dy0<dy0_best)then
+              x0_best=x0
+              dx0_best=dx0
+              y0_best=y0
+              dy0_best=dy0
+            endif
+            write(6,'(a4)',advance='no')'INTR'
+            write(6,'(1x,i3,1x,i2,"X",4(1x,es20.12))')iset,iyy,x0,dx0,y0,dy0
+          else
+            write(6,'(a4)',advance='no')'INTR'
+            write(6,'(1x,i3,1x,i2,"X",a84)')iset,iyy,&
+               &'NO RELIABLE INTERSECTION                            '
+          endif
+        enddo ! iyy
+      enddo ! iset
+      izz=0
+      do iyy=1,nyy
+        do jyy=iyy+1,nyy
+          izz=izz+1
+          if(valid_zz(iyy))then
+            call characterize_dist(nsample,x0_zz_array(1,izz),&
+               &w_vector,mean=x0,var=var)
+            dx0=sqrt(var)
+            call characterize_dist(nsample,y0_zz_array(1,izz),&
+               &w_vector,mean=y0,var=var)
+            dy0=sqrt(var)
+            if(dy0_best<=0.d0.or.dy0<dy0_best)then
+              x0_best=x0
+              dx0_best=dx0
+              y0_best=y0
+              dy0_best=dy0
+            endif
+            write(6,'(a4)',advance='no')'INTR'
+            write(6,'(2(1x,i2,"X"),4(1x,es20.12))')iyy,jyy,x0,dx0,y0,dy0
+          else
+            write(6,'(a4)',advance='no')'INTR'
+            write(6,'(2(1x,i2,"X"),a84)')iyy,jyy,&
+               &'NO RELIABLE INTERSECTION                            '
+          endif
+        enddo ! jyy
+      enddo ! iyy
+    endif ! apply_qrandom
+    write(6,'(a12)',advance='no')'INTR  BEST  '
+    if(dy0_best>0.d0)then
+      write(6,'(4(1x,es20.12))')x0_best,dx0_best,y0_best,dy0_best
+    else
+      write(6,'(a84)')'NO RELIABLE INTERSECTION                            '
+    endif
 
     ! Clean up.
     call kill_dlist(tmp_dlist)
+    call kill_dlist(dlist_z)
+    call kill_dlist(tmp_dlist_z)
+    call kill_fit_form(fit_z)
 
   END SUBROUTINE intersect_fit
 
@@ -3663,8 +3862,7 @@ CONTAINS
     ! Misc.
     LOGICAL need_f,need_a,need_chi2,need_rmsy
     INTEGER nsample,ipoly,ideriv,irandom,ix,iset
-    DOUBLE PRECISION chi2,t1,a(fit%npoly,ndataset),f0,sum_weight,&
-       &alpha_list(ndataset)
+    DOUBLE PRECISION chi2,t1,a(fit%npoly,ndataset),f0,sum_weight
 
     ! Initialize.
     ierr=0
@@ -3673,16 +3871,7 @@ CONTAINS
     call clone_dlist(dlist,tmp_dlist)
 
     ! Apply qrandom.
-    call qrandom_apply(ndataset,tmp_dlist,drange,fit,alpha_list)
-    if(fit%apply_qrandom)then
-      write(6,'(a)')'Quasi-random noise'
-      write(6,'(a)')'------------------'
-      write(6,'(2x,a5,1x,1(1x,a20))')'Set','alpha       '
-      do iset=1,ndataset
-        write(6,'(2x,i5,1x,1(1x,es20.12))')iset,alpha_list(iset)
-      enddo ! iset
-      write(6,'()')
-    endif
+    call qrandom_apply(ndataset,tmp_dlist,drange,fit)
 
     ! Figure out what we need and allocate arrays.
     need_f=present(fmean).or.present(ferr).or.present(fmean_1s).or.&
