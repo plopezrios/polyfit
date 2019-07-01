@@ -2687,8 +2687,10 @@ CONTAINS
     DOUBLE PRECISION,INTENT(in) :: x1,x2
     DOUBLE PRECISION,INTENT(inout) :: x0,y0
     INTEGER,INTENT(inout) :: ierr
-    LOGICAL lplus,rplus
-    DOUBLE PRECISION xl,xr,yl,yr,a_diff(fit%npoly)
+    LOGICAL is_consecutive,is_poly1,is_poly2,x0a_in_interval,x0b_in_interval,&
+       &lplus,rplus
+    INTEGER i
+    DOUBLE PRECISION t1,x0a,x0b,xl,xr,yl,yr,a_diff(fit%npoly)
 
     ! Initialize output variables.
     ierr=1
@@ -2698,33 +2700,84 @@ CONTAINS
     ! Get coefficients of difference between the two relevant sets.
     a_diff(1:fit%npoly)=a2(1:fit%npoly)-a1(1:fit%npoly)
 
-    ! Initialize bisection.
-    xl=x1
-    yl=eval_poly(fit%npoly,fit%pow,a_diff,xl-fit%x0)
-    xr=x2
-    yr=eval_poly(fit%npoly,fit%pow,a_diff,xr-fit%x0)
-    if(abs(yl)<=0.d0.or.abs(yr)<=0.d0)return
-    lplus=yl>0.d0
-    rplus=yr>0.d0
-    if(lplus.eqv.rplus)return
+    ! See if we are dealing with an especially simple case.
+    is_consecutive=all(eq_dble(fit%pow,(/(dble(i-1),i=1,fit%npoly)/)))
+    is_poly1=is_consecutive.and.fit%npoly==2.and.&
+       &neq_dble(fit%pow(fit%npoly),0.d0)
+    is_poly2=is_consecutive.and.fit%npoly==3.and.&
+       &neq_dble(fit%pow(fit%npoly),0.d0)
 
-    ! Loop over bisection iterations.
-    ierr=0
-    do
-      x0=0.5d0*(xl+xr)
-      y0=eval_poly(fit%npoly,fit%pow,a_diff,x0-fit%x0)
-      if(y0>0.d0.eqv.lplus)then
-        ! Replace left bracket.
-        xl=x0
+    if(is_poly1)then
+
+      ! Linear fit.
+      x0=-a_diff(1)/a_diff(2)+fit%x0
+
+    elseif(is_poly2)then
+
+      ! Quadratic fit.  Get discriminant.
+      t1=a_diff(2)**2-4.d0*a_diff(1)*a_diff(3)
+      if(eq_dble(t1,0.d0))then
+        ! Discriminant is zero: one intersection.
+        x0=-0.5d0*a_diff(2)/a_diff(3)+fit%x0
+      elseif(t1<0.d0)then
+        ! Discriminant is negative: no intersections.
+        return
       else
-        ! Replace right bracket.
-        xr=x0
-      endif
-      if(abs(xl-xr)<1.d-10)exit
-    enddo
+        ! Discriminant is positive: two intersections.
+        x0a=0.5d0*(-a_diff(2)+sqrt(t1))/a_diff(3)+fit%x0
+        x0b=0.5d0*(-a_diff(2)-sqrt(t1))/a_diff(3)+fit%x0
+        ! Decide which intersection to report.
+        x0a_in_interval=ge_dble(x0a,x1).and.le_dble(x0a,x2)
+        x0b_in_interval=ge_dble(x0b,x1).and.le_dble(x0b,x2)
+        if(x0a_in_interval.and.x0b_in_interval)then
+          ! Pick closest to centre.
+          if(abs(x0a-0.5d0*(x1+x2))<abs(x0b-0.5d0*(x1+x2)))then
+            x0=x0a
+          else
+            x0=x0b
+          endif
+        elseif(x0a_in_interval)then
+          x0=x0a
+        elseif(x0b_in_interval)then
+          x0=x0b
+        else
+          return
+        endif
+      endif ! sign of discriminant
 
-    ! Evaluate final intersection point.
-    x0=0.5d0*(xl+xr)
+    else
+
+      ! Not a "simple" fit form, so use bisection.  Initialize.
+      xl=x1
+      yl=eval_poly(fit%npoly,fit%pow,a_diff,xl-fit%x0)
+      xr=x2
+      yr=eval_poly(fit%npoly,fit%pow,a_diff,xr-fit%x0)
+      if(abs(yl)<=0.d0.or.abs(yr)<=0.d0)return
+      lplus=yl>0.d0
+      rplus=yr>0.d0
+      if(lplus.eqv.rplus)return
+
+      ! Loop over bisection iterations.
+      do
+        x0=0.5d0*(xl+xr)
+        y0=eval_poly(fit%npoly,fit%pow,a_diff,x0-fit%x0)
+        if(y0>0.d0.eqv.lplus)then
+          ! Replace left bracket.
+          xl=x0
+        else
+          ! Replace right bracket.
+          xr=x0
+        endif
+        if(abs(xl-xr)<1.d-10)exit
+      enddo
+
+      ! Evaluate final intersection point.
+      x0=0.5d0*(xl+xr)
+
+    endif
+
+    ! Evaluate intersection abscissa.
+    ierr=0
     y0=eval_poly(fit%npoly,fit%pow,a1,x0-fit%x0)
 
   END SUBROUTINE intersect
