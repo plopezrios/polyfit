@@ -2611,7 +2611,7 @@ CONTAINS
       do iset=1,ndataset
         do iyy=1,nyy
           iyz=iyz+1
-          if(valid_yz(iyy))then
+          if(valid_yz(iyz))then
             call characterize_dist(nsample,x0_yz_array(1,iyz),&
                &w_vector,mean=x0,var=var)
             dx0=sqrt(var)
@@ -2625,10 +2625,10 @@ CONTAINS
               dy0_best=dy0
             endif
             write(6,'(a4)',advance='no')'INTR'
-            write(6,'(1x,i3,1x,i2,"X",4(1x,es20.12))')iset,iyy,x0,dx0,y0,dy0
+            write(6,'(1x,i3,1x,i2,"Z",4(1x,es20.12))')iset,iyy,x0,dx0,y0,dy0
           else
             write(6,'(a4)',advance='no')'INTR'
-            write(6,'(1x,i3,1x,i2,"X",a84)')iset,iyy,&
+            write(6,'(1x,i3,1x,i2,"Z",a84)')iset,iyy,&
                &'NO RELIABLE INTERSECTION                            '
           endif
         enddo ! iyy
@@ -2637,7 +2637,7 @@ CONTAINS
       do iyy=1,nyy
         do jyy=iyy+1,nyy
           izz=izz+1
-          if(valid_zz(iyy))then
+          if(valid_zz(izz))then
             call characterize_dist(nsample,x0_zz_array(1,izz),&
                &w_vector,mean=x0,var=var)
             dx0=sqrt(var)
@@ -2651,10 +2651,10 @@ CONTAINS
               dy0_best=dy0
             endif
             write(6,'(a4)',advance='no')'INTR'
-            write(6,'(2(1x,i2,"X"),4(1x,es20.12))')iyy,jyy,x0,dx0,y0,dy0
+            write(6,'(2(1x,i2,"Z"),4(1x,es20.12))')iyy,jyy,x0,dx0,y0,dy0
           else
             write(6,'(a4)',advance='no')'INTR'
-            write(6,'(2(1x,i2,"X"),a84)')iyy,jyy,&
+            write(6,'(2(1x,i2,"Z"),a84)')iyy,jyy,&
                &'NO RELIABLE INTERSECTION                            '
           endif
         enddo ! jyy
