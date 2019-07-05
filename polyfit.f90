@@ -2206,7 +2206,7 @@ CONTAINS
     ! Local variables.
     INTEGER iset,ixy,ipoly,ierr
     DOUBLE PRECISION sexp,alpha2,dy2,e_fit,chi2,t1,t2,a(fit%npoly,ndataset),&
-       &alpha(ndataset)
+       &alpha(ndataset),alpha_prime(ndataset)
 
     ! Initialize.
     alpha=0.d0
@@ -2247,9 +2247,10 @@ CONTAINS
         dy2=dy2+t2
       enddo ! ixy
       alpha2=alpha2/dble(dataset%rtxy%nxy-fit%npoly)
-      ! Report alpha pre dy correction, since this is for correlated-qrandom
-      ! corrections.
-      if(present(alpha_list))alpha_list(iset)=sqrt(alpha2)
+      ! alpha_prime is alpha pre dy correction.  This is used for
+      ! correlated-qrandom corrections for which it is advantageous to
+      ! ignore dy.
+      alpha_prime(iset)=sqrt(alpha2)
       alpha2=alpha2-dy2/dble(dataset%rtxy%nxy)
       if(le_dble(alpha2,0.d0))alpha2=0.d0
       ! Store locally for reporting.
@@ -2264,13 +2265,14 @@ CONTAINS
       ! Unrestrict range to get txy.
       call back_transform(drange,dataset)
     enddo ! iset
+    if(present(alpha_list))alpha_list=alpha_prime
 
     ! Report.
     write(6,'(a)')'Quasi-random noise'
     write(6,'(a)')'------------------'
-    write(6,'(2x,a5,1x,1(1x,a20))')'Set','alpha       '
+    write(6,'(2x,a5,1x,2(1x,a20))')'Set','alpha       ','alpha''      '
     do iset=1,ndataset
-      write(6,'(2x,i5,1x,1(1x,es20.12))')iset,alpha(iset)
+      write(6,'(2x,i5,1x,2(1x,es20.12))')iset,alpha(iset),alpha_prime(iset)
     enddo ! iset
     write(6,'()')
 
@@ -4169,6 +4171,11 @@ CONTAINS
     call qrandom_apply(ndataset,tmp_dlist,drange,fit,alpha_list)
     call kill_dlist(tmp_dlist)
 
+    ! Report beta.
+    write(6,'(a)')'Combination coefficients'
+    write(6,'(a)')'------------------------'
+    write(6,'(2x,a11,1x,1(1x,a20))')'Sets     ','beta        '
+
     ! Now create dlist_z.
     nyy=(ndataset*(ndataset-1))/2
     allocate(dlist_z(nyy),have_z(nyy))
@@ -4186,6 +4193,7 @@ CONTAINS
            &dlist(jset)%dataset%rtxy%x)))cycle
         have_z(iyy)=.true.
         beta=-alpha_list(iset)/(alpha_list(jset)-alpha_list(iset))
+        write(6,'(2x,i5,1x,i5,1x,1(1x,es20.12))')iset,jset,beta
         do ixy=1,dlist(iset)%dataset%rtxy%nxy
           dataset%rtxy%y(ixy)=dlist(iset)%dataset%rtxy%y(ixy)+&
             &beta*(dlist(jset)%dataset%rtxy%y(ixy)-&
@@ -4198,6 +4206,7 @@ CONTAINS
         call back_transform(drange,dataset)
       enddo ! jset
     enddo ! iset
+    write(6,'()')
 
     ! Create clone of fit.
     call clone_fit_form(dlist,fit,fit_z)
