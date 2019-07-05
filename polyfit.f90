@@ -2190,7 +2190,7 @@ CONTAINS
   END SUBROUTINE refresh_fit
 
 
-  SUBROUTINE qrandom_apply(ndataset,dlist,drange,fit,alpha_list)
+  SUBROUTINE qrandom_apply(ndataset,dlist,drange,fit,alpha_list,report)
     !---------------------------------------------!
     ! Apply a quasirandom noise correction to the !
     ! standard error dy on all datasets.          !
@@ -2201,6 +2201,7 @@ CONTAINS
     TYPE(range_type),INTENT(in) :: drange
     TYPE(fit_form_type),INTENT(in) :: fit
     DOUBLE PRECISION,INTENT(inout),OPTIONAL :: alpha_list(ndataset)
+    LOGICAL,INTENT(in),OPTIONAL :: report
     ! Quick-access pointers.
     TYPE(dataset_type),POINTER :: dataset
     ! Local variables.
@@ -2268,13 +2269,17 @@ CONTAINS
     if(present(alpha_list))alpha_list=alpha_prime
 
     ! Report.
-    write(6,'(a)')'Quasi-random noise'
-    write(6,'(a)')'------------------'
-    write(6,'(2x,a5,1x,2(1x,a20))')'Set','alpha       ','alpha''      '
-    do iset=1,ndataset
-      write(6,'(2x,i5,1x,2(1x,es20.12))')iset,alpha(iset),alpha_prime(iset)
-    enddo ! iset
-    write(6,'()')
+    if(present(report))then
+      if(report)then
+        write(6,'(a)')'Quasi-random noise'
+        write(6,'(a)')'------------------'
+        write(6,'(2x,a5,1x,2(1x,a20))')'Set','alpha       ','alpha''      '
+        do iset=1,ndataset
+          write(6,'(2x,i5,1x,2(1x,es20.12))')iset,alpha(iset),alpha_prime(iset)
+        enddo ! iset
+        write(6,'()')
+      endif
+    endif
 
   END SUBROUTINE qrandom_apply
 
@@ -3978,7 +3983,7 @@ CONTAINS
     call clone_dlist(dlist,tmp_dlist)
 
     ! Apply qrandom.
-    call qrandom_apply(ndataset,tmp_dlist,drange,fit)
+    call qrandom_apply(ndataset,tmp_dlist,drange,fit,report=.true.)
 
     ! Figure out what we need and allocate arrays.
     need_f=present(fmean).or.present(ferr).or.present(fmean_1s).or.&
@@ -4168,7 +4173,7 @@ CONTAINS
     ndataset=size(dlist)
     nullify(tmp_dlist)
     call clone_dlist(dlist,tmp_dlist)
-    call qrandom_apply(ndataset,tmp_dlist,drange,fit,alpha_list)
+    call qrandom_apply(ndataset,tmp_dlist,drange,fit,alpha_list,report=.true.)
     call kill_dlist(tmp_dlist)
 
     ! Report beta.
