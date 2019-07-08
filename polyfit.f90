@@ -4216,7 +4216,7 @@ CONTAINS
     ! Create clone of fit.
     call clone_fit_form(dlist,fit,fit_z)
     fit_z%share=.false.
-    fit_z%apply_qrandom=.false.
+    fit_z%apply_qrandom=.true.
 
   END SUBROUTINE construct_z_datasets
 
