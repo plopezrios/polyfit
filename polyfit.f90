@@ -2206,8 +2206,8 @@ CONTAINS
     TYPE(dataset_type),POINTER :: dataset
     ! Local variables.
     INTEGER iset,ixy,ipoly,ierr
-    DOUBLE PRECISION sexp,alpha2,dy2,e_fit,chi2,t1,t2,a(fit%npoly,ndataset),&
-       &alpha(ndataset),alpha_prime(ndataset)
+    DOUBLE PRECISION sexp,alpha2,dy2,e_fit,chi2,t0,t1,t2,&
+       &a(fit%npoly,ndataset),alpha(ndataset),alpha_prime(ndataset)
 
     ! Initialize.
     alpha=0.d0
@@ -2238,7 +2238,8 @@ CONTAINS
           e_fit=e_fit+a(ipoly,iset)*&
              &(dataset%rtxy%x(ixy)-fit%X0)**fit%pow(ipoly)
         enddo ! ipoly
-        t1=(dataset%rtxy%y(ixy)-e_fit)**2
+        t0=dataset%rtxy%y(ixy)-e_fit
+        t1=t0**2
         t2=dataset%rtxy%dy(ixy)**2
         if(neq_dble(sexp,0.d0))then
           t1=t1/dataset%rtxy%x(ixy)**(2*sexp)
@@ -2248,9 +2249,7 @@ CONTAINS
         dy2=dy2+t2
       enddo ! ixy
       alpha2=alpha2/dble(dataset%rtxy%nxy-fit%npoly)
-      ! alpha_prime is alpha pre dy correction.  This is used for
-      ! correlated-qrandom corrections for which it is advantageous to
-      ! ignore dy.
+      ! alpha_prime is alpha pre dy correction.
       alpha_prime(iset)=sqrt(alpha2)
       alpha2=alpha2-dy2/dble(dataset%rtxy%nxy)
       if(le_dble(alpha2,0.d0))alpha2=0.d0
@@ -2266,7 +2265,7 @@ CONTAINS
       ! Unrestrict range to get txy.
       call back_transform(drange,dataset)
     enddo ! iset
-    if(present(alpha_list))alpha_list=alpha_prime
+    if(present(alpha_list))alpha_list=alpha
 
     ! Report.
     if(present(report))then
