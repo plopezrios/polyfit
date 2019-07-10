@@ -2448,7 +2448,7 @@ CONTAINS
     ! Local variables.
     LOGICAL,ALLOCATABLE :: have_z(:)
     INTEGER iset,jset,iyy,nyy,irandom,nsample,ierr,nyz,nzz,jyy,iyz,izz
-    DOUBLE PRECISION x0,y0,dx0,dy0,sum_weight,var,chi2,alpha_list(ndataset),&
+    DOUBLE PRECISION x0,y0,dx0,dy0,var,chi2,alpha_list(ndataset),&
        &x0_best,y0_best,dx0_best,dy0_best
 
     ! Make copy of datasets.
@@ -2479,12 +2479,6 @@ CONTAINS
     ! Make clone of z datasets for sampling.
     call clone_dlist(dlist_z,tmp_dlist_z)
     call qrandom_apply(nyy,tmp_dlist_z,drange,fit_z)
-
-    ! Compute total dataset weight.
-    sum_weight=0.d0
-    do iset=1,ndataset
-      sum_weight=sum_weight+tmp_dlist(iset)%dataset%weight
-    enddo ! iset
 
     ! Initialize.
     nsample=mcparams%nsample
@@ -2568,7 +2562,7 @@ CONTAINS
             cycle
           endif
           if(.not.valid_zz(izz))cycle
-          ! Find intersection between mized sets IYY and IZZ.
+          ! Find intersection between mixed sets IYY and JYY.
           call intersect(fit,a_z(1,iyy),a_z(1,jyy),x1,x2,x0,y0,ierr)
           if(ierr/=0)valid_zz(izz)=.false.
           x0_zz_array(irandom,izz)=x0
