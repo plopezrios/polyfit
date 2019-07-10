@@ -145,17 +145,13 @@ CONTAINS
     LOGICAL input_echo
     ! Intersect command.
     TYPE(intersect_range_type) :: intersect_range,intersect_range_default
-    ! Plotz facility.
-    TYPE(dataset_list_type),POINTER :: dlist_z(:)
-    TYPE(fit_form_type),POINTER :: fit_z
-    LOGICAL,ALLOCATABLE :: have_z(:)
     ! Misc variables.
     CHARACTER(7) settype
     CHARACTER(8192) command,token
+    LOGICAL use_mix
     LOGICAL,ALLOCATABLE :: smask(:)
-    INTEGER i,ifield,ierr,ipos_x,ipos_y,ipos_dx,ipos_dy,ipos_w,&
-       &ierr1,ierr2,ierr3,ierr4,ierr5
-    INTEGER nxy,itransf,iset,i1,i2,ipos,npoly
+    INTEGER i,ifield,ierr,ipos_x,ipos_y,ipos_dx,ipos_dy,ipos_w,ierr1,ierr2,&
+       &ierr3,ierr4,ierr5,nxy,itransf,iset,i1,i2,ipos,npoly
     DOUBLE PRECISION t1,t2,wexp
 
     ! Write header.
@@ -660,69 +656,6 @@ CONTAINS
         call plot_multipoly(ndataset,dlist,drange,fit,deval,mcparams,&
            &trim(fname))
 
-      case('plotz')
-        if(ndataset<2)then
-          call msg('Not enough datasets loaded.')
-          cycle user_loop
-        endif
-        ! Initialize unused components.
-        deval%rel=.false.
-        ! Get object to evaluate.
-        select case(field(2,command))
-        case("f")
-          deval%what='function'
-          deval%nderiv=0
-        case("f'")
-          deval%what='function'
-          deval%nderiv=1
-        case("f''")
-          deval%what='function'
-          deval%nderiv=2
-        case default
-          call msg('Syntax error: unknown function "'//&
-             &trim(field(2,command))//'".')
-          cycle user_loop
-        end select
-        ! Parse sub-commands.
-        fname='fitz.plot'
-        ifield=2
-        do
-          ifield=ifield+1
-          if(ifield>nfield(command))exit
-          select case(trim(field(ifield,command)))
-          case('to')
-            if(nfield(command)<ifield+1)then
-              call msg('Syntax error: "to" subcommand must be followed &
-                 &by a filename.')
-              cycle user_loop
-            endif
-            fname=field(ifield+1,command)
-            ifield=ifield+1
-          case('at')
-            if(nfield(command)<ifield+1)then
-              call msg('Syntax error: "at" subcommand must be followed &
-                 &by a data range.')
-              cycle user_loop
-            endif
-            call parse_xeval(trim(field(ifield+1,command)),deval)
-            if(.not.associated(deval%x))then
-              call msg('Syntax error: could not parse range.')
-              cycle user_loop
-            endif
-            ifield=ifield+1
-          case default
-            call msg('Syntax error: unknown subcommand "'//&
-               &trim(field(ifield,command))//'".')
-            cycle user_loop
-          end select
-        enddo
-        call construct_z_datasets(drange,fit,dlist,fit_z,dlist_z,have_z)
-        call plot_multipoly(size(dlist_z),dlist_z,drange,fit_z,deval,mcparams,&
-           &trim(fname))
-        call kill_dlist(dlist_z)
-        call kill_fit_form(fit_z)
-        deallocate(have_z)
-
       case('assess')
         if(ndataset<1)then
           call msg('No datasets loaded.')
@@ -893,11 +826,20 @@ CONTAINS
           cycle user_loop
         endif
 
+        ! Initialize unused components.
+        deval%rel=.false.
+        deval%what='function'
+        deval%nderiv=0
+        fname=''
+
         ! Parse options.
         intersect_range=intersect_range_default
+        use_mix=.false.
         ifield=2
         do
           select case(field(ifield,command))
+          case("mix")
+            use_mix=.true.
           case("between")
             if(intersect_range%have_x1.or.intersect_range%have_x2)then
               call msg('Left and/or right range limits specified more than &
@@ -978,6 +920,42 @@ CONTAINS
             endif
             intersect_range%xmid=t1
             intersect_range%have_xmid=.true.
+          case('plot')
+            if(len_trim(fname)>0)then
+              call msg('Syntax error: "plot" subcommand found twice.')
+              cycle user_loop
+            endif
+            fname='fitmix.plot'
+            do
+              select case(trim(field(ifield+1,command)))
+              case('to')
+                if(nfield(command)<ifield+2)then
+                  call msg('Syntax error: "to" subcommand must be followed &
+                     &by a filename.')
+                  cycle user_loop
+                endif
+                fname=field(ifield+2,command)
+                ifield=ifield+2
+              case('at')
+                if(nfield(command)<ifield+2)then
+                  call msg('Syntax error: "at" subcommand must be followed &
+                     &by a data range.')
+                  cycle user_loop
+                endif
+                call parse_xeval(trim(field(ifield+2,command)),deval)
+                if(.not.associated(deval%x))then
+                  call msg('Syntax error: could not parse range.')
+                  cycle user_loop
+                endif
+                ifield=ifield+2
+              case default
+                exit
+              end select
+            enddo
+            if(.not.associated(deval%x))then
+              call msg('Syntax error: no range given for "plot" subcommand.')
+              cycle user_loop
+            endif
           case('')
             exit
           case default
@@ -989,7 +967,13 @@ CONTAINS
         enddo
 
         ! Perform intersection.
-        call intersect_fit(ndataset,dlist,fit,mcparams,drange,intersect_range)
+        if(.not.use_mix)then
+          call intersect_fit(ndataset,dlist,fit,mcparams,drange,&
+             &intersect_range)
+        else
+          call intersect_mix_fit(ndataset,dlist,fit,mcparams,drange,&
+             &intersect_range,deval,fname)
+        endif
 
       case('set')
 
@@ -1607,13 +1591,14 @@ CONTAINS
              &<value>]',0,2)
           call pprint('* unload <set-index>',0,2)
           call pprint('* fit',0,2)
-          call pprint('* plot <object> at <values> to <file-name>',0,2)
-          call pprint('* plotz <object> at <values> to <file-name>',0,2)
+          call pprint('* plot <object> [at <xvalues>] [to <file-name>]',0,2)
           call pprint('* assess <variables> [using <function> at X <X> &
              &[for <set>]]',0,2)
           call pprint('* report <report>',0,2)
           call pprint('* evaluate <function> at X <X>',0,2)
-          call pprint('* intersect between <X1> <X2>',0,2)
+          call pprint('* intersect [mix] [between <X1> <X2>] [rightof <X1>] &
+             &[leftof <X2>] [near <Xmid>] [plot [at <xvalues>] &
+             &[to <file-name>]]',0,2)
           call pprint('* set <variable> <value> [for <set-list>]',0,2)
           call pprint('* unset <variable>',0,2)
           call pprint('* status',0,2)
@@ -1729,15 +1714,6 @@ CONTAINS
              &part -- data points are offset by the value of the set-specific &
              &part, and the shared part of the fit is plotted.',2,2)
           call pprint('')
-        case('plotz')
-          call pprint('')
-          call pprint('Command: plotz <function> [at <xvalues>] &
-             &[to <filename>]',0,9)
-          call pprint('')
-          call pprint('"plotz" works as "plot" but operates on the "z" linear &
-             &combinations of datasets used in the "intersect" facility for &
-             &correlated quasirandom noise.  Refer to "plot", "intersect", &
-             &"qrandom", and "qrandom_exp" for more information.',2,2)
         case('assess')
           call pprint('')
           call pprint('Command: assess <variables> [by <criterion>] [using &
@@ -1822,8 +1798,9 @@ CONTAINS
           call pprint('')
         case('intersect')
           call pprint('')
-          call pprint('Command: intersect [between <X1> <X2>] [rightof <X1>] &
-             &[leftof <X2>] [near <Xmid>]',0,9)
+          call pprint('Command: intersect [mix] [between <X1> <X2>] &
+             &[rightof <X1>] [leftof <X2>] [near <Xmid>] &
+             &[plot [at <xvalues>] [to <file-name]]',0,9)
           call pprint('')
           call pprint('Evaluate the average location of the intersections &
              &between each pair of datasets.',2,2)
@@ -1848,6 +1825,27 @@ CONTAINS
              &assumed to change sign only once in the interval.  An error &
              &will be flagged if this is not consistently the case during &
              &random sampling.',2,2)
+          call pprint('')
+          call pprint('The implementation tolerates up to 0.1% of the random &
+             &resample to yield no (or out-of-range) intersections.  The &
+             &fraction of intersection failures is reported as "missfrac".  &
+             &The failures are simply ignored in computing the results.',2,2)
+          call pprint('')
+          call pprint('Specifying "mix" triggers the use of an alternative &
+             &approach in which linear combinations of each pair of datasets &
+             &are constructed, and the intersection of each pair of such &
+             &"mixed" datasets is evaluated by minimizing the uncertainty in &
+             &the intersection abcissa with respect to two linear parameters. &
+             &This method requires datasets to have the same number of data &
+             &and the same x values, and that x has no uncertainty. &
+             &The "mix" method is advantageous in the presence of quasirandom &
+             &fluctuations which are correlated across different datasets; &
+             &in this case it is advisable to set "qrandom" in addition to &
+             &using the "mix" intersection method.',2,2)
+          call pprint('')
+          call pprint('The "plot" subcommand causes the "mixed" datasets to &
+             &be plotted.  See "help plot" for details on the "at" and "to" &
+             &subcommands.',2,2)
           call pprint('')
         case('set')
           if(nfield(command)==2)then
@@ -2290,7 +2288,7 @@ CONTAINS
   END SUBROUTINE refresh_fit
 
 
-  SUBROUTINE qrandom_apply(ndataset,dlist,drange,fit,alpha_list,report)
+  SUBROUTINE qrandom_apply(ndataset,dlist,drange,fit,report)
     !---------------------------------------------!
     ! Apply a quasirandom noise correction to the !
     ! standard error dy on all datasets.          !
@@ -2300,7 +2298,6 @@ CONTAINS
     TYPE(dataset_list_type),POINTER :: dlist(:)
     TYPE(range_type),INTENT(in) :: drange
     TYPE(fit_form_type),INTENT(in) :: fit
-    DOUBLE PRECISION,INTENT(inout),OPTIONAL :: alpha_list(ndataset)
     LOGICAL,INTENT(in),OPTIONAL :: report
     ! Quick-access pointers.
     TYPE(dataset_type),POINTER :: dataset
@@ -2311,7 +2308,6 @@ CONTAINS
 
     ! Initialize.
     alpha=0.d0
-    if(present(alpha_list))alpha_list=0.d0
     if(.not.fit%apply_qrandom)return
     sexp=fit%qrandom_exp
 
@@ -2365,7 +2361,6 @@ CONTAINS
       ! Unrestrict range to get txy.
       call back_transform(drange,dataset)
     enddo ! iset
-    if(present(alpha_list))alpha_list=alpha
 
     ! Report.
     if(present(report))then
@@ -2421,9 +2416,9 @@ CONTAINS
     ! Print table header.
     write(6,'(a)')'Fit parameters:'
     write(6,'()')
-    write(6,'(a)',advance='no')'   '
+    write(6,'(3x)',advance='no')
     write(6,'(2x,a5,2x,a5,1x,2(1x,a20))')'Set','i','ki       ','dki       '
-    write(6,'(a)',advance='no')'   '
+    write(6,'(3x)',advance='no')
     write(6,'(2x,'//trim(i2s(55))//'("-"))')
     ! Print table.
     do iset=1,ndataset
@@ -2433,16 +2428,16 @@ CONTAINS
       enddo ! i
     enddo ! iset
     ! Print table footer.
-    write(6,'(a)',advance='no')'   '
+    write(6,'(3x)',advance='no')
     write(6,'(2x,'//trim(i2s(55))//'("-"))')
     write(6,'()')
 
     ! Report chi-squared.
     write(6,'(a)')'Fit assessment:'
     write(6,'()')
-    write(6,'(a)',advance='no')'   '
+    write(6,'(3x)',advance='no')
     write(6,'(2x,a12,1x,2(1x,a20))')'Measure  ','Value       ','Stderr      '
-    write(6,'(a)',advance='no')'   '
+    write(6,'(3x)',advance='no')
     write(6,'(2x,'//trim(i2s(55))//'("-"))')
     write(6,'(a)',advance='no')'FIT'
     write(6,'(2x,a12,1x,2(1x,es20.12))')'chi^2    ',chi2,chi2err
@@ -2453,7 +2448,7 @@ CONTAINS
     endif
     write(6,'(a)',advance='no')'FIT'
     write(6,'(2x,a12,1x,2(1x,es20.12))')'RMS(Y-f) ',rmsy,rmsyerr
-    write(6,'(a)',advance='no')'   '
+    write(6,'(3x)',advance='no')
     write(6,'(2x,'//trim(i2s(55))//'("-"))')
     write(6,'()')
 
@@ -2520,10 +2515,10 @@ CONTAINS
 
 
   SUBROUTINE intersect_fit(ndataset,dlist,fit,mcparams,drange,intersect_range)
-    !-----------------------------------------------------!
-    ! Find the (average) intersection of all datasets and !
-    ! report to stdout.                                   !
-    !-----------------------------------------------------!
+    !------------------------------------------------!
+    ! Find the intersection of all dataset pairs and !
+    ! report to stdout.                              !
+    !------------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: ndataset
     TYPE(dataset_list_type),POINTER :: dlist(:)
@@ -2532,24 +2527,19 @@ CONTAINS
     TYPE(range_type),INTENT(in) :: drange
     TYPE(intersect_range_type),INTENT(in) :: intersect_range
     ! Monte Carlo sample storage.
-    DOUBLE PRECISION,ALLOCATABLE :: x0_array(:,:),y0_array(:,:),w_vector(:)
-    DOUBLE PRECISION,ALLOCATABLE :: x0_yz_array(:,:),y0_yz_array(:,:)
-    DOUBLE PRECISION,ALLOCATABLE :: x0_zz_array(:,:),y0_zz_array(:,:)
-    LOGICAL,ALLOCATABLE :: valid(:),valid_yz(:),valid_zz(:)
+    DOUBLE PRECISION,ALLOCATABLE :: w_vector(:)
+    DOUBLE PRECISION,ALLOCATABLE :: x0_array(:,:),y0_array(:,:)
+    INTEGER,ALLOCATABLE :: err_array(:,:)
     ! Parameter vector.
     DOUBLE PRECISION a(fit%npoly,ndataset)
-    DOUBLE PRECISION,ALLOCATABLE :: a_z(:,:)
     ! Pointers.
-    TYPE(dataset_list_type),POINTER :: tmp_dlist(:),dlist_z(:),&
-       &tmp_dlist_z(:)
+    TYPE(dataset_list_type),POINTER :: tmp_dlist(:)
     TYPE(dataset_type),POINTER :: dataset
     TYPE(xy_type),POINTER :: xy,xy_orig
-    TYPE(fit_form_type),POINTER :: fit_z
     ! Local variables.
     LOGICAL is_consecutive,is_poly1,is_poly2
-    LOGICAL,ALLOCATABLE :: have_z(:)
-    INTEGER i,iset,jset,iyy,nyy,irandom,nsample,ierr,nyz,nzz,jyy,iyz,izz
-    DOUBLE PRECISION x0,y0,dx0,dy0,var,chi2,alpha_list(ndataset),&
+    INTEGER i,iset,jset,iyy,nyy,irandom,nsample,ierr
+    DOUBLE PRECISION x0,y0,dx0,dy0,errfrac,chi2,&
        &x0_best,y0_best,dx0_best,dy0_best
 
     ! See if we are dealing with an especially simple case.
@@ -2574,34 +2564,17 @@ CONTAINS
       endif
     endif
 
-    ! Make copy of datasets.
+    ! Make copy of datasets and apply qrandom.
     call clone_dlist(dlist,tmp_dlist)
-
-    ! Apply qrandom.
-    call qrandom_apply(ndataset,tmp_dlist,drange,fit,alpha_list)
+    call qrandom_apply(ndataset,tmp_dlist,drange,fit)
 
     ! Allocate storage for location of intersection.
     nyy=(ndataset*(ndataset-1))/2
-    nyz=nyy*ndataset
-    nzz=(nyy*(nyy-1))/2
+    allocate(w_vector(mcparams%nsample))
     allocate(x0_array(mcparams%nsample,nyy),y0_array(mcparams%nsample,nyy),&
-       &w_vector(mcparams%nsample),valid(nyy),&
-       &x0_yz_array(mcparams%nsample,nyz),y0_yz_array(mcparams%nsample,nyz),&
-       &valid_yz(nyz),&
-       &x0_zz_array(mcparams%nsample,nzz),y0_zz_array(mcparams%nsample,nzz),&
-       &valid_zz(nzz))
-    valid=.true.
-    valid_yz=.true.
-    valid_zz=.true.
+       &err_array(mcparams%nsample,nyy))
+    err_array=0
     w_vector=1.d0
-
-    ! Construct z datasets.
-    call construct_z_datasets(drange,fit,dlist,fit_z,dlist_z,have_z)
-    allocate(a_z(fit%npoly,nyy))
-
-    ! Make clone of z datasets for sampling.
-    call clone_dlist(dlist_z,tmp_dlist_z)
-    call qrandom_apply(nyy,tmp_dlist_z,drange,fit_z)
 
     ! Initialize.
     nsample=mcparams%nsample
@@ -2621,27 +2594,6 @@ CONTAINS
       call perform_multifit(ndataset,tmp_dlist,fit,chi2,a,ierr)
       if(ierr/=0)then
         call kill_dlist(tmp_dlist)
-        call kill_dlist(dlist_z)
-        call kill_dlist(tmp_dlist_z)
-        call kill_fit_form(fit_z)
-        call msg('Could not perform fit.')
-        return
-      endif
-      do iyy=1,nyy
-        dataset=>tmp_dlist_z(iyy)%dataset
-        xy=>dataset%xy
-        xy_orig=>dlist_z(iyy)%dataset%xy
-        ! Using xy%dx and xy%dy so we get qrandom accounted for.
-        if(xy%have_dx)xy%x=xy_orig%x+gaussian_random_number(xy%dx)
-        if(xy%have_dy)xy%y=xy_orig%y+gaussian_random_number(xy%dy)
-        call refresh_dataset(dataset,drange)
-      enddo ! iyy
-      call perform_multifit(nyy,tmp_dlist_z,fit_z,chi2,a_z,ierr)
-      if(ierr/=0)then
-        call kill_dlist(tmp_dlist)
-        call kill_dlist(dlist_z)
-        call kill_dlist(tmp_dlist_z)
-        call kill_fit_form(fit_z)
         call msg('Could not perform fit.')
         return
       endif
@@ -2650,55 +2602,20 @@ CONTAINS
       do iset=1,ndataset
         do jset=iset+1,ndataset
           iyy=iyy+1
-          if(.not.valid(iyy))cycle
           ! Find intersection between sets ISET and JSET.
           call intersect(fit,a(1,iset),a(1,jset),intersect_range,x0,y0,ierr)
-          if(ierr/=0)valid(iyy)=.false.
           x0_array(irandom,iyy)=x0
           y0_array(irandom,iyy)=y0
+          err_array(irandom,iyy)=ierr
         enddo ! jset
       enddo ! iset
-      ! Loop over datasets-z pairs.
-      iyz=0
-      do iset=1,ndataset
-        do iyy=1,nyy
-          iyz=iyz+1
-          if(.not.have_z(iyy))then
-            valid_yz(iyz)=.false.
-            cycle
-          endif
-          if(.not.valid_yz(iyz))cycle
-          ! Find intersection between set ISET and mixed set IYY.
-          call intersect(fit,a(1,iset),a_z(1,iyy),intersect_range,x0,y0,ierr)
-          if(ierr/=0)valid_yz(iyz)=.false.
-          x0_yz_array(irandom,iyz)=x0
-          y0_yz_array(irandom,iyz)=y0
-        enddo ! iyy
-      enddo ! iset
-      ! Loop over z-z pairs.
-      izz=0
-      do iyy=1,nyy
-        do jyy=iyy+1,nyy
-          izz=izz+1
-          if(.not.have_z(iyy).or..not.have_z(jyy))then
-            valid_zz(izz)=.false.
-            cycle
-          endif
-          if(.not.valid_zz(izz))cycle
-          ! Find intersection between mixed sets IYY and JYY.
-          call intersect(fit,a_z(1,iyy),a_z(1,jyy),intersect_range,x0,y0,ierr)
-          if(ierr/=0)valid_zz(izz)=.false.
-          x0_zz_array(irandom,izz)=x0
-          y0_zz_array(irandom,izz)=y0
-        enddo ! jyy
-      enddo ! iyy
     enddo ! irandom
 
     ! Compute and report intersection(s).
     write(6,'(a)')'Intersections:'
     write(6,'(4x)',advance='no')
-    write(6,'(1x,a7,4(1x,a20))')'Sets ','X0          ','DX0         ',&
-       &'Y0          ','DY0         '
+    write(6,'(1x,a7,5(1x,a20))')'Sets ','X0          ','DX0         ',&
+       &'Y0          ','DY0         ','missfrac      '
     x0_best=0.d0
     dx0_best=0.d0
     y0_best=0.d0
@@ -2707,13 +2624,9 @@ CONTAINS
     do iset=1,ndataset
       do jset=iset+1,ndataset
         iyy=iyy+1
-        if(valid(iyy))then
-          call characterize_dist(nsample,x0_array(1,iyy),&
-             &w_vector,mean=x0,var=var)
-          dx0=sqrt(var)
-          call characterize_dist(nsample,y0_array(1,iyy),&
-             &w_vector,mean=y0,var=var)
-          dy0=sqrt(var)
+        call forgiving_analysis(nsample,x0_array(1,iyy),y0_array(1,iyy),&
+           &err_array(1,iyy),x0,dx0,y0,dy0,errfrac,ierr)
+        if(ierr==0)then
           if(dy0_best<=0.d0.or.dy0<dy0_best)then
             x0_best=x0
             dx0_best=dx0
@@ -2721,82 +2634,518 @@ CONTAINS
             dy0_best=dy0
           endif
           write(6,'(a4)',advance='no')'INTR'
-          write(6,'(2(1x,i3),4(1x,es20.12))')iset,jset,x0,dx0,y0,dy0
+          write(6,'(2(1x,i3),5(1x,es20.12))')iset,jset,&
+             &x0,dx0,y0,dy0,errfrac
         else
           write(6,'(a4)',advance='no')'INTR'
-          write(6,'(2(1x,i3),a84)')iset,jset,&
-             &'NO RELIABLE INTERSECTION                            '
+          write(6,'(2(1x,i3),5(1x,es20.12))')iset,jset,&
+             &0.d0,0.d0,0.d0,0.d0,errfrac
         endif
       enddo ! jset
     enddo ! iset
-    if(fit%apply_qrandom)then
-      iyz=0
-      do iset=1,ndataset
-        do iyy=1,nyy
-          iyz=iyz+1
-          if(valid_yz(iyz))then
-            call characterize_dist(nsample,x0_yz_array(1,iyz),&
-               &w_vector,mean=x0,var=var)
-            dx0=sqrt(var)
-            call characterize_dist(nsample,y0_yz_array(1,iyz),&
-               &w_vector,mean=y0,var=var)
-            dy0=sqrt(var)
-            if(dy0_best<=0.d0.or.dy0<dy0_best)then
-              x0_best=x0
-              dx0_best=dx0
-              y0_best=y0
-              dy0_best=dy0
-            endif
-            write(6,'(a4)',advance='no')'INTR'
-            write(6,'(1x,i3,1x,i2,"Z",4(1x,es20.12))')iset,iyy,x0,dx0,y0,dy0
-          else
-            write(6,'(a4)',advance='no')'INTR'
-            write(6,'(1x,i3,1x,i2,"Z",a84)')iset,iyy,&
-               &'NO RELIABLE INTERSECTION                            '
-          endif
-        enddo ! iyy
-      enddo ! iset
-      izz=0
-      do iyy=1,nyy
-        do jyy=iyy+1,nyy
-          izz=izz+1
-          if(valid_zz(izz))then
-            call characterize_dist(nsample,x0_zz_array(1,izz),&
-               &w_vector,mean=x0,var=var)
-            dx0=sqrt(var)
-            call characterize_dist(nsample,y0_zz_array(1,izz),&
-               &w_vector,mean=y0,var=var)
-            dy0=sqrt(var)
-            if(dy0_best<=0.d0.or.dy0<dy0_best)then
-              x0_best=x0
-              dx0_best=dx0
-              y0_best=y0
-              dy0_best=dy0
-            endif
-            write(6,'(a4)',advance='no')'INTR'
-            write(6,'(2(1x,i2,"Z"),4(1x,es20.12))')iyy,jyy,x0,dx0,y0,dy0
-          else
-            write(6,'(a4)',advance='no')'INTR'
-            write(6,'(2(1x,i2,"Z"),a84)')iyy,jyy,&
-               &'NO RELIABLE INTERSECTION                            '
-          endif
-        enddo ! jyy
-      enddo ! iyy
-    endif ! apply_qrandom
-    write(6,'(a12)',advance='no')'INTR  BEST  '
+    write(6,'()')
+    write(6,'(a12)',advance='no')'INTR   BEST '
     if(dy0_best>0.d0)then
       write(6,'(4(1x,es20.12))')x0_best,dx0_best,y0_best,dy0_best
     else
-      write(6,'(a84)')'NO RELIABLE INTERSECTION                            '
+      write(6,'(a54)')'NO RELIABLE INTERSECTION'
     endif
+    write(6,'()')
 
     ! Clean up.
     call kill_dlist(tmp_dlist)
-    call kill_dlist(dlist_z)
-    call kill_dlist(tmp_dlist_z)
-    call kill_fit_form(fit_z)
 
   END SUBROUTINE intersect_fit
+
+
+  SUBROUTINE intersect_mix_fit(ndataset,dlist,fit,mcparams,drange,&
+     &intersect_range,deval,fname)
+    !-------------------------------------------------------------!
+    ! Find the intersection of linear combinations of all dataset !
+    ! pairs, minimizing the intersection abcissa uncertainty with !
+    ! respect to the linear parameters, and report to stdout.     !
+    !-------------------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: ndataset
+    TYPE(dataset_list_type),POINTER :: dlist(:)
+    TYPE(fit_form_type),POINTER :: fit
+    TYPE(mc_params_type),INTENT(in) :: mcparams
+    TYPE(range_type),INTENT(in) :: drange
+    TYPE(intersect_range_type),INTENT(in) :: intersect_range
+    TYPE(eval_type),INTENT(inout) :: deval
+    CHARACTER(*),INTENT(in) :: fname
+    ! Local variables.
+    TYPE(dataset_list_type),POINTER :: dlist_mix(:)
+    LOGICAL is_consecutive,is_poly1,is_poly2,any_have_dx,any_have_dy,&
+       &file_exists
+    INTEGER i,nsample,ierr,max_nxy,iset,iset1,iset2,iset3,iset4
+    INTEGER,PARAMETER :: io=10
+    DOUBLE PRECISION beta12,beta34,x0,dx0,y0,dy0,x0_best,dx0_best,&
+       &y0_best,dy0_best,errfrac
+    DOUBLE PRECISION,ALLOCATABLE :: ranx12(:),rany12(:),ranx34(:),rany34(:)
+
+    ! See if we are dealing with an especially simple case.
+    is_consecutive=all(eq_dble(fit%pow,(/(dble(i-1),i=1,fit%npoly)/)))
+    is_poly1=is_consecutive.and.fit%npoly==2.and.&
+       &neq_dble(fit%pow(fit%npoly),0.d0)
+    is_poly2=is_consecutive.and.fit%npoly==3.and.&
+       &neq_dble(fit%pow(fit%npoly),0.d0)
+
+    ! Range checks.
+    if(is_poly2)then
+      if(.not.intersect_range%have_x1.and..not.intersect_range%have_x2.and.&
+         &.not.intersect_range%have_xmid)then
+        call msg('Need at least one reference point to intersect &
+           &second-order polynomials.')
+        return
+      endif
+    elseif(.not.is_poly1)then
+      if(.not.intersect_range%have_x1.and..not.intersect_range%have_x2)then
+        call msg('Need explicit range to intersect generic polynomials.')
+        return
+      endif
+    endif
+
+    ! Prepare storage for random numbers.
+    nsample=mcparams%nsample
+    max_nxy=0
+    any_have_dx=.false.
+    any_have_dy=.false.
+    do iset=1,ndataset
+      max_nxy=max(max_nxy,dlist(iset)%dataset%rtxy%nxy)
+      any_have_dx=any_have_dx.or.dlist(iset)%dataset%rtxy%have_dx
+      any_have_dy=any_have_dy.or.dlist(iset)%dataset%rtxy%have_dy
+    enddo ! iset
+    allocate(ranx12(max_nxy*nsample),rany12(max_nxy*nsample),&
+       &ranx34(max_nxy*nsample),rany34(max_nxy*nsample))
+
+    ! Delete existing plot file.
+    if(len_trim(fname)>0)then
+      inquire(file=trim(fname),exist=file_exists)
+      if(file_exists)then
+        open(io,file=trim(fname),status='old')
+        close(io,status='delete')
+      endif
+    endif
+
+    ! Loop over pairs of datasets.
+    write(6,'(a)')'Intersections:'
+    write(6,'(4x)',advance='no')
+    write(6,'(1x,a15,7(1x,a20))')'Sets     ','X0          ','DX0         ',&
+       &'Y0          ','DY0         ','missfrac      ','BETA1        ',&
+       &'BETA2        '
+    x0_best=0.d0
+    dx0_best=0.d0
+    y0_best=0.d0
+    dy0_best=0.d0
+    do iset1=1,ndataset
+      do iset2=iset1+1,ndataset
+        ! Loop over other pair in reverse (i3>i4), so that when both pairs
+        ! are the same the indices are reversed.  Otherwise the initial point
+        ! beta12=beta34=0 would be degenerate.
+        do iset3=1,ndataset
+          do iset4=1,iset3-1
+            ! Generate random numbers.
+            if(any_have_dx)then
+              ranx12=gaussian_random_number((/( 1.d0, i=1,max_nxy*nsample )/))
+              ranx34=gaussian_random_number((/( 1.d0, i=1,max_nxy*nsample )/))
+            endif
+            if(any_have_dy)then
+              rany12=gaussian_random_number((/( 1.d0, i=1,max_nxy*nsample )/))
+              rany34=gaussian_random_number((/( 1.d0, i=1,max_nxy*nsample )/))
+            endif
+            ! Find best intersection.
+            beta12=0.d0
+            beta34=0.d0
+            call intersect_mix_search(fit,mcparams,drange,intersect_range,&
+               &ranx12,rany12,beta12,dlist(iset1)%dataset,&
+               &dlist(iset2)%dataset,ranx34,rany34,beta34,&
+               &dlist(iset3)%dataset,dlist(iset4)%dataset,dy0,ierr)
+            if(ierr/=0)then
+              beta12=0.d0
+              beta34=0.d0
+            endif
+            ! Generate another set of random numbers.
+            if(any_have_dx)then
+              ranx12=gaussian_random_number((/( 1.d0, i=1,max_nxy*nsample )/))
+              ranx34=gaussian_random_number((/( 1.d0, i=1,max_nxy*nsample )/))
+            endif
+            if(any_have_dy)then
+              rany12=gaussian_random_number((/( 1.d0, i=1,max_nxy*nsample )/))
+              rany34=gaussian_random_number((/( 1.d0, i=1,max_nxy*nsample )/))
+            endif
+            ! Reevaluate at beta12,beta34.
+            call intersect_mix_eval(fit,mcparams,drange,intersect_range,&
+               &ranx12,rany12,beta12,dlist(iset1)%dataset,&
+               &dlist(iset2)%dataset,ranx34,rany34,beta34,&
+               &dlist(iset2)%dataset,dlist(iset1)%dataset,x0,dx0,y0,dy0,&
+               &errfrac,ierr)
+            ! Make plot if requested.
+            if(len_trim(fname)>0)then
+              allocate(dlist_mix(2))
+              call construct_beta_dataset(drange,dlist(iset1)%dataset,&
+                 &dlist(iset2)%dataset,beta12,dlist_mix(1)%dataset,ierr)
+              call construct_beta_dataset(drange,dlist(iset2)%dataset,&
+                 &dlist(iset1)%dataset,beta34,dlist_mix(2)%dataset,ierr)
+              call plot_multipoly(2,dlist_mix,drange,fit,deval,mcparams,&
+                 &trim(fname),append=.true.)
+              call kill_dlist(dlist_mix)
+            endif
+            ! Report.
+            if(ierr==0)then
+              write(6,'(a4)',advance='no')'INTR'
+              write(6,'(4(1x,i3),7(1x,es20.12))')iset1,iset2,iset3,iset4,&
+                 &x0,dx0,y0,dy0,errfrac,beta12,beta34
+              if(dy0_best<=0.d0.or.dy0<dy0_best)then
+                x0_best=x0
+                dx0_best=dx0
+                y0_best=y0
+                dy0_best=dy0
+              endif
+            else
+              write(6,'(a4)',advance='no')'INTR'
+              write(6,'(4(1x,i3),7(1x,es20.12))')iset1,iset2,iset3,iset4,&
+                 &0.d0,0.d0,0.d0,0.d0,errfrac,beta12,beta34
+            endif
+          enddo ! iset4
+        enddo ! iset3
+      enddo ! iset2
+    enddo ! iset1
+    write(6,'()')
+    write(6,'(a20)',advance='no')'INTR       BEST     '
+    if(dy0_best>0.d0)then
+      write(6,'(4(1x,es20.12))')x0_best,dx0_best,y0_best,dy0_best
+    else
+      write(6,'(a54)')'NO RELIABLE INTERSECTION'
+    endif
+    write(6,'()')
+
+    ! Report having made plot.
+    if(len_trim(fname)>0)call msg('Plotted "mixed" datasets to "'//&
+       &trim(fname)//'".')
+
+  END SUBROUTINE intersect_mix_fit
+
+
+  SUBROUTINE intersect_mix_search(fit,mcparams,drange,intersect_range,ranx12,&
+     &rany12,beta12,dataset1,dataset2,ranx34,rany34,beta34,dataset3,dataset4,&
+     &dy,ierr)
+    !-----------------------------------------------------------!
+    ! Find the values of beta12 and beta34 that yield the best- !
+    ! resolved intersection between y1+beta12(y2-y1) and        !
+    ! y3+beta34*(y4-y3).                                        !
+    !-----------------------------------------------------------!
+    IMPLICIT NONE
+    TYPE(fit_form_type),POINTER :: fit
+    TYPE(mc_params_type),INTENT(in) :: mcparams
+    TYPE(range_type),INTENT(in) :: drange
+    TYPE(intersect_range_type),INTENT(in) :: intersect_range
+    TYPE(dataset_type),POINTER :: dataset1,dataset2,dataset3,dataset4
+    DOUBLE PRECISION,INTENT(in) :: ranx12(*),rany12(*),ranx34(*),rany34(*)
+    DOUBLE PRECISION,INTENT(inout) :: beta12,beta34,dy
+    INTEGER,INTENT(inout) :: ierr
+    INTEGER ierr1,ierr2
+    DOUBLE PRECISION dy1,dy2,dy_prev
+    DOUBLE PRECISION, PARAMETER :: dy_rel_tol=1.d-5
+    ! Initialize.
+    beta12=0.d0
+    beta34=0.d0
+    ierr=1
+    ! Search along (beta12,0) and (0,beta34)
+    call intersect_mix_search_1d(fit,mcparams,drange,intersect_range,ranx12,&
+       &rany12,beta12,dataset1,dataset2,ranx34,rany34,0.d0,dataset3,dataset4,&
+       &dy1,ierr1)
+    call intersect_mix_search_1d(fit,mcparams,drange,intersect_range,ranx34,&
+       &rany34,beta34,dataset3,dataset4,ranx12,rany12,0.d0,dataset1,dataset2,&
+       &dy2,ierr2)
+    if(ierr1/=0.and.ierr2/=0)return
+    ! Alternate search along each direction.
+    dy_prev=dy1
+    if(dy2<dy1.or.ierr1/=0)then
+      call intersect_mix_search_1d(fit,mcparams,drange,intersect_range,ranx12,&
+         &rany12,beta12,dataset1,dataset2,ranx34,rany34,beta34,dataset3,&
+         &dataset4,dy,ierr)
+      if(ierr/=0)return
+      if(abs(dy_prev-dy)<dy_rel_tol*dy)return
+      dy_prev=dy
+    endif
+    do
+      call intersect_mix_search_1d(fit,mcparams,drange,intersect_range,ranx34,&
+         &rany34,beta34,dataset3,dataset4,ranx12,rany12,beta12,dataset1,&
+         &dataset2,dy,ierr)
+      if(ierr/=0)return
+      if(abs(dy_prev-dy)<dy_rel_tol*dy)return
+      dy_prev=dy
+      call intersect_mix_search_1d(fit,mcparams,drange,intersect_range,ranx12,&
+         &rany12,beta12,dataset1,dataset2,ranx34,rany34,beta34,dataset3,&
+         &dataset4,dy,ierr)
+      if(ierr/=0)return
+      if(abs(dy_prev-dy)<dy_rel_tol*dy)return
+      dy_prev=dy
+    enddo
+  END SUBROUTINE intersect_mix_search
+
+
+  SUBROUTINE intersect_mix_search_1d(fit,mcparams,drange,intersect_range,&
+     &ranx12,rany12,beta12,dataset1,dataset2,ranx34,rany34,beta34,dataset3,&
+     &dataset4,dy,ierr)
+    !--------------------------------------------------------!
+    ! Find the value of beta12 that yields the best-resolved !
+    ! intersection between y1+beta12*(y2-y1) and             !
+    ! y3+beta34*(y4-y3).                                     !
+    !--------------------------------------------------------!
+    IMPLICIT NONE
+    TYPE(fit_form_type),POINTER :: fit
+    TYPE(mc_params_type),INTENT(in) :: mcparams
+    TYPE(range_type),INTENT(in) :: drange
+    TYPE(intersect_range_type),INTENT(in) :: intersect_range
+    DOUBLE PRECISION,INTENT(in) :: ranx12(*),rany12(*),ranx34(*),rany34(*)
+    TYPE(dataset_type),POINTER :: dataset1,dataset2,dataset3,dataset4
+    DOUBLE PRECISION,INTENT(inout) :: beta12,dy
+    DOUBLE PRECISION,INTENT(in) :: beta34
+    INTEGER,INTENT(inout) :: ierr
+    ! Local variables.
+    INTEGER,PARAMETER :: init_ngrid=23 ! 4*integer+3
+    DOUBLE PRECISION,PARAMETER :: grid_base=2.d0
+    LOGICAL rejected,is_left_edge,is_right_edge
+    INTEGER i,n,errvec(init_ngrid),imin
+    DOUBLE PRECISION bu,bv,bw,fu,fv,fw,b,f,x0,dx0,y0,bvec(init_ngrid),&
+       &fvec(init_ngrid),errfrac
+
+    ! Construct grid for initial evaluation.
+    n=0
+    do i=(init_ngrid-1)/2,1,-1
+      n=n+1
+      bvec(n)=beta12-grid_base**dble(i-(init_ngrid+1)/4)
+    enddo ! i
+    n=n+1
+    bvec(n)=beta12
+    do i=1,(init_ngrid-1)/2
+      n=n+1
+      bvec(n)=beta12+grid_base**dble(i-(init_ngrid+1)/4)
+    enddo ! i
+
+    ! Perform an initial evaluation at several beta12.
+    do i=1,init_ngrid
+      b=bvec(i)
+      call intersect_mix_eval(fit,mcparams,drange,intersect_range,ranx12,&
+         &rany12,b,dataset1,dataset2,ranx34,rany34,beta34,dataset3,dataset4,&
+         &x0,dx0,y0,f,errfrac,ierr)
+      fvec(i)=f
+      errvec(i)=ierr
+    enddo ! i
+
+    ! Locate minimum within grid and set bracket middle point.
+    imin=sum(minloc(fvec,errvec==0))
+    if(imin==0)then
+      ierr=1
+      return
+    endif
+    bv=bvec(imin)
+    fv=fvec(imin)
+
+    ! Determine if minimum is the left edge, else set left backet point.
+    is_left_edge=imin==1
+    if(imin>1)is_left_edge=count(errvec(1:imin-1)==0)==0
+    if(.not.is_left_edge)then
+      do i=imin-1,1,-1
+        if(errvec(i)/=0)cycle
+        bu=bvec(i)
+        fu=fvec(i)
+        exit
+      enddo ! i
+    endif
+
+    ! Determine if minimum is the right edge, else set left backet point.
+    is_right_edge=imin==init_ngrid
+    if(imin<init_ngrid)is_right_edge=count(errvec(imin+1:init_ngrid)==0)==0
+    if(.not.is_right_edge)then
+      do i=imin+1,init_ngrid
+        if(errvec(i)/=0)cycle
+        bw=bvec(i)
+        fw=fvec(i)
+        exit
+      enddo ! i
+    endif
+
+    ! Extend range to left if minimum is the left edge.
+    if(is_left_edge)then
+      b=bv
+      do
+        b=b*grid_base
+        call intersect_mix_eval(fit,mcparams,drange,intersect_range,ranx12,&
+           &rany12,b,dataset1,dataset2,ranx34,rany34,beta34,dataset3,dataset4,&
+           &x0,dx0,y0,f,errfrac,ierr)
+        if(ierr==0)then
+          if(f<fv)then
+            is_right_edge=.false.
+            bw=bv
+            fw=fv
+            bv=b
+            fv=f
+          else
+            bu=bv
+            fu=fv
+            exit
+          endif
+        endif
+      enddo
+    endif
+
+    ! Extend range to right if minimum is the right edge.
+    if(is_right_edge)then
+      b=bv
+      do
+        b=b*grid_base
+        call intersect_mix_eval(fit,mcparams,drange,intersect_range,ranx12,&
+           &rany12,b,dataset1,dataset2,ranx34,rany34,beta34,dataset3,dataset4,&
+           &x0,dx0,y0,f,errfrac,ierr)
+        if(ierr==0)then
+          if(f<fv)then
+            bu=bv
+            fu=fv
+            bv=b
+            fv=f
+          else
+            bw=bv
+            fw=fv
+            exit
+          endif
+        endif
+      enddo
+    endif
+
+    ! Now zoom in on minimum.
+    do
+      call parabolic_min(bu,bv,bw,fu,fv,fw,b,f,rejected)
+      if (rejected) exit
+      if (b<=bu.or.b>=bw) exit
+      call intersect_mix_eval(fit,mcparams,drange,intersect_range,ranx12,&
+         &rany12,b,dataset1,dataset2,ranx34,rany34,beta34,dataset3,dataset4,&
+         &x0,dx0,y0,f,errfrac,ierr)
+      if(ierr/=0)return ! FIXME - ideally never happens, but could be handled
+      if (f<fv) then
+        if (b<bv) then
+          bw = bv
+          fw = fv
+        elseif (b>bv) then
+          bu = bv
+          fu = fv
+        else
+          exit
+        endif
+        bv = b
+        fv = f
+      elseif (f>fv) then
+        if (b<bv) then
+          bu = b
+          fu = f
+        elseif (b>bv) then
+          bw = b
+          fw = f
+        else
+          exit
+        endif
+      else
+        exit
+      endif
+      if (bw-bu<1.d-7) exit
+    enddo
+
+    ! Return minimum.
+    beta12=bv
+    dy=fv
+
+  END SUBROUTINE intersect_mix_search_1d
+
+
+  SUBROUTINE intersect_mix_eval(fit,mcparams,drange,intersect_range,ranx12,&
+     &rany12,beta12,dataset1,dataset2,ranx34,rany34,beta34,dataset3,dataset4,&
+     &x0,dx0,y0,dy0,errfrac,ierr)
+    !----------------------------------------------------!
+    ! Evaluate the intersection of y1+beta12*(y2-y1) and !
+    ! y3+beta34*(y4-y3).                                 !
+    !----------------------------------------------------!
+    IMPLICIT NONE
+    TYPE(fit_form_type),POINTER :: fit
+    TYPE(mc_params_type),INTENT(in) :: mcparams
+    TYPE(range_type),INTENT(in) :: drange
+    TYPE(intersect_range_type),INTENT(in) :: intersect_range
+    DOUBLE PRECISION,INTENT(in) :: ranx12(*),rany12(*),ranx34(*),rany34(*)
+    TYPE(dataset_type),POINTER :: dataset1,dataset2,dataset3,dataset4
+    DOUBLE PRECISION,INTENT(in) :: beta12,beta34
+    DOUBLE PRECISION,INTENT(inout) :: x0,dx0,y0,dy0,errfrac
+    INTEGER,INTENT(inout) :: ierr
+    ! Local variables.
+    INTEGER nsample,nxy,irandom,ierr1,ierr2,errvec(mcparams%nsample)
+    DOUBLE PRECISION a_z(fit%npoly,2),chi2,w_vector(mcparams%nsample),&
+       &x0vec(mcparams%nsample),y0vec(mcparams%nsample)
+    TYPE(xy_type),POINTER :: xy,xy_orig
+    TYPE(dataset_type),POINTER :: dataset
+    TYPE(dataset_list_type),POINTER :: dlist(:),tmp_dlist(:)
+
+    ! Initialize.
+    ierr=1
+    nsample=mcparams%nsample
+    nxy=dataset1%xy%nxy
+    w_vector=1.d0
+    errfrac=1.d0
+
+    ! Transform datasets.
+    allocate(dlist(2))
+    call construct_beta_dataset(drange,dataset1,dataset2,beta12,&
+       &dlist(1)%dataset,ierr1)
+    call construct_beta_dataset(drange,dataset3,dataset4,beta34,&
+       &dlist(2)%dataset,ierr2)
+    if(ierr1/=0.or.ierr2/=0)then
+      call kill_dlist(dlist)
+      return
+    endif
+
+    ! Make another copy and apply qrandom.
+    call clone_dlist(dlist,tmp_dlist)
+    call qrandom_apply(2,tmp_dlist,drange,fit)
+
+    ! Loop over random points.
+    do irandom=1,nsample
+      ! Modify the datasets at this (ibeta,jbeta).
+      dataset=>tmp_dlist(1)%dataset
+      xy=>dataset%xy
+      xy_orig=>dlist(1)%dataset%xy
+      if(xy%have_dx)xy%x=xy_orig%x+&
+         &xy%dx*ranx12((irandom-1)*nxy+1:irandom*nxy)
+      if(xy%have_dy)xy%y=xy_orig%y+&
+         &xy%dy*rany12((irandom-1)*nxy+1:irandom*nxy)
+      call refresh_dataset(dataset,drange)
+      dataset=>tmp_dlist(2)%dataset
+      xy=>dataset%xy
+      xy_orig=>dlist(2)%dataset%xy
+      if(xy%have_dx)xy%x=xy_orig%x+&
+         &xy%dx*ranx34((irandom-1)*nxy+1:irandom*nxy)
+      if(xy%have_dy)xy%y=xy_orig%y+&
+         &xy%dy*rany34((irandom-1)*nxy+1:irandom*nxy)
+      call refresh_dataset(dataset,drange)
+      call perform_multifit(2,tmp_dlist,fit,chi2,a_z,ierr)
+      if(ierr/=0)then
+        call kill_dlist(tmp_dlist)
+        call kill_dlist(dlist)
+        return
+      endif
+      call intersect(fit,a_z(1,1),a_z(1,2),intersect_range,x0,y0,ierr)
+      x0vec(irandom)=x0
+      y0vec(irandom)=y0
+      errvec(irandom)=ierr
+    enddo ! irandom
+
+    ! Compute output.
+    call forgiving_analysis(nsample,x0vec,y0vec,errvec,x0,dx0,y0,dy0,&
+       &errfrac,ierr)
+
+    ! Clean up.
+    call kill_dlist(tmp_dlist)
+    call kill_dlist(dlist)
+
+  END SUBROUTINE intersect_mix_eval
 
 
   SUBROUTINE intersect(fit,a1,a2,intersect_range,x0,y0,ierr)
@@ -2931,7 +3280,47 @@ CONTAINS
   END SUBROUTINE intersect
 
 
-  SUBROUTINE plot_multipoly(ndataset,dlist,drange,fit,deval,mcparams,fname)
+  SUBROUTINE forgiving_analysis(n,xvec,yvec,errvec,x0,dx0,y0,dy0,errfrac,ierr)
+    !-------------------------------------------------------------------!
+    ! Given a set of N random-sampled intersections XVEC(1:N),YVEC(1:N) !
+    ! and their corresponding error signals ERRVEC(1:N), compute the    !
+    ! average intersection allowing "a few" errors to occur.            !
+    !-------------------------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: n
+    DOUBLE PRECISION,INTENT(in) :: xvec(n),yvec(n)
+    INTEGER,INTENT(in) :: errvec(n)
+    DOUBLE PRECISION,INTENT(inout) :: x0,dx0,y0,dy0,errfrac
+    INTEGER,INTENT(inout) :: ierr
+    DOUBLE PRECISION,PARAMETER :: max_errfrac=0.001d0
+    DOUBLE PRECISION tvec(n),w_vector(n),var
+    INTEGER nerr,nn
+    ! Initialize.
+    ierr=1
+    x0=0.d0
+    dx0=0.d0
+    y0=0.d0
+    dy0=0.d0
+    if(n<1)return
+    ! Count number of errors.
+    nerr=count(errvec/=0)
+    errfrac=dble(nerr)/dble(n)
+    if(gt_dble(errfrac,max_errfrac))return
+    ! Analyse.
+    ierr=0
+    w_vector=1.d0
+    nn=n-nerr
+    tvec(1:nn)=pack(xvec,errvec==0)
+    call characterize_dist(nn,tvec,w_vector,mean=x0,var=var)
+    dx0=sqrt(var)
+    tvec(1:nn)=pack(yvec,errvec==0)
+    call characterize_dist(nn,tvec,w_vector,mean=y0,var=var)
+    dy0=sqrt(var)
+  END SUBROUTINE forgiving_analysis
+
+
+  SUBROUTINE plot_multipoly(ndataset,dlist,drange,fit,deval,mcparams,fname,&
+     &append)
     !--------------------------------!
     ! Perform chosen fit and report. !
     !--------------------------------!
@@ -2943,17 +3332,26 @@ CONTAINS
     TYPE(eval_type),INTENT(inout) :: deval
     TYPE(mc_params_type),INTENT(in) :: mcparams
     CHARACTER(*),INTENT(in) :: fname
+    LOGICAL,INTENT(in),OPTIONAL :: append
     ! Quick-access pointers.
     TYPE(dataset_type),POINTER :: dataset
     TYPE(xy_type),POINTER :: xy
     ! Local variables.
     INTEGER iset,i,ierr,op_npoly
+    LOGICAL do_append
     DOUBLE PRECISION op_a(fit%npoly),op_pow(fit%npoly),tx0,tx1,t1
     DOUBLE PRECISION,ALLOCATABLE :: fmean(:,:),ferr(:,:),a(:,:)
     INTEGER,PARAMETER :: io=10
 
+    do_append=.false.
+    if(present(append))do_append=append
+
     ! Open plot file.
-    open(unit=io,file=fname,status='replace',iostat=ierr)
+    if(.not.do_append)then
+      open(unit=io,file=fname,status='replace',iostat=ierr)
+    else
+      open(unit=io,file=fname,position='append',iostat=ierr)
+    endif
     if(ierr/=0)then
       call msg('Problem opening file.')
       return
@@ -2996,7 +3394,7 @@ CONTAINS
        &a(fit%npoly,ndataset))
     if(trim(deval%what)/='shared')then
       call eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
-         &deval,ierr,fmean=fmean,ferr=ferr,amean=a)
+         &deval,ierr,fmean=fmean,ferr=ferr,amean=a,silent=.true.)
       if(ierr/=0)then
         call msg('Could not perform fit.')
         close(io,status='delete')
@@ -3046,7 +3444,7 @@ CONTAINS
       enddo ! iset
     else
       call eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
-         &deval,ierr,fmean=fmean,ferr=ferr,amean=a)
+         &deval,ierr,fmean=fmean,ferr=ferr,amean=a,silent=.true.)
       if(ierr/=0)then
         call msg('Could not perform fit.')
         close(io,status='delete')
@@ -3103,7 +3501,7 @@ CONTAINS
     close(io)
 
     ! Report.
-    call msg('Plot saved to "'//trim(fname)//'".')
+    if(.not.do_append)call msg('Plot saved to "'//trim(fname)//'".')
 
   END SUBROUTINE plot_multipoly
 
@@ -4189,7 +4587,7 @@ CONTAINS
 
   SUBROUTINE eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
      &deval,ierr,fmean,ferr,chi2mean,chi2err,rmsymean,rmsyerr,amean,aerr,&
-     &fmean_1s,ferr_1s,fmean_2s,ferr_2s,fmed,fskew,fkurt)
+     &fmean_1s,ferr_1s,fmean_2s,ferr_2s,fmed,fskew,fkurt,silent)
     !------------------------------------------------------!
     ! Perform Monte Carlo sampling of data space to obtain !
     ! fit values or derivatives at specified points with   !
@@ -4211,6 +4609,7 @@ CONTAINS
        &fmean_2s(deval%n,ndataset),ferr_2s(deval%n,ndataset),&
        &fmed(deval%n,ndataset),fskew(deval%n,ndataset),&
        &fkurt(deval%n,ndataset)
+    LOGICAL,INTENT(in),OPTIONAL :: silent
     ! Quick-access pointers.
     TYPE(dataset_type),POINTER :: dataset
     TYPE(xy_type),POINTER :: xy,xy_orig
@@ -4226,18 +4625,20 @@ CONTAINS
     ! Distribution analysis.
     DOUBLE PRECISION var,skew,kurt,f2s_lo,f1s_lo,f1s_hi,f2s_hi
     ! Misc.
-    LOGICAL need_f,need_a,need_chi2,need_rmsy
+    LOGICAL need_f,need_a,need_chi2,need_rmsy,be_silent
     INTEGER nsample,ipoly,ideriv,irandom,ix,iset
     DOUBLE PRECISION chi2,t1,a(fit%npoly,ndataset),f0,sum_weight
 
     ! Initialize.
     ierr=0
+    be_silent=.false.
+    if(present(silent))be_silent=silent
 
     ! Make copy of datasets.
     call clone_dlist(dlist,tmp_dlist)
 
     ! Apply qrandom.
-    call qrandom_apply(ndataset,tmp_dlist,drange,fit,report=.true.)
+    call qrandom_apply(ndataset,tmp_dlist,drange,fit,report=.not.be_silent)
 
     ! Figure out what we need and allocate arrays.
     need_f=present(fmean).or.present(ferr).or.present(fmean_1s).or.&
@@ -4406,73 +4807,31 @@ CONTAINS
   END SUBROUTINE eval_multifit_monte_carlo
 
 
-  SUBROUTINE construct_z_datasets(drange,fit,dlist,fit_z,dlist_z,have_z)
-    !-----------------------------------------------------------!
-    ! Construct dlist_z containing linear combinations of each  !
-    ! pair of datasets in dlist.  These "z" linear combinations !
-    ! are such that quasirandom noise should not be present.    !
-    !-----------------------------------------------------------!
+  SUBROUTINE construct_beta_dataset(drange,dataset1,dataset2,beta,dataset,ierr)
+    !------------------------------------------!
+    ! Construct linear combination of datasets !
+    ! Y = y1 + beta*(y2-y1).                   !
+    !------------------------------------------!
     IMPLICIT NONE
     TYPE(range_type),INTENT(in) :: drange
-    TYPE(fit_form_type),POINTER :: fit,fit_z
-    TYPE(dataset_list_type),POINTER :: dlist(:),dlist_z(:)
-    LOGICAL,ALLOCATABLE,INTENT(inout) :: have_z(:)
-    ! Local variables.
-    TYPE(dataset_list_type),POINTER :: tmp_dlist(:)
-    INTEGER ndataset,nyy,ixy,iyy,iset,jset
-    DOUBLE PRECISION beta,alpha_list(size(dlist))
-    TYPE(dataset_type),POINTER :: dataset
-
-    ! Make copy of datasets.
-    ndataset=size(dlist)
-    nullify(tmp_dlist)
-    call clone_dlist(dlist,tmp_dlist)
-    call qrandom_apply(ndataset,tmp_dlist,drange,fit,alpha_list,report=.true.)
-    call kill_dlist(tmp_dlist)
-
-    ! Report beta.
-    write(6,'(a)')'Combination coefficients'
-    write(6,'(a)')'------------------------'
-    write(6,'(2x,a11,1x,1(1x,a20))')'Sets     ','beta        '
-
-    ! Now create dlist_z.
-    nyy=(ndataset*(ndataset-1))/2
-    allocate(dlist_z(nyy),have_z(nyy))
-    have_z=.false.
-    iyy=0
-    do iset=1,ndataset
-      do jset=iset+1,ndataset
-        iyy=iyy+1
-        call clone_dataset(dlist(iset)%dataset,dlist_z(iyy)%dataset)
-        dataset=>dlist_z(iyy)%dataset
-        if(.not.fit%apply_qrandom)cycle
-        if(eq_dble(alpha_list(iset),alpha_list(jset)))cycle
-        if(dlist(iset)%dataset%rtxy%nxy/=dlist(jset)%dataset%rtxy%nxy)cycle
-        if(any(neq_dble(dlist(iset)%dataset%rtxy%x,&
-           &dlist(jset)%dataset%rtxy%x)))cycle
-        have_z(iyy)=.true.
-        beta=-alpha_list(iset)/(alpha_list(jset)-alpha_list(iset))
-        write(6,'(2x,i5,1x,i5,1x,1(1x,es20.12))')iset,jset,beta
-        do ixy=1,dlist(iset)%dataset%rtxy%nxy
-          dataset%rtxy%y(ixy)=dlist(iset)%dataset%rtxy%y(ixy)+&
-            &beta*(dlist(jset)%dataset%rtxy%y(ixy)-&
-            &      dlist(iset)%dataset%rtxy%y(ixy))
-          dataset%rtxy%dy(ixy)=sqrt(&
-            &(1.d0-beta)**2*dlist(iset)%dataset%rtxy%dy(ixy)**2+&
-            &       beta**2*dlist(jset)%dataset%rtxy%dy(ixy)**2)
-        enddo ! ixy
-        ! Copy results back to txy/xy.
-        call back_transform(drange,dataset)
-      enddo ! jset
-    enddo ! iset
-    write(6,'()')
-
-    ! Create clone of fit.
-    call clone_fit_form(dlist,fit,fit_z)
-    fit_z%share=.false.
-    fit_z%apply_qrandom=.true.
-
-  END SUBROUTINE construct_z_datasets
+    TYPE(dataset_type),POINTER :: dataset1,dataset2,dataset
+    DOUBLE PRECISION,INTENT(in) :: beta
+    INTEGER,INTENT(inout) :: ierr
+    INTEGER ixy
+    ierr=1
+    call clone_dataset(dataset1,dataset)
+    if(dataset1%rtxy%nxy/=dataset2%rtxy%nxy)return
+    if(any(neq_dble(dataset1%rtxy%x,dataset2%rtxy%x)))return
+    ierr=0
+    do ixy=1,dataset%rtxy%nxy
+      dataset%rtxy%y(ixy)=dataset1%rtxy%y(ixy)+&
+        &beta*(dataset2%rtxy%y(ixy)-dataset1%rtxy%y(ixy))
+      dataset%rtxy%dy(ixy)=sqrt(&
+        &((1.d0-beta)*dataset1%rtxy%dy(ixy))**2+&
+        &(beta*dataset2%rtxy%dy(ixy))**2)
+    enddo ! ixy
+    call back_transform(drange,dataset)
+  END SUBROUTINE construct_beta_dataset
 
 
   ! INPUT FILE HANDLING ROUTINES.
@@ -5108,6 +5467,51 @@ CONTAINS
 
 
   ! GENERIC NUMERICAL UTILITIES.
+
+
+  SUBROUTINE parabolic_min(x1,x2,x3,y1,y2,y3,x0,y0,rejected)
+    !-----------------------------------------------------------------!
+    ! Fit three points to a parabola and return (x,y) of the min/max. !
+    !-----------------------------------------------------------------!
+    IMPLICIT NONE
+    DOUBLE PRECISION,INTENT(in) :: x1,x2,x3,y1,y2,y3
+    DOUBLE PRECISION,INTENT(out) :: x0,y0
+    LOGICAL,INTENT(out) :: rejected
+    DOUBLE PRECISION a,b,c,numa,numb,numc,den,x1_sq,x2_sq,x3_sq,&
+       &x21,x32,x31,z1,z2,z3,invden
+    ! Initialize.
+    x0=x2
+    y0=y2
+    rejected=.false.
+    ! Check that x and y values are distinguishable and in correct order.
+    if(x1>=x2.or.x2>=x3.or.(y2>=y1.eqv.y3>=y2))then
+      rejected=.true.
+      return
+    endif
+    ! Compute squares.
+    x1_sq=x1*x1
+    x2_sq=x2*x2
+    x3_sq=x3*x3
+    ! Renormalize for better numerics.
+    x31=x3-x1
+    x21=(x2-x1)/x31
+    x32=(x3-x2)/x31
+    z1=y1*x32
+    z2=y2
+    z3=y3*x21
+    ! Solve linear system.
+    den=-x1_sq*x32+x2_sq-x3_sq*x21
+    numa=-z1+z2-z3
+    numb=z1*(x2+x3)-z2*(x1+x3)+z3*(x1+x2)
+    numc=-z1*x2*x3+z2*x3*x1-z3*x1*x2
+    ! Find x0 and y0.
+    invden=1.d0/den
+    a=numa*invden
+    b=numb*invden
+    c=numc*invden
+    x0=-0.5d0*numb/numa
+    y0=(a*x0+b)*x0+c
+  END SUBROUTINE parabolic_min
 
 
   FUNCTION gaussian_random_number(w) RESULT(gauss_vector)
