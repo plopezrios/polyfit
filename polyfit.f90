@@ -3727,6 +3727,119 @@ CONTAINS
     ! data to the polynomial of exponents pow(1:npoly),  !
     ! with equal/independent coefficients for each set   !
     ! depending on the value of share(1:npoly).          !
+    ! Wrapper around dependent/independent versions.     !
+    !----------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: ndataset
+    TYPE(dataset_list_type),INTENT(in) :: dlist(ndataset)
+    TYPE(fit_form_type),INTENT(in) :: fit
+    DOUBLE PRECISION,INTENT(inout) :: chi2,a(fit%npoly,ndataset)
+    INTEGER,INTENT(inout) :: ierr
+    if(count(fit%share)>0)then
+      call perform_multifit_dep(ndataset,dlist,fit,chi2,a,ierr)
+    else
+      call perform_multifit_indep(ndataset,dlist,fit,chi2,a,ierr)
+    endif
+  END SUBROUTINE
+
+
+
+  SUBROUTINE perform_multifit_indep(ndataset,dlist,fit,chi2,a,ierr)
+    !----------------------------------------------------!
+    ! Perform least-squares fit of sets of (weighted) xy !
+    ! data to the polynomial of exponents pow(1:npoly),  !
+    ! with equal/independent coefficients for each set   !
+    ! depending on the value of share(1:npoly).          !
+    ! This version performs each fit independently.      !
+    !----------------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: ndataset
+    TYPE(dataset_list_type),INTENT(in) :: dlist(ndataset)
+    TYPE(fit_form_type),INTENT(in) :: fit
+    DOUBLE PRECISION,INTENT(inout) :: chi2,a(fit%npoly,ndataset)
+    INTEGER,INTENT(inout) :: ierr
+    ! Quick-access pointers.
+    TYPE(xy_type),POINTER :: xy
+    ! Local variables.
+    DOUBLE PRECISION,ALLOCATABLE :: x(:),y(:),w(:)
+    INTEGER npoly,nxy,iset,ixy,ipoly,jpoly,lwork,i,j
+    DOUBLE PRECISION e_fit,set_weight
+    DOUBLE PRECISION,ALLOCATABLE :: M(:,:),Minv(:,:),c(:),work(:)
+    INTEGER,ALLOCATABLE :: ipiv(:)
+
+    ! Initialize.
+    ierr=0
+    chi2=0.d0
+
+    ! Perpare storage for fit.
+    npoly=fit%npoly
+    allocate(M(npoly,npoly),Minv(npoly,npoly),ipiv(npoly),c(npoly))
+
+    ! Loop over datasets.
+    do iset=1,ndataset
+      xy=>dlist(iset)%dataset%rtxy
+      nxy=xy%nxy
+      if(nxy<npoly)cycle
+      set_weight=dlist(iset)%dataset%weight
+      allocate(x(nxy),y(nxy),w(nxy))
+      x=xy%x-fit%X0
+      y=xy%y
+      w=xy%w
+      ! Construct c vector and M matrix.
+      do ipoly=1,npoly
+        c(ipoly)=sum(w(:)*y(:)*x(:)**fit%pow(ipoly))
+        do jpoly=1,npoly
+          M(jpoly,ipoly)=sum(w(:)*x(:)**(fit%pow(jpoly)+fit%pow(ipoly)))
+        enddo ! jpoly
+      enddo ! ipoly
+      ! Invert M.
+      Minv=M
+      allocate(work(1))
+      lwork=-1
+      call dsytrf('L',npoly,Minv,npoly,ipiv,work,lwork,ierr)
+      if(ierr/=0)return
+      lwork=nint(work(1))
+      deallocate(work)
+      allocate(work(lwork),stat=ierr)
+      if(ierr/=0)return
+      call dsytrf('L',npoly,Minv,npoly,ipiv,work,lwork,ierr)
+      if(ierr/=0)return
+      deallocate(work)
+      allocate(work(npoly),stat=ierr)
+      if(ierr/=0)return
+      call dsytri('L',npoly,Minv,npoly,ipiv,work,ierr)
+      if(ierr/=0)return
+      deallocate(work)
+      ! Complete Minv.
+      do i=1,npoly
+        do j=i+1,npoly
+          Minv(i,j)=Minv(j,i)
+        enddo ! j
+      enddo ! i
+      ! Evaluate fit coefficients.
+      a(1:npoly,iset)=matmul(Minv,c)
+      ! Add to chi^2 value.
+      do ixy=1,nxy
+        e_fit=0.d0
+        do ipoly=1,npoly
+          e_fit=e_fit+a(ipoly,iset)*x(ixy)**fit%pow(ipoly)
+        enddo ! ipoly
+        chi2=chi2+(y(ixy)-e_fit)**2*w(ixy)*set_weight
+      enddo ! ixy
+      ! Clean up for next set.
+      deallocate(x,y,w)
+    enddo ! iset
+
+  END SUBROUTINE perform_multifit_indep
+
+
+  SUBROUTINE perform_multifit_dep(ndataset,dlist,fit,chi2,a,ierr)
+    !----------------------------------------------------!
+    ! Perform least-squares fit of sets of (weighted) xy !
+    ! data to the polynomial of exponents pow(1:npoly),  !
+    ! with equal/independent coefficients for each set   !
+    ! depending on the value of share(1:npoly).          !
+    ! This version performs all fits simultaenously.     !
     !----------------------------------------------------!
     IMPLICIT NONE
     INTEGER,INTENT(in) :: ndataset
@@ -3923,7 +4036,7 @@ CONTAINS
       enddo ! ixy
     enddo ! iset
 
-  END SUBROUTINE perform_multifit
+  END SUBROUTINE perform_multifit_dep
 
 
   SUBROUTINE eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
