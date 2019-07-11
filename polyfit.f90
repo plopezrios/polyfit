@@ -94,6 +94,12 @@ PROGRAM polyfit
     DOUBLE PRECISION,POINTER :: x(:)=>null() ! grid point values
   END TYPE eval_type
 
+  ! * Intersect ranges.
+  TYPE intersect_range_type
+    DOUBLE PRECISION :: x1=0.d0,x2=0.d0,xmid=0.d0
+    LOGICAL :: have_x1=.false.,have_x2=.false.,have_xmid=.false.
+  END TYPE intersect_range_type
+
   ! * Monte Carlo sampling parameters.
   TYPE mc_params_type
     INTEGER :: nsample=10000
@@ -137,6 +143,8 @@ CONTAINS
     CHARACTER(search_size),POINTER :: search(:)
     ! Input echo.
     LOGICAL input_echo
+    ! Intersect command.
+    TYPE(intersect_range_type) :: intersect_range,intersect_range_default
     ! Plotz facility.
     TYPE(dataset_list_type),POINTER :: dlist_z(:)
     TYPE(fit_form_type),POINTER :: fit_z
@@ -878,32 +886,110 @@ CONTAINS
         call evaluate_fit(ndataset,dlist,fit,mcparams,drange,deval)
 
       case('intersect')
+
         ! This is only useful when two or more datasets are loaded.
         if(ndataset<2)then
           call msg('Need at least two datasets to find intersections.')
           cycle user_loop
         endif
+
         ! Parse options.
-        select case(field(2,command))
-        case("between")
-          t1=dble_field(3,command,ierr1)
-          t2=dble_field(4,command,ierr2)
-          if(ierr1/=0.or.ierr2/=0)then
-            call msg('Syntax error: could not parse arguments of &
-               &"between" subcommand.')
+        intersect_range=intersect_range_default
+        ifield=2
+        do
+          select case(field(ifield,command))
+          case("between")
+            if(intersect_range%have_x1.or.intersect_range%have_x2)then
+              call msg('Left and/or right range limits specified more than &
+                 &once.')
+              cycle user_loop
+            endif
+            ifield=ifield+1
+            t1=dble_field(ifield,command,ierr1)
+            ifield=ifield+1
+            t2=dble_field(ifield,command,ierr2)
+            if(ierr1/=0.or.ierr2/=0)then
+              call msg('Syntax error: could not parse arguments of &
+                 &"between" subcommand.')
+              cycle user_loop
+            endif
+            if(t1>=t2)then
+              call msg('Syntax error: intersection range has non-positive &
+                 &length.')
+              cycle user_loop
+            endif
+            intersect_range%x1=t1
+            intersect_range%x2=t2
+            intersect_range%have_x1=.true.
+            intersect_range%have_x2=.true.
+          case("rightof")
+            if(intersect_range%have_x1)then
+              call msg('Left range limit specified more than once.')
+              cycle user_loop
+            endif
+            ifield=ifield+1
+            t1=dble_field(ifield,command,ierr1)
+            if(ierr1/=0)then
+              call msg('Syntax error: could not parse argument of &
+                 &"rightof" subcommand.')
+              cycle user_loop
+            endif
+            if(intersect_range%have_x2)then
+              if(t1>=intersect_range%x2)then
+                call msg('Syntax error: intersection range has non-positive &
+                   &length.')
+                cycle user_loop
+              endif
+            endif
+            intersect_range%x1=t1
+            intersect_range%have_x1=.true.
+          case("leftof")
+            if(intersect_range%have_x2)then
+              call msg('Right range limit specified more than once.')
+              cycle user_loop
+            endif
+            ifield=ifield+1
+            t2=dble_field(ifield,command,ierr2)
+            if(ierr2/=0)then
+              call msg('Syntax error: could not parse argument of &
+                 &"leftof" subcommand.')
+              cycle user_loop
+            endif
+            if(intersect_range%have_x1)then
+              if(t2<=intersect_range%x1)then
+                call msg('Syntax error: intersection range has non-positive &
+                   &length.')
+                cycle user_loop
+              endif
+            endif
+            intersect_range%x2=t2
+            intersect_range%have_x2=.true.
+          case("near")
+            if(intersect_range%have_xmid)then
+              call msg('"near" reference point specified more than once.')
+              cycle user_loop
+            endif
+            ifield=ifield+1
+            t1=dble_field(ifield,command,ierr1)
+            if(ierr1/=0)then
+              call msg('Syntax error: could not parse argument of &
+                 &"near" subcommand.')
+              cycle user_loop
+            endif
+            intersect_range%xmid=t1
+            intersect_range%have_xmid=.true.
+          case('')
+            exit
+          case default
+            call msg('Syntax error: "'//trim(field(ifield,command))//&
+               &'" subcommand missing.')
             cycle user_loop
-          endif
-          if(t1>=t2)then
-            call msg('Syntax error: intersection range has non-positive &
-               &length.')
-            cycle user_loop
-          endif
-        case default
-          call msg('Syntax error: "between" subcommand missing.')
-          cycle user_loop
-        end select
+          end select
+          ifield=ifield+1
+        enddo
+
         ! Perform intersection.
-        call intersect_fit(ndataset,dlist,fit,mcparams,drange,t1,t2)
+        call intersect_fit(ndataset,dlist,fit,mcparams,drange,intersect_range)
 
       case('set')
 
@@ -1736,18 +1822,32 @@ CONTAINS
           call pprint('')
         case('intersect')
           call pprint('')
-          call pprint('Command: intersect between <X1> <X2>',0,9)
+          call pprint('Command: intersect [between <X1> <X2>] [rightof <X1>] &
+             &[leftof <X2>] [near <Xmid>]',0,9)
           call pprint('')
           call pprint('Evaluate the average location of the intersections &
-             &between each pair of datasets in the range X1:X2.',2,2)
+             &between each pair of datasets.',2,2)
           call pprint('')
           call pprint('The intersect command finds the intersection between &
              &the fits to each pair of datasets and computes the average &
              &location of the intersection.  This operation requires two or &
-             &more datasets to be loaded.  The difference between each pair &
-             &of fits is required to be of opposite signs at X1 and X2.  &
-             &This command will return an error message if this is &
-             &consistently not the case during random sampling.',2,2)
+             &more datasets to be loaded.',2,2)
+          call pprint('')
+          call pprint('For linear fits, limits X1 andi/or X2 can be provided &
+             &optionally, which will cause an error to be flagged if the &
+             &intersection is not in the range [X1,X2].  Xmid is ignored &
+             &in this case.',2,2)
+          call pprint('')
+          call pprint('For quadratic fits, at least one of X1, X2, and Xmid &
+             &must be provided, which selects which of the (potentially two) &
+             &intersections between each pair of curves to choose.',2,2)
+          call pprint('')
+          call pprint('For all other fit forms, X1 and X2 must be provided, &
+             &and Xmid is ignored.  The difference between each pair of fits &
+             &is required to be of opposite signs at X1 and X2, and is &
+             &assumed to change sign only once in the interval.  An error &
+             &will be flagged if this is not consistently the case during &
+             &random sampling.',2,2)
           call pprint('')
         case('set')
           if(nfield(command)==2)then
@@ -2419,7 +2519,7 @@ CONTAINS
   END SUBROUTINE evaluate_fit
 
 
-  SUBROUTINE intersect_fit(ndataset,dlist,fit,mcparams,drange,x1,x2)
+  SUBROUTINE intersect_fit(ndataset,dlist,fit,mcparams,drange,intersect_range)
     !-----------------------------------------------------!
     ! Find the (average) intersection of all datasets and !
     ! report to stdout.                                   !
@@ -2430,7 +2530,7 @@ CONTAINS
     TYPE(fit_form_type),POINTER :: fit
     TYPE(mc_params_type),INTENT(in) :: mcparams
     TYPE(range_type),INTENT(in) :: drange
-    DOUBLE PRECISION,INTENT(in) :: x1,x2
+    TYPE(intersect_range_type),INTENT(in) :: intersect_range
     ! Monte Carlo sample storage.
     DOUBLE PRECISION,ALLOCATABLE :: x0_array(:,:),y0_array(:,:),w_vector(:)
     DOUBLE PRECISION,ALLOCATABLE :: x0_yz_array(:,:),y0_yz_array(:,:)
@@ -2446,10 +2546,33 @@ CONTAINS
     TYPE(xy_type),POINTER :: xy,xy_orig
     TYPE(fit_form_type),POINTER :: fit_z
     ! Local variables.
+    LOGICAL is_consecutive,is_poly1,is_poly2
     LOGICAL,ALLOCATABLE :: have_z(:)
-    INTEGER iset,jset,iyy,nyy,irandom,nsample,ierr,nyz,nzz,jyy,iyz,izz
+    INTEGER i,iset,jset,iyy,nyy,irandom,nsample,ierr,nyz,nzz,jyy,iyz,izz
     DOUBLE PRECISION x0,y0,dx0,dy0,var,chi2,alpha_list(ndataset),&
        &x0_best,y0_best,dx0_best,dy0_best
+
+    ! See if we are dealing with an especially simple case.
+    is_consecutive=all(eq_dble(fit%pow,(/(dble(i-1),i=1,fit%npoly)/)))
+    is_poly1=is_consecutive.and.fit%npoly==2.and.&
+       &neq_dble(fit%pow(fit%npoly),0.d0)
+    is_poly2=is_consecutive.and.fit%npoly==3.and.&
+       &neq_dble(fit%pow(fit%npoly),0.d0)
+
+    ! Range checks.
+    if(is_poly2)then
+      if(.not.intersect_range%have_x1.and..not.intersect_range%have_x2.and.&
+         &.not.intersect_range%have_xmid)then
+        call msg('Need at least one reference point to intersect &
+           &second-order polynomials.')
+        return
+      endif
+    elseif(.not.is_poly1)then
+      if(.not.intersect_range%have_x1.and..not.intersect_range%have_x2)then
+        call msg('Need explicit range to intersect generic polynomials.')
+        return
+      endif
+    endif
 
     ! Make copy of datasets.
     call clone_dlist(dlist,tmp_dlist)
@@ -2529,7 +2652,7 @@ CONTAINS
           iyy=iyy+1
           if(.not.valid(iyy))cycle
           ! Find intersection between sets ISET and JSET.
-          call intersect(fit,a(1,iset),a(1,jset),x1,x2,x0,y0,ierr)
+          call intersect(fit,a(1,iset),a(1,jset),intersect_range,x0,y0,ierr)
           if(ierr/=0)valid(iyy)=.false.
           x0_array(irandom,iyy)=x0
           y0_array(irandom,iyy)=y0
@@ -2546,7 +2669,7 @@ CONTAINS
           endif
           if(.not.valid_yz(iyz))cycle
           ! Find intersection between set ISET and mixed set IYY.
-          call intersect(fit,a(1,iset),a_z(1,iyy),x1,x2,x0,y0,ierr)
+          call intersect(fit,a(1,iset),a_z(1,iyy),intersect_range,x0,y0,ierr)
           if(ierr/=0)valid_yz(iyz)=.false.
           x0_yz_array(irandom,iyz)=x0
           y0_yz_array(irandom,iyz)=y0
@@ -2563,7 +2686,7 @@ CONTAINS
           endif
           if(.not.valid_zz(izz))cycle
           ! Find intersection between mixed sets IYY and JYY.
-          call intersect(fit,a_z(1,iyy),a_z(1,jyy),x1,x2,x0,y0,ierr)
+          call intersect(fit,a_z(1,iyy),a_z(1,jyy),intersect_range,x0,y0,ierr)
           if(ierr/=0)valid_zz(izz)=.false.
           x0_zz_array(irandom,izz)=x0
           y0_zz_array(irandom,izz)=y0
@@ -2676,7 +2799,7 @@ CONTAINS
   END SUBROUTINE intersect_fit
 
 
-  SUBROUTINE intersect(fit,a1,a2,x1,x2,x0,y0,ierr)
+  SUBROUTINE intersect(fit,a1,a2,intersect_range,x0,y0,ierr)
     !------------------------------------------------!
     ! Find intersection between fits with parameters !
     ! A1(:) and A2(:).                               !
@@ -2684,13 +2807,13 @@ CONTAINS
     IMPLICIT NONE
     TYPE(fit_form_type),INTENT(in) :: fit
     DOUBLE PRECISION,INTENT(in) :: a1(fit%npoly),a2(fit%npoly)
-    DOUBLE PRECISION,INTENT(in) :: x1,x2
+    TYPE(intersect_range_type),INTENT(in) :: intersect_range
     DOUBLE PRECISION,INTENT(inout) :: x0,y0
     INTEGER,INTENT(inout) :: ierr
     LOGICAL is_consecutive,is_poly1,is_poly2,x0a_in_interval,x0b_in_interval,&
        &lplus,rplus
     INTEGER i
-    DOUBLE PRECISION t1,x0a,x0b,xl,xr,yl,yr,a_diff(fit%npoly)
+    DOUBLE PRECISION t1,x0a,x0b,xmid,xl,xr,yl,yr,a_diff(fit%npoly)
 
     ! Initialize output variables.
     ierr=1
@@ -2712,6 +2835,10 @@ CONTAINS
       ! Linear fit.
       x0=-a_diff(1)/a_diff(2)+fit%x0
 
+      ! Flag error if outside range.
+      if((intersect_range%have_x1.and.x0<intersect_range%x1).or.&
+         &(intersect_range%have_x2.and.x0>intersect_range%x2))return
+
     elseif(is_poly2)then
 
       ! Quadratic fit.  Get discriminant.
@@ -2719,6 +2846,9 @@ CONTAINS
       if(eq_dble(t1,0.d0))then
         ! Discriminant is zero: one intersection.
         x0=-0.5d0*a_diff(2)/a_diff(3)+fit%x0
+        ! Flag error if outside range.
+        if((intersect_range%have_x1.and.x0<intersect_range%x1).or.&
+           &(intersect_range%have_x2.and.x0>intersect_range%x2))return
       elseif(t1<0.d0)then
         ! Discriminant is negative: no intersections.
         return
@@ -2726,12 +2856,30 @@ CONTAINS
         ! Discriminant is positive: two intersections.
         x0a=0.5d0*(-a_diff(2)+sqrt(t1))/a_diff(3)+fit%x0
         x0b=0.5d0*(-a_diff(2)-sqrt(t1))/a_diff(3)+fit%x0
+        x0a_in_interval=.true.
+        x0b_in_interval=.true.
+        if(intersect_range%have_x1)then
+          x0a_in_interval=x0a_in_interval.and.ge_dble(x0a,intersect_range%x1)
+          x0b_in_interval=x0b_in_interval.and.ge_dble(x0b,intersect_range%x1)
+        endif
+        if(intersect_range%have_x2)then
+          x0a_in_interval=x0a_in_interval.and.le_dble(x0a,intersect_range%x2)
+          x0b_in_interval=x0b_in_interval.and.le_dble(x0b,intersect_range%x2)
+        endif
         ! Decide which intersection to report.
-        x0a_in_interval=ge_dble(x0a,x1).and.le_dble(x0a,x2)
-        x0b_in_interval=ge_dble(x0b,x1).and.le_dble(x0b,x2)
         if(x0a_in_interval.and.x0b_in_interval)then
-          ! Pick closest to centre.
-          if(abs(x0a-0.5d0*(x1+x2))<abs(x0b-0.5d0*(x1+x2)))then
+          xmid=0.d0
+          if(intersect_range%have_xmid)then
+            xmid=intersect_range%xmid
+          elseif(intersect_range%have_x1.and.intersect_range%have_x2)then
+            xmid=0.5d0*(intersect_range%x1+intersect_range%x2)
+          elseif(intersect_range%have_x1)then
+            xmid=intersect_range%x1
+          elseif(intersect_range%have_x2)then
+            xmid=intersect_range%x2
+          endif
+          ! Pick closest to xmid.
+          if(abs(x0a-xmid)<abs(x0b-xmid))then
             x0=x0a
           else
             x0=x0b
@@ -2742,15 +2890,15 @@ CONTAINS
           x0=x0b
         else
           return
-        endif
+        endif ! x0a and/or x0b in interval
       endif ! sign of discriminant
 
     else
 
       ! Not a "simple" fit form, so use bisection.  Initialize.
-      xl=x1
+      xl=intersect_range%x1
       yl=eval_poly(fit%npoly,fit%pow,a_diff,xl-fit%x0)
-      xr=x2
+      xr=intersect_range%x2
       yr=eval_poly(fit%npoly,fit%pow,a_diff,xr-fit%x0)
       if(abs(yl)<=0.d0.or.abs(yr)<=0.d0)return
       lplus=yl>0.d0
