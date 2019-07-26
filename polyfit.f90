@@ -5336,6 +5336,7 @@ CONTAINS
     if(associated(xy%y))deallocate(xy%y)
     if(associated(xy%dx))deallocate(xy%dx)
     if(associated(xy%dy))deallocate(xy%dy)
+    if(associated(xy%w))deallocate(xy%w)
     deallocate(xy)
     nullify(xy)
   END SUBROUTINE kill_xy
