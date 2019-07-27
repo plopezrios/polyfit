@@ -144,11 +144,11 @@ CONTAINS
     ! Input echo.
     LOGICAL input_echo
     ! Intersect command.
+    LOGICAL use_mix,mix_by_pairs
     TYPE(intersect_range_type) :: intersect_range,intersect_range_default
     ! Misc variables.
     CHARACTER(7) settype
     CHARACTER(8192) command,token
-    LOGICAL use_mix
     LOGICAL,ALLOCATABLE :: smask(:)
     INTEGER i,ifield,ierr,ipos_x,ipos_y,ipos_dx,ipos_dy,ipos_w,ierr1,ierr2,&
        &ierr3,ierr4,ierr5,nxy,itransf,iset,i1,i2,ipos,npoly
@@ -835,11 +835,15 @@ CONTAINS
         ! Parse options.
         intersect_range=intersect_range_default
         use_mix=.false.
+        mix_by_pairs=.false.
         ifield=2
         do
           select case(field(ifield,command))
           case("mix")
             use_mix=.true.
+          case("mixpairs")
+            use_mix=.true.
+            mix_by_pairs=.true.
           case("between")
             if(intersect_range%have_x1.or.intersect_range%have_x2)then
               call msg('Left and/or right range limits specified more than &
@@ -966,13 +970,19 @@ CONTAINS
           ifield=ifield+1
         enddo
 
+        ! Check plot requirements.
+        if(.not.use_mix.and.len_trim(fname)>0)then
+          call msg('"plot" subcommand only available for "intersect mix".')
+          cycle user_loop
+        endif
+
         ! Perform intersection.
         if(.not.use_mix)then
           call intersect_fit(ndataset,dlist,fit,mcparams,drange,&
              &intersect_range)
         else
           call intersect_mix_fit(ndataset,dlist,fit,mcparams,drange,&
-             &intersect_range,deval,fname)
+             &intersect_range,mix_by_pairs,deval,fname)
         endif
 
       case('set')
@@ -1798,7 +1808,7 @@ CONTAINS
           call pprint('')
         case('intersect')
           call pprint('')
-          call pprint('Command: intersect [mix] [between <X1> <X2>] &
+          call pprint('Command: intersect [mix[pairs]] [between <X1> <X2>] &
              &[rightof <X1>] [leftof <X2>] [near <Xmid>] &
              &[plot [at <xvalues>] [to <file-name]]',0,9)
           call pprint('')
@@ -1831,19 +1841,23 @@ CONTAINS
              &fraction of intersection failures is reported as "missfrac".  &
              &The failures are simply ignored in computing the results.',2,2)
           call pprint('')
-          call pprint('Specifying "mix" triggers the use of an alternative &
-             &approach in which linear combinations of each pair of datasets &
-             &are constructed, and the intersection of each pair of such &
-             &"mixed" datasets is evaluated by minimizing the uncertainty in &
-             &the intersection abcissa with respect to two linear parameters. &
-             &This method requires datasets to have the same number of data &
-             &and the same x values, and that x has no uncertainty. &
-             &The "mix" method is advantageous in the presence of quasirandom &
-             &fluctuations which are correlated across different datasets; &
-             &in this case it is advisable to set "qrandom" in addition to &
-             &using the "mix" intersection method.',2,2)
+          call pprint('Specifying "mix" or "mixpairs" triggers the use of an &
+             &alternative approach in which linear combinations of each pair &
+             &of datasets are constructed, and the intersection of each pair &
+             &of such "mixed" datasets is evaluated by minimizing the &
+             &uncertainty in the intersection abcissa with respect to two &
+             &linear parameters.  "mixpairs" restricts this to intersections &
+             &of linear combinations of the same two datasets.',2,2)
           call pprint('')
-          call pprint('The "plot" subcommand causes the "mixed" datasets to &
+          call pprint('The "mix" method requires datasets to have the same &
+             &number of data and the same x values, and that these x values &
+             &have no uncertainty. This method is advantageous in the &
+             &presence of quasirandom fluctuations which are correlated &
+             &across different datasets; in this case it is advisable to set &
+             &"qrandom" in addition to using the "mix" intersection method.',&
+             &2,2)
+          call pprint('')
+          call pprint('The "plot" subcommand causes the "mix" datasets to &
              &be plotted.  See "help plot" for details on the "at" and "to" &
              &subcommands.',2,2)
           call pprint('')
@@ -2659,7 +2673,7 @@ CONTAINS
 
 
   SUBROUTINE intersect_mix_fit(ndataset,dlist,fit,mcparams,drange,&
-     &intersect_range,deval,fname)
+     &intersect_range,mix_by_pairs,deval,fname)
     !-------------------------------------------------------------!
     ! Find the intersection of linear combinations of all dataset !
     ! pairs, minimizing the intersection abcissa uncertainty with !
@@ -2672,6 +2686,7 @@ CONTAINS
     TYPE(mc_params_type),INTENT(in) :: mcparams
     TYPE(range_type),INTENT(in) :: drange
     TYPE(intersect_range_type),INTENT(in) :: intersect_range
+    LOGICAL,INTENT(in) :: mix_by_pairs
     TYPE(eval_type),INTENT(inout) :: deval
     CHARACTER(*),INTENT(in) :: fname
     ! Local variables.
@@ -2745,6 +2760,7 @@ CONTAINS
         ! beta12=beta34=0 would be degenerate.
         do iset3=1,ndataset
           do iset4=1,iset3-1
+            if(mix_by_pairs.and.(iset1/=iset4.or.iset2/=iset3))cycle
             ! Generate random numbers.
             if(any_have_dx)then
               ranx12=gaussian_random_number((/( 1.d0, i=1,max_nxy*nsample )/))
