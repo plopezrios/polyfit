@@ -67,7 +67,7 @@ PROGRAM polyfit
     CHARACTER(64) :: X0_string='0'
     ! Quasi-random noise handling.
     LOGICAL :: apply_qrandom=.false.
-    DOUBLE PRECISION :: qrandom_exp=0.d0
+    DOUBLE PRECISION :: qrandom_exp=0.d0,qrandom_centre=0.d0
   END TYPE fit_form_type
 
   ! * Global range restriction info (applies to all datasets).
@@ -1417,15 +1417,27 @@ CONTAINS
           call msg('Enabled quasi-random error handling.')
 
         case('qrandom_exp')
-          ! Quasi-random noise handling (exponent).
+          ! Quasi-random noise handling (model exponent).
           t1=dble_field(3,command,ierr)
           if(ierr/=0)then
             call msg('Invalid value "'//trim(field(3,command))//'" for &
-               &variable qrandom.')
+               &variable qrandom_exp.')
             cycle user_loop
           endif
           fit%qrandom_exp=t1
-          write(6,'(a,es12.4,a)')'Set qrandom with exponent ',t1,'.'
+          write(6,'(a,es12.4,a)')'Set qrandom model exponent to ',t1,'.'
+          write(6,'()')
+
+        case('qrandom_centre')
+          ! Quasi-random noise handling (model centre).
+          t1=dble_field(3,command,ierr)
+          if(ierr/=0)then
+            call msg('Invalid value "'//trim(field(3,command))//'" for &
+               &variable qrandom_centre.')
+            cycle user_loop
+          endif
+          fit%qrandom_centre=t1
+          write(6,'(a,es12.4,a)')'Set qrandom model centre to ',t1,'.'
           write(6,'()')
 
         case('echo')
@@ -1506,6 +1518,9 @@ CONTAINS
         case('qrandom_exp')
           fit%qrandom_exp=0.d0
           call msg('qrandom_exp reset to 0.')
+        case('qrandom_centre')
+          fit%qrandom_centre=0.d0
+          call msg('qrandom_centre reset to 0.')
         case('echo')
           input_echo=.false.
           call msg('Disabled input echo.')
@@ -1571,8 +1586,9 @@ CONTAINS
         endif
         write(6,'("  X0 = ",a," =",es12.4)')trim(fit%x0_string),fit%X0
         if(fit%apply_qrandom)then
-          write(6,'(a,es12.4)')'Quasi-random noise handling enabled with &
-             &exponent ',fit%qrandom_exp
+          write(6,'(a,es12.4)')'Quasi-random noise handling enabled:'
+          write(6,'(a,es12.4)')'* Model exponent: ',fit%qrandom_exp
+          write(6,'(a,es12.4)')'* Model centre  : ',fit%qrandom_centre
         else
           write(6,'(a)')'Quasi-random noise handling disabled.'
         endif
@@ -1879,6 +1895,8 @@ CONTAINS
             call pprint('* centre',2,4)
             call pprint('* nsample',2,4)
             call pprint('* qrandom',2,4)
+            call pprint('* qrandom_exp',2,4)
+            call pprint('* qrandom_centre',2,4)
             call pprint('* echo',2,4)
             call pprint('')
             call pprint('Type "help set <variable>" for detailed &
@@ -2053,15 +2071,17 @@ CONTAINS
               call pprint('See "help set qrandom_exp" for details of the &
                  &form used to model quasirandom noise.',2,2)
               call pprint('')
-            case('qrandom_exp')
+            case('qrandom_exp','qrandom_centre')
               call pprint('')
-              call pprint('Variable: qrandom_exp',0,10)
+              call pprint('Variables: qrandom_exp / qrandom_centre',0,10)
               call pprint('')
-              call pprint('"qrandom_exp" is a real-valued exponent used to &
-                 &model the quasirandom noise in the data, which is assumed &
-                 &to follow sigma_Y = <alpha> * X^<qrandom>.  Coefficient &
-                 &alpha is obtained by a preliminary fit to the data, and the &
-                 &value of dY is adjusted to include sigma_Y.',2,2)
+              call pprint('Quasirandom noise in the data is modelled by &
+                 &sigma_Y = <alpha> * |X-<qrandom_centre>|^<qrandom_exp>.  &
+                 &Both qrandom_centre and qrandom_exponent default to zero. &
+                 &Coefficient alpha is obtained by a preliminary fit to the &
+                 &data.  Once alpha is found, sigma_Y is added in quadrature &
+                 &to the original value of dY in the dataset, thus including &
+                 &quasirandom noise as a contribution to the uncertainty.',2,2)
               call pprint('')
             case('echo')
               call pprint('Variable: echo',0,10)
@@ -2317,13 +2337,14 @@ CONTAINS
     TYPE(dataset_type),POINTER :: dataset
     ! Local variables.
     INTEGER iset,ixy,ipoly,ierr
-    DOUBLE PRECISION sexp,alpha2,dy2,e_fit,chi2,t0,t1,t2,&
+    DOUBLE PRECISION sexp,sx0,alpha2,dy2,e_fit,chi2,t0,t1,t2,&
        &a(fit%npoly,ndataset),alpha(ndataset),alpha_prime(ndataset)
 
     ! Initialize.
     alpha=0.d0
     if(.not.fit%apply_qrandom)return
     sexp=fit%qrandom_exp
+    sx0=fit%qrandom_centre
 
     ! Get un-resampled fit.
     call perform_multifit(ndataset,dlist,fit,chi2,a,ierr)
@@ -2352,8 +2373,8 @@ CONTAINS
         t1=t0**2
         t2=dataset%rtxy%dy(ixy)**2
         if(neq_dble(sexp,0.d0))then
-          t1=t1/dataset%rtxy%x(ixy)**(2*sexp)
-          t2=t2/dataset%rtxy%x(ixy)**(2*sexp)
+          t1=t1/abs(dataset%rtxy%x(ixy)-sx0)**(2*sexp)
+          t2=t2/abs(dataset%rtxy%x(ixy)-sx0)**(2*sexp)
         endif
         alpha2=alpha2+t1
         dy2=dy2+t2
@@ -2370,7 +2391,7 @@ CONTAINS
         dataset%rtxy%dy=sqrt(dataset%rtxy%dy**2+alpha2)
       else
         dataset%rtxy%dy=sqrt(dataset%rtxy%dy**2+&
-           &alpha2*dataset%rtxy%x**(2*sexp))
+           &alpha2*abs(dataset%rtxy%x-sx0)**(2*sexp))
       endif
       ! Unrestrict range to get txy.
       call back_transform(drange,dataset)
@@ -5453,6 +5474,7 @@ CONTAINS
     fit2%X0_string=fit1%X0_string
     fit2%apply_qrandom=fit1%apply_qrandom
     fit2%qrandom_exp=fit1%qrandom_exp
+    fit2%qrandom_centre=fit1%qrandom_centre
     call refresh_fit(size(dlist),dlist,fit2)
   END SUBROUTINE clone_fit_form
 
