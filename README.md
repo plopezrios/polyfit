@@ -1,12 +1,12 @@
 POLYFIT
 =======
-Toolbox for performing and manipulating polynomial fits of data with
+Toolbox for performing and manipulating polynomial fits to data with
 statistical uncertainties.
 
 POLYFIT uses Monte Carlo resampling to obtain uncertainties on
 quantities of interest, such as values and derivatives of the fit
 function, intersections between fits to different datasets, etc.
-Preliminary versions of POLYFIT has been used in e.g.,
+Early versions of POLYFIT have been used in e.g.,
 https://doi.org/10.1103/PhysRevB.98.161105 and
 https://doi.org/10.1103/PhysRevLett.120.177701 .
 
@@ -96,7 +96,7 @@ set echo
 # (see wexp later), splitting into different datasets for different values
 # of column 1.
 load ta_dmc_ecorr_fs.dat type xydyw using 2 3 4 2 by 1
-# Define X (independent variable in fit) at X=1/x, where x is the "x" value
+# Define X (independent variable in fit) as X=1/x, where x is the "x" value
 # in the dataset.
 set xscale reciprocal
 # Set the exponent of the weights to 2 -- i.e., the fit weights are column
@@ -137,7 +137,7 @@ Loaded data from "ta_dmc_ecorr_fs.dat" as dataset #1, type xydyw, 19 data.
 Loaded data from "ta_dmc_ecorr_fs.dat" as dataset #2, type xydyw, 20 data.
 Loaded data from "ta_dmc_ecorr_fs.dat" as dataset #3, type xydyw, 10 data.
 
-POLYFIT> # Define X (independent variable in fit) at X=1/x, where x is the "x" value
+POLYFIT> # Define X (independent variable in fit) as X=1/x, where x is the "x" value
 POLYFIT> # in the dataset.
 POLYFIT> set xscale reciprocal
 
