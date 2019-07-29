@@ -2761,6 +2761,7 @@ CONTAINS
         do iset3=1,ndataset
           do iset4=1,iset3-1
             if(mix_by_pairs.and.(iset1/=iset4.or.iset2/=iset3))cycle
+            if(iset4<iset1.or.(iset4==iset1.and.iset3<iset2))cycle
             ! Generate random numbers.
             if(any_have_dx)then
               ranx12=gaussian_random_number((/( 1.d0, i=1,max_nxy*nsample )/))
