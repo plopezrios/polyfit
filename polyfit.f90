@@ -2693,7 +2693,7 @@ CONTAINS
     TYPE(dataset_list_type),POINTER :: dlist_mix(:)
     LOGICAL is_consecutive,is_poly1,is_poly2,any_have_dx,any_have_dy,&
        &file_exists
-    INTEGER i,nsample,ierr,max_nxy,iset,iset1,iset2,iset3,iset4
+    INTEGER i,nsample,ierr,ierr1,ierr2,max_nxy,iset,iset1,iset2,iset3,iset4
     INTEGER,PARAMETER :: io=10
     DOUBLE PRECISION beta12,beta34,x0,dx0,y0,dy0,x0_best,dx0_best,&
        &y0_best,dy0_best,errfrac
@@ -2800,9 +2800,9 @@ CONTAINS
             if(len_trim(fname)>0)then
               allocate(dlist_mix(2))
               call construct_beta_dataset(drange,dlist(iset1)%dataset,&
-                 &dlist(iset2)%dataset,beta12,dlist_mix(1)%dataset,ierr)
+                 &dlist(iset2)%dataset,beta12,dlist_mix(1)%dataset,ierr1)
               call construct_beta_dataset(drange,dlist(iset2)%dataset,&
-                 &dlist(iset1)%dataset,beta34,dlist_mix(2)%dataset,ierr)
+                 &dlist(iset1)%dataset,beta34,dlist_mix(2)%dataset,ierr2)
               call plot_multipoly(2,dlist_mix,drange,fit,deval,mcparams,&
                  &trim(fname),append=.true.)
               call kill_dlist(dlist_mix)
