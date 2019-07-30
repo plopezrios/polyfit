@@ -1852,7 +1852,7 @@ CONTAINS
              &will be flagged if this is not consistently the case during &
              &random sampling.',2,2)
           call pprint('')
-          call pprint('The implementation tolerates up to 0.1% of the random &
+          call pprint('The implementation tolerates up to 1% of the random &
              &resample to yield no (or out-of-range) intersections.  The &
              &fraction of intersection failures is reported as "missfrac".  &
              &The failures are simply ignored in computing the results.',2,2)
@@ -3330,7 +3330,7 @@ CONTAINS
     INTEGER,INTENT(in) :: errvec(n)
     DOUBLE PRECISION,INTENT(inout) :: x0,dx0,y0,dy0,errfrac
     INTEGER,INTENT(inout) :: ierr
-    DOUBLE PRECISION,PARAMETER :: max_errfrac=0.001d0
+    DOUBLE PRECISION,PARAMETER :: max_errfrac=0.01d0
     DOUBLE PRECISION tvec(n),w_vector(n),var
     INTEGER nerr,nn
     ! Initialize.
