@@ -102,7 +102,7 @@ PROGRAM polyfit
 
   ! * Monte Carlo sampling parameters.
   TYPE mc_params_type
-    INTEGER :: nsample=10000
+    INTEGER :: nsample=5000
   END TYPE mc_params_type
 
   call main()
@@ -2048,9 +2048,9 @@ CONTAINS
               call pprint('"nsample" is an integer which determines the &
                  &number of Monte Carlo samples to use in the evaluation of &
                  &uncertainties. Note that the uncertainty ddY in an &
-                 &uncertainty dY is ddY = dY/sqrt(nsample).',2,2)
+                 &uncertainty dY is ddY = dY/sqrt(2*nsample).',2,2)
               call pprint('')
-              call pprint('The default value of "nsample" is 10000, which &
+              call pprint('The default value of "nsample" is 5000, which &
                  &yields an uncertainty in the estimated uncertainty of 1% of &
                  &its value.',2,2)
               call pprint('')
