@@ -3330,7 +3330,7 @@ CONTAINS
     INTEGER,INTENT(in) :: errvec(n)
     DOUBLE PRECISION,INTENT(inout) :: x0,dx0,y0,dy0,errfrac
     INTEGER,INTENT(inout) :: ierr
-    DOUBLE PRECISION,PARAMETER :: max_errfrac=0.01d0
+    DOUBLE PRECISION,PARAMETER :: max_errfrac=1.d0
     DOUBLE PRECISION tvec(n),w_vector(n),var
     INTEGER nerr,nn
     ! Initialize.
