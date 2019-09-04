@@ -874,11 +874,18 @@ CONTAINS
               cycle user_loop
             endif
             ifield=ifield+1
-            t1=dble_field(ifield,command,ierr1)
-            if(ierr1/=0)then
-              call msg('Syntax error: could not parse argument of &
-                 &"rightof" subcommand.')
-              cycle user_loop
+            if(trim(field(ifield,command))=='data')then
+              t1=maxval(dlist(1)%dataset%rtxy%x)
+              do iset=2,ndataset
+                t1=max(t1,maxval(dlist(iset)%dataset%rtxy%x))
+              enddo ! iset
+            else
+              t1=dble_field(ifield,command,ierr1)
+              if(ierr1/=0)then
+                call msg('Syntax error: could not parse argument of &
+                   &"rightof" subcommand.')
+                cycle user_loop
+              endif
             endif
             if(intersect_range%have_x2)then
               if(t1>=intersect_range%x2)then
@@ -895,11 +902,18 @@ CONTAINS
               cycle user_loop
             endif
             ifield=ifield+1
-            t2=dble_field(ifield,command,ierr2)
-            if(ierr2/=0)then
-              call msg('Syntax error: could not parse argument of &
-                 &"leftof" subcommand.')
-              cycle user_loop
+            if(trim(field(ifield,command))=='data')then
+              t2=minval(dlist(1)%dataset%rtxy%x)
+              do iset=2,ndataset
+                t2=min(t2,minval(dlist(iset)%dataset%rtxy%x))
+              enddo ! iset
+            else
+              t2=dble_field(ifield,command,ierr2)
+              if(ierr2/=0)then
+                call msg('Syntax error: could not parse argument of &
+                   &"leftof" subcommand.')
+                cycle user_loop
+              endif
             endif
             if(intersect_range%have_x1)then
               if(t2<=intersect_range%x1)then
@@ -1851,6 +1865,10 @@ CONTAINS
              &assumed to change sign only once in the interval.  An error &
              &will be flagged if this is not consistently the case during &
              &random sampling.',2,2)
+          call pprint('')
+          call pprint('It is possible to specify "rightof data" or "leftof &
+             &data", which respectively set X1 to the maximum value of X or &
+             &X2 to the minimum value of X found in the datasets.',2,2)
           call pprint('')
           call pprint('The implementation tolerates up to 1% of the random &
              &resample to yield no (or out-of-range) intersections.  The &
