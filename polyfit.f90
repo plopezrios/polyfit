@@ -86,6 +86,7 @@ PROGRAM polyfit
     CHARACTER(10) :: what='function'
     ! Relative to value at X0?
     LOGICAL :: rel=.false.
+    DOUBLE PRECISION :: Xrel=0.d0
     ! Derivative (0 for function, 1 for first, etc.).
     INTEGER :: nderiv=0
     ! Plot range definition.
@@ -593,7 +594,7 @@ CONTAINS
           call msg('No datasets loaded.')
           cycle user_loop
         endif
-        ! Initialize unused components.
+        ! Initialize components.
         deval%rel=.false.
         ! Get object to evaluate.
         select case(field(2,command))
@@ -646,6 +647,20 @@ CONTAINS
               call msg('Syntax error: could not parse range.')
               cycle user_loop
             endif
+            ifield=ifield+1
+          case('wrt')
+            if(nfield(command)<ifield+1)then
+              call msg('Syntax error: "wrt" subcommand must be followed &
+                 &by X value.')
+              cycle user_loop
+            endif
+            t1=dble_field(ifield+1,command,ierr)
+            if(ierr/=0)then
+              call msg('Syntax error: could not parse "wrt" value.')
+              cycle user_loop
+            endif
+            deval%rel=.true.
+            deval%Xrel=t1
             ifield=ifield+1
           case default
             call msg('Syntax error: unknown subcommand "'//&
@@ -778,7 +793,7 @@ CONTAINS
           call msg('No datasets loaded.')
           cycle user_loop
         endif
-        ! Initialize unused components.
+        ! Initialize components.
         deval%rel=.false.
         ! Get object to evaluate.
         select case(field(2,command))
@@ -806,13 +821,46 @@ CONTAINS
           cycle user_loop
         end select
         ! Get where to evaluate it at.
-        if(trim(field(3,command))/='at')then
-          call msg('Syntax error: missing "at" subcommand.')
-          cycle user_loop
-        endif
-        call parse_xeval(field(4,command),deval)
+        ifield=2
+        do
+          ifield=ifield+1
+          if(ifield>nfield(command))exit
+          select case(trim(field(ifield,command)))
+          case('at')
+            if(nfield(command)<ifield+1)then
+              call msg('Syntax error: "at" subcommand must be followed &
+                 &by X range.')
+              cycle user_loop
+            endif
+            call parse_xeval(field(ifield+1,command),deval)
+            if(.not.associated(deval%x))then
+              call msg('Syntax error: could not parse range.')
+              cycle user_loop
+            endif
+            ifield=ifield+1
+          case('wrt')
+            if(nfield(command)<ifield+1)then
+              call msg('Syntax error: "wrt" subcommand must be followed &
+                 &by X value.')
+              cycle user_loop
+            endif
+            t1=dble_field(ifield+1,command,ierr)
+            if(ierr/=0)then
+              call msg('Syntax error: could not parse "wrt" value.')
+              cycle user_loop
+            endif
+            deval%rel=.true.
+            deval%Xrel=t1
+            ifield=ifield+1
+          case default
+            call msg('Syntax error: unknown subcommand "'//&
+               &trim(field(ifield,command))//'".')
+            cycle user_loop
+          end select
+        enddo
+        ! Check that we have a range.
         if(.not.associated(deval%x))then
-          call msg('Syntax error: could not parse range.')
+          call msg('Must provide "at" subcommand to define range.')
           cycle user_loop
         endif
         ! Perform evaluation.
@@ -1733,7 +1781,7 @@ CONTAINS
         case('plot')
           call pprint('')
           call pprint('Command: plot <function> [at <xvalues>] &
-             &[to <filename>]',0,9)
+             &[to <filename>] [wrt <X>]',0,9)
           call pprint('')
           call pprint('Plot a function of the fit to <filename>.',2,2)
           call pprint('')
@@ -1748,6 +1796,16 @@ CONTAINS
           call pprint('<xvalues> is specified as &
              &"<variable>=<comma-separated-list>" (e.g., "X=0,1,2,3") or as &
              &"<variable>=<first>:<last>:<count>" (e.g., "X=0:3:4").',2,2)
+          call pprint('')
+          call pprint('The "wrt" option causes <function> to be evaluated &
+             &relative to its value at <X>.  This is useful for assessing the &
+             &statistics of the difference between values of the function at &
+             &different X; note that it is the uncertainty on this difference &
+             &that is written to the plot file, so, e.g., the plot value at X &
+             &will always have zero uncertainty.  With the "wrt" option, if &
+             &<function> is f or sharedf the original data are written with &
+             &their y values are offset by the *mean* value of <function> at &
+             &X.',2,2)
           call pprint('')
           call pprint('If any fit parameters are shared among datasets, the &
              &fit function is split into a shared part and a set-specific &
@@ -1813,7 +1871,8 @@ CONTAINS
           call pprint('')
         case('evaluate')
           call pprint('')
-          call pprint('Command: evaluate <function> at <xvalues>',0,9)
+          call pprint('Command: evaluate <function> at <xvalues> [wrt <X>]',&
+             &0,9)
           call pprint('')
           call pprint('Evaluate a function of the fit and print the value.',&
              &2,2)
@@ -1835,6 +1894,13 @@ CONTAINS
           call pprint('<xvalues> is specified as &
              &"<variable>=<comma-separated-list>" (e.g., "X=0,1,2,3") or as &
              &"<variable>=<first>:<last>:<count>" (e.g., "X=0:3:4").',2,2)
+          call pprint('')
+          call pprint('The "wrt" option causes <function> to be evaluated &
+             &relative to its value at <X>.  This is useful for assessing the &
+             &statistics of the difference between values of the function at &
+             &different X; note that it is the uncertainty on this difference &
+             &that is reported, so, e.g., the value reported at X will always &
+             &have zero uncertainty.',2,2)
           call pprint('')
         case('intersect')
           call pprint('')
@@ -3395,7 +3461,7 @@ CONTAINS
     ! Local variables.
     INTEGER iset,i,ierr,op_npoly
     LOGICAL do_append
-    DOUBLE PRECISION op_a(fit%npoly),op_pow(fit%npoly),tx0,tx1,t1
+    DOUBLE PRECISION op_a(fit%npoly),op_pow(fit%npoly),tx0,tx1,t1,f0
     DOUBLE PRECISION,ALLOCATABLE :: fmean(:,:),ferr(:,:),a(:,:)
     INTEGER,PARAMETER :: io=10
 
@@ -3457,24 +3523,27 @@ CONTAINS
         return
       endif
       if(deval%nderiv==0)then
+        f0=0.d0
         ! Plot data.
         do iset=1,ndataset
+          if(deval%rel)f0=eval_poly(fit%npoly,fit%pow,a(1,iset),&
+             &deval%Xrel-fit%X0)
           xy=>dlist(iset)%dataset%txy
           if(xy%have_dx.and.xy%have_dy)then
             do i=1,xy%nxy
-              write(io,*)xy%x(i),xy%y(i),xy%dx(i),xy%dy(i)
+              write(io,*)xy%x(i),xy%y(i)-f0,xy%dx(i),xy%dy(i)
             enddo ! i
           elseif(xy%have_dx)then
             do i=1,xy%nxy
-              write(io,*)xy%x(i),xy%y(i),xy%dx(i)
+              write(io,*)xy%x(i),xy%y(i)-f0,xy%dx(i)
             enddo ! i
           elseif(xy%have_dy)then
             do i=1,xy%nxy
-              write(io,*)xy%x(i),xy%y(i),xy%dy(i)
+              write(io,*)xy%x(i),xy%y(i)-f0,xy%dy(i)
             enddo ! i
           else
             do i=1,xy%nxy
-              write(io,*)xy%x(i),xy%y(i)
+              write(io,*)xy%x(i),xy%y(i)-f0
             enddo ! i
           endif
           write(io,'()')
@@ -4750,7 +4819,7 @@ CONTAINS
           do ideriv=1,deval%nderiv
             call deriv_poly(op_npoly,op_pow,op_a)
           enddo ! ideriv
-          if(deval%rel)f0=eval_poly(op_npoly,op_pow,op_a,-fit%X0)
+          if(deval%rel)f0=eval_poly(op_npoly,op_pow,op_a,deval%Xrel-fit%X0)
           do ix=1,deval%n
             t1=eval_poly(op_npoly,op_pow,op_a,deval%x(ix)-fit%X0)
             f_array(irandom,ix,1)=t1-f0
@@ -4766,7 +4835,7 @@ CONTAINS
             do ideriv=1,deval%nderiv
               call deriv_poly(op_npoly,op_pow,op_a)
             enddo ! ideriv
-            if(deval%rel)f0=eval_poly(op_npoly,op_pow,op_a,-fit%X0)
+            if(deval%rel)f0=eval_poly(op_npoly,op_pow,op_a,deval%Xrel-fit%X0)
             do ix=1,deval%n
               t1=eval_poly(op_npoly,op_pow,op_a,deval%x(ix)-fit%X0)
               if(trim(deval%what)=='sum')then
