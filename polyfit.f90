@@ -671,6 +671,87 @@ CONTAINS
         call plot_multipoly(ndataset,dlist,drange,fit,deval,mcparams,&
            &trim(fname))
 
+      case('probability')
+        if(ndataset<1)then
+          call msg('No datasets loaded.')
+          cycle user_loop
+        endif
+        ! Initialize components.
+        deval%rel=.false.
+        ! Get object to evaluate.
+        select case(field(2,command))
+        case("f")
+          deval%what='function'
+          deval%nderiv=0
+        case("f'")
+          deval%what='function'
+          deval%nderiv=1
+        case("f''")
+          deval%what='function'
+          deval%nderiv=2
+        case("sharedf")
+          deval%what='shared'
+          deval%nderiv=0
+        case("sharedf'")
+          deval%what='shared'
+          deval%nderiv=1
+        case("sharedf''")
+          deval%what='shared'
+          deval%nderiv=2
+        case default
+          call msg('Syntax error: unknown function "'//&
+             &trim(field(2,command))//'".')
+          cycle user_loop
+        end select
+        ! Get condition.
+        select case(field(3,command))
+        case('positive','negative')
+          token=field(3,command)
+        case default
+          call msg('Syntax error: unknown condition "'//&
+             &trim(field(3,command))//'".')
+          cycle user_loop
+        end select
+        ! Parse sub-commands.
+        ifield=3
+        do
+          ifield=ifield+1
+          if(ifield>nfield(command))exit
+          select case(trim(field(ifield,command)))
+          case('at')
+            if(nfield(command)<ifield+1)then
+              call msg('Syntax error: "at" subcommand must be followed &
+                 &by a data range.')
+              cycle user_loop
+            endif
+            call parse_xeval(trim(field(ifield+1,command)),deval)
+            if(.not.associated(deval%x))then
+              call msg('Syntax error: could not parse range.')
+              cycle user_loop
+            endif
+            ifield=ifield+1
+          case('wrt')
+            if(nfield(command)<ifield+1)then
+              call msg('Syntax error: "wrt" subcommand must be followed &
+                 &by X value.')
+              cycle user_loop
+            endif
+            t1=dble_field(ifield+1,command,ierr)
+            if(ierr/=0)then
+              call msg('Syntax error: could not parse "wrt" value.')
+              cycle user_loop
+            endif
+            deval%rel=.true.
+            deval%Xrel=t1
+            ifield=ifield+1
+          case default
+            call msg('Syntax error: unknown subcommand "'//&
+               &trim(field(ifield,command))//'".')
+            cycle user_loop
+          end select
+        enddo
+        call prob_multipoly(ndataset,dlist,drange,fit,deval,mcparams,token)
+
       case('assess')
         if(ndataset<1)then
           call msg('No datasets loaded.')
@@ -1679,7 +1760,8 @@ CONTAINS
              &<value>]',0,2)
           call pprint('* unload <set-index>',0,2)
           call pprint('* fit',0,2)
-          call pprint('* plot <object> [at <xvalues>] [to <file-name>]',0,2)
+          call pprint('* plot <function> [at <xvalues>] [wrt <X>] &
+             &[to <file-name>]',0,2)
           call pprint('* assess <variables> [using <function> at X <X> &
              &[for <set>]]',0,2)
           call pprint('* report <report>',0,2)
@@ -1687,6 +1769,8 @@ CONTAINS
           call pprint('* intersect [mix] [between <X1> <X2>] [rightof <X1>] &
              &[leftof <X2>] [near <Xmid>] [plot [at <xvalues>] &
              &[to <file-name>]]',0,2)
+          call pprint('* probability <function> [<condition>] [at <xvalues>] &
+             &[wrt <offset>]',0,2)
           call pprint('* set <variable> <value> [for <set-list>]',0,2)
           call pprint('* unset <variable>',0,2)
           call pprint('* status',0,2)
@@ -1780,8 +1864,8 @@ CONTAINS
           call pprint('')
         case('plot')
           call pprint('')
-          call pprint('Command: plot <function> [at <xvalues>] &
-             &[to <filename>] [wrt <X>]',0,9)
+          call pprint('Command: plot <function> [at <xvalues>] [wrt <X>] &
+             &[to <filename>]',0,9)
           call pprint('')
           call pprint('Plot a function of the fit to <filename>.',2,2)
           call pprint('')
@@ -1961,6 +2045,39 @@ CONTAINS
              &be plotted.  See "help plot" for details on the "at" and "to" &
              &subcommands.',2,2)
           call pprint('')
+
+        case('probability')
+          call pprint('')
+          call pprint('Command: probability <function> <condition> &
+             &at <xvalues> [wrt <X>]',0,9)
+          call pprint('')
+          call pprint('Evaluate the probability that <function> satisfies &
+             &<condition> (relative to <X>) at <xvalues>.',2,2)
+          call pprint('')
+          call pprint('<function> can be f, f'', or f'''' for the value, &
+             &first, and second derivative, respectively, or sharedf, &
+             &sharedf'', or sharedf'''' for the value, first, and second &
+             &derivative of the shared part of the fit function (for &
+             &multi-dataset fits containing shared parameters).',2,2)
+          call pprint('')
+          call pprint('<condition> can be either "positive" or "negative".',&
+             &2,2)
+          call pprint('')
+          call pprint('<xvalues> is specified as &
+             &"<variable>=<comma-separated-list>" (e.g., "X=0,1,2,3") or as &
+             &"<variable>=<first>:<last>:<count>" (e.g., "X=0:3:4").',2,2)
+          call pprint('')
+          call pprint('The "wrt" option causes <function> to be evaluated &
+             &relative to its value at <X>.  This is useful for assessing &
+             &whether the function is ever above or below the value at <X>.',&
+             &2,2)
+          call pprint('')
+          call pprint('If any fit parameters are shared among datasets, the &
+             &fit function is split into a shared part and a set-specific &
+             &part -- data points are offset by the value of the set-specific &
+             &part, and the shared part of the fit is assessed.',2,2)
+          call pprint('')
+
         case('set')
           if(nfield(command)==2)then
             call pprint('')
@@ -3618,6 +3735,81 @@ CONTAINS
   END SUBROUTINE plot_multipoly
 
 
+  SUBROUTINE prob_multipoly(ndataset,dlist,drange,fit,deval,mcparams,&
+     &fcondition)
+    !--------------------------------!
+    ! Perform chosen fit and report. !
+    !--------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: ndataset
+    TYPE(dataset_list_type),POINTER :: dlist(:)
+    TYPE(range_type),INTENT(in) :: drange
+    TYPE(fit_form_type),INTENT(in) :: fit
+    TYPE(eval_type),INTENT(inout) :: deval
+    TYPE(mc_params_type),INTENT(in) :: mcparams
+    CHARACTER(*),INTENT(in) :: fcondition
+    ! Quick-access pointers.
+    TYPE(dataset_type),POINTER :: dataset
+    ! Local variables.
+    INTEGER iset,i,ierr
+    DOUBLE PRECISION fcount(ndataset),tx0,tx1,t1
+
+    ! Define plot range if not provided.
+    if(.not.associated(deval%x))then
+      deval%var='X'
+      deval%n=101
+      allocate(deval%x(deval%n))
+      ! Get data range.
+      dataset=>dlist(1)%dataset
+      tx0=minval(dataset%txy%x)
+      tx1=maxval(dataset%txy%x)
+      do iset=2,ndataset
+        dataset=>dlist(iset)%dataset
+        tx0=min(tx0,minval(dataset%txy%x))
+        tx1=max(tx1,maxval(dataset%txy%x))
+      enddo ! iset
+      ! Extend range past far end and ensure we get to zero on near end.
+      t1=tx1-tx0
+      if(tx0>=0.d0)then
+        tx0=0.d0
+      else
+        tx0=tx0-0.25d0*t1
+      endif
+      if(tx1<=0.d0)then
+        tx1=0.d0
+      else
+        tx1=tx1+0.25d0*t1
+      endif
+      ! Generate grid.
+      do i=1,deval%n
+        deval%x(i)=tx0+(tx1-tx0)*dble(i-1)/dble(deval%n-1)
+      enddo ! i
+    endif
+
+    ! Perform fit and plot
+    call eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
+       &deval,ierr,fcount=fcount,fcondition=fcondition,silent=.true.)
+    if(ierr/=0)then
+      call msg('Could not perform fit.')
+      return
+    endif
+
+    ! Report.
+    write(6,'(4x)',advance='no')
+    write(6,'(2x,a4,2x,a20)')'set','Probability'
+    write(6,'(4x)',advance='no')
+    write(6,'(2x,26("-"))')
+    do iset=1,ndataset
+      write(6,'(a4)',advance='no')'PROB'
+      write(6,'(2x,i4,2x,es20.12)')iset,fcount(iset)
+    enddo ! iset
+    write(6,'(4x)',advance='no')
+    write(6,'(2x,26("-"))')
+    write(6,'()')
+
+  END SUBROUTINE prob_multipoly
+
+
   SUBROUTINE assess_fit(ndataset,dlist,drange,fit,mcparams,deval,eval_iset)
     !------------------------------------------------!
     ! Test convergence of chi^2/Ndf as a function of !
@@ -4699,7 +4891,8 @@ CONTAINS
 
   SUBROUTINE eval_multifit_monte_carlo(ndataset,dlist,drange,fit,mcparams,&
      &deval,ierr,fmean,ferr,chi2mean,chi2err,rmsymean,rmsyerr,amean,aerr,&
-     &fmean_1s,ferr_1s,fmean_2s,ferr_2s,fmed,fskew,fkurt,silent)
+     &fmean_1s,ferr_1s,fmean_2s,ferr_2s,fmed,fskew,fkurt,fcount,fcondition,&
+     &silent)
     !------------------------------------------------------!
     ! Perform Monte Carlo sampling of data space to obtain !
     ! fit values or derivatives at specified points with   !
@@ -4720,7 +4913,9 @@ CONTAINS
        &fmean_1s(deval%n,ndataset),ferr_1s(deval%n,ndataset),&
        &fmean_2s(deval%n,ndataset),ferr_2s(deval%n,ndataset),&
        &fmed(deval%n,ndataset),fskew(deval%n,ndataset),&
-       &fkurt(deval%n,ndataset)
+       &fkurt(deval%n,ndataset),&
+       &fcount(ndataset)
+    CHARACTER(*),INTENT(in),OPTIONAL :: fcondition
     LOGICAL,INTENT(in),OPTIONAL :: silent
     ! Quick-access pointers.
     TYPE(dataset_type),POINTER :: dataset
@@ -4755,7 +4950,8 @@ CONTAINS
     ! Figure out what we need and allocate arrays.
     need_f=present(fmean).or.present(ferr).or.present(fmean_1s).or.&
        &present(ferr_1s).or.present(fmean_2s).or.present(ferr_2s).or.&
-       &present(fmed).or.present(fskew).or.present(fkurt)
+       &present(fmed).or.present(fskew).or.present(fkurt).or.&
+       &(present(fcount).and.present(fcondition))
     need_f=need_f.and.deval%n>0
     need_chi2=present(chi2mean).or.present(chi2err)
     need_rmsy=present(rmsymean).or.present(rmsyerr)
@@ -4910,6 +5106,19 @@ CONTAINS
             endif
           enddo ! ix
         endif ! global "what".and.iset==1 or not
+        if(present(fcount).and.present(fcondition))then
+          fcount(iset)=0.d0
+          do irandom=1,nsample
+            if(fcondition=='negative')then
+              if(any(f_array(irandom,1:deval%n,iset)<0.d0))&
+                 &fcount(iset)=fcount(iset)+1.d0
+            else
+              if(any(f_array(irandom,1:deval%n,iset)>0.d0))&
+                 &fcount(iset)=fcount(iset)+1.d0
+            endif
+          enddo ! irandom
+          fcount(iset)=fcount(iset)/dble(nsample)
+        endif
       endif ! need_f
     enddo ! iset
 
