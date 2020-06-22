@@ -4502,11 +4502,11 @@ CONTAINS
       tx=x
       if(have_dx.and.present(dx).and.present(dtx))dtx=dx
     case(ITRANSF_REC)
-      tx=1.d0/x
+      tx=1.d0/abs(x)
       if(have_dx.and.present(dx).and.present(dtx))dtx=dx*tx**2
     case(ITRANSF_LOG)
-      tx=log(x)
-      if(have_dx.and.present(dx).and.present(dtx))dtx=dx/x
+      tx=log(abs(x))
+      if(have_dx.and.present(dx).and.present(dtx))dtx=dx/abs(x)
     case(ITRANSF_EXP)
       tx=exp(x)
       if(have_dx.and.present(dx).and.present(dtx))dtx=dx*tx
@@ -4531,14 +4531,14 @@ CONTAINS
       x=tx
       if(have_dx.and.present(dtx).and.present(dx))dx=dtx
     case(ITRANSF_REC)
-      x=1.d0/tx
+      x=1.d0/abs(tx)
       if(have_dx.and.present(dtx).and.present(dx))dx=dtx*x**2
     case(ITRANSF_LOG)
       x=exp(tx)
       if(have_dx.and.present(dtx).and.present(dx))dx=dtx*x
     case(ITRANSF_EXP)
-      x=log(tx)
-      if(have_dx.and.present(dtx).and.present(dx))dx=dtx/tx
+      x=log(abs(tx))
+      if(have_dx.and.present(dtx).and.present(dx))dx=dtx/abs(tx)
     end select
   END SUBROUTINE scale_untransform
 
