@@ -2190,8 +2190,9 @@ CONTAINS
               call pprint('- >T',4,6)
               call pprint('- [N (first N)',4,6)
               call pprint('- ]N (last N)',4,6)
+              call pprint('')
               call pprint('Note that in the above, T is a real-valued &
-                 &threshold, and N is an integer number.')
+                 &threshold, and N is an integer number.',2,4)
               call pprint('')
               call pprint('Note that "range" is a global variable, so the &
                  &"for <set-list>" syntax does not apply to this variable.',&
