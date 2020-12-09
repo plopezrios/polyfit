@@ -1,0 +1,7 @@
+set echo
+load energy.dat type xydy using 2:4
+load energy.dat type xydy using 2,9:10
+set centre 1
+set fit 0:2
+set qrandom
+intersect mix rightof data

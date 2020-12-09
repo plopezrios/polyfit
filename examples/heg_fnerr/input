@@ -1,0 +1,7 @@
+set echo
+set random 2
+load ta_fnerr_xi.dat type xydyw using 3,4,5,2 by $1
+set fit 0,3/3,4/3
+set wexp 2
+set shared 2:3
+evaluate f at X=0

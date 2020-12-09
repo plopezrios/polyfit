@@ -1,0 +1,27 @@
+# Enable input echo.
+set echo
+# Load datafile using x/y/dy from columns 2/3/4, weights from column 2
+# (see wexp later), splitting into different datasets for different values
+# of column 1.
+load ta_dmc_ecorr_fs.dat type xydyw using 2,3,4,2 by $1
+# Define X (independent variable in fit) as X=1/x, where x is the "x" value
+# in the dataset.
+set X 1/x
+# Set the exponent of the weights to 2 -- i.e., the fit weights are column
+# 2 (as per the above) squared.
+set wexp 2
+# Set the fit exponents.
+set fit 0,4/3,5/3,6/3
+# Restrict the data range for the fit.
+set range x>=15
+# Perform the fit and report parameters.
+fit
+# Evaluate the value of the fit at X=0.
+evaluate f at X=0
+# Just to double-check, evaluate the first derivative of the fit at X=0,
+# which must be zero.
+evaluate f' at X=0
+# Plot the fit (including uncertainties) to a file.
+plot f at X=0:0.25:1001 to plot_ta_dmc_ecorr_fs.dat
+# Find the intersection between each pair of datasets between X=0.01 and 0.1.
+intersect between 0.01 0.1

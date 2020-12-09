@@ -1,2 +1,4 @@
 polyfit
 .*.swp
+*~
+gmon.out

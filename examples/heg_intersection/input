@@ -1,0 +1,13 @@
+set echo
+load para_rescaled.dat
+load <<EOF type xydy
+100   1.28280  0.00040
+110   1.28477  0.00058
+125   1.28803  0.00056
+150   1.29309  0.00055
+EOF
+set fit 0:1,2
+set fit 0,-1/2 for 2
+status
+fit
+intersect between 50 150
