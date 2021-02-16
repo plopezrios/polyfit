@@ -2570,7 +2570,7 @@ CONTAINS
 
         case('intersect')
           call pprint('')
-          call pprint('Command: intersect [mix[pairs]] [between <X1> <X2>] &
+          call pprint('Command: intersect [mix] [between <X1> <X2>] &
              &[rightof <X1>] [leftof <X2>] [near <Xmid>] &
              &[plot [at <xvalues>] [to <file-name]]',0,9)
           call pprint('')
@@ -2607,17 +2607,16 @@ CONTAINS
              &fraction of intersection failures is reported as "missfrac".  &
              &The failures are simply ignored in computing the results.',2,2)
           call pprint('')
-          call pprint('Specifying "mix" or "mixpairs" triggers the use of an &
-             &alternative approach in which linear combinations of each pair &
-             &of datasets are constructed, and the intersection of each pair &
-             &of such "mixed" datasets is evaluated by minimizing the &
-             &uncertainty in the intersection abcissa with respect to two &
-             &linear parameters.  "mixpairs" restricts this to intersections &
-             &of linear combinations of the same two datasets.',2,2)
+          call pprint('Specifying "mix" triggers the use of an &
+             &alternative approach in which two linear combinations of each &
+             &pair of datasets are constructed, and the uncertainty in the &
+             &intersection abcissa is minimized with respect to the two &
+             &parameters BETA1 and BETA2 that define the linear &
+             &combinations.',2,2)
           call pprint('')
           call pprint('The "mix" method requires datasets to have the same &
              &number of data and the same x values, and that these x values &
-             &have no uncertainty. This method is advantageous in the &
+             &have no uncertainty.  This method is advantageous in the &
              &presence of quasirandom fluctuations which are correlated &
              &across different datasets; in this case it is advisable to set &
              &"qrandom" in addition to using the "mix" intersection method.',&
