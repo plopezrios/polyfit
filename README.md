@@ -33,9 +33,10 @@ the prompt for instructions.
 
 Usage example
 =============
-The following, which uses data reported in Phys. Rev. B 98, 161105
-(2018), summarizes the main capabilities of the code.  This example
-can be found under `examples/heg_demo`.
+The following, which uses data reported in
+https://doi.org/10.1103/PhysRevB.98.161105, summarizes the main
+capabilities of the code.  This example can be found under
+`examples/heg_demo`.
 
 
 ```
