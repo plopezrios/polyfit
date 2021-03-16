@@ -2310,9 +2310,9 @@ CONTAINS
              &of available commands is:')
           call pprint('')
           call pprint('* inspect <file>',0,2)
-          call pprint('* load <file> [type <type> using <columns>] &
-             &[where <column> <value>] [by <column>]',0,2)
-          call pprint('* wload <file> [using <column>] [where <column> &
+          call pprint('* load <file> [type <type> [using <column-list>]] &
+             &[where $<column>==<value>] [by $<column>]',0,2)
+          call pprint('* wload <file> [using <column>] [where $<column>==&
              &<value>]',0,2)
           call pprint('* unload <set-index>',0,2)
           call pprint('* fit',0,2)
@@ -2346,8 +2346,9 @@ CONTAINS
 
         case('load')
           call pprint('')
-          call pprint('Command: load <file> [type <type> [using <columns>]] &
-             &[where <column> <value>] [by <column>]',0,9)
+          call pprint('Command: load <file> [type <type> &
+             &[using <column-list>]] [where $<column>==<value>] &
+             &[by $<column>]',0,9)
           call pprint('')
           call pprint('Loads data from <file> into a new dataset.  By &
              &default:',2,2)
@@ -2386,8 +2387,8 @@ CONTAINS
           call pprint('')
           call pprint('Example:',2,2)
           call pprint('')
-          call pprint('load "../data.dat" type ywdy using 3 5 4 &
-             &where 2 "good" where 7 1/4 by 1',4,6)
+          call pprint('load "../data.dat" type ywdy using 3,5,4 &
+             &where $2==good where $7==1/4 by $1',4,6)
           call pprint('')
           call pprint('This will read file "../data.dat", loading y, dy, and &
              &w from colums 3, 4, and 5, setting x to the data-point index. &
@@ -2401,8 +2402,8 @@ CONTAINS
 
         case('wload')
           call pprint('')
-          call pprint('Command: wload <file> [using <column>] [where <column> &
-             &<value>]',0,9)
+          call pprint('Command: wload <file> [using <column>] &
+             &[where $<column>==<value>]',0,9)
           call pprint('')
           call pprint('Loads global dataset weights from column <column> &
              &(column 1 by default) of <file>.  These weights are applied to &
