@@ -5410,8 +5410,9 @@ CONTAINS
     INTEGER,ALLOCATABLE :: ipiv(:)
 
     ! Initialize.
-    ierr=0
     chi2=0.d0
+    a=0.d0
+    ierr=0
 
     ! Perpare storage for fit.
     npoly=fit%npoly
@@ -5502,6 +5503,8 @@ CONTAINS
     INTEGER,ALLOCATABLE :: ipiv(:)
 
     ! Initialize.
+    chi2=0.d0
+    a=0.d0
     ierr=0
 
     ! Extract fit properties.
@@ -6873,8 +6876,8 @@ CONTAINS
       if(present(err_stderr))err_stderr=sqrt(max(0.d0,&
          &0.5d0*K2/(dble(M)*dble(M-1))))
       if(present(var))var=K2
+      if(K2<=0.d0)return
     endif
-    if(K2<=0.d0)return
     if(M<3)return
     ! Compute skewness.
     if(present(skew).or.present(kurt))then
