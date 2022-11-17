@@ -166,7 +166,7 @@ CONTAINS
     INTEGER i,j,ifield,ierr,ipos_x,ipos_y,ipos_dx,ipos_dy,ipos_w,ierr1,&
        &ierr2,nxy,itransf,iset,jset,npoly,ifit,jfit,max_npoly
     INTEGER, POINTER :: ilist(:)
-    DOUBLE PRECISION t1,t2,wexp
+    DOUBLE PRECISION t1,t2,wexp,find_target
     DOUBLE PRECISION, POINTER :: rlist(:)
 
     ! Write header.
@@ -995,6 +995,156 @@ CONTAINS
         endif
         ! Perform evaluation.
         call evaluate_fit(ndataset,dlist,nfit,flist,glob,drange,deval)
+
+      case('find')
+
+        ! Initialize unused components.
+        deval%rel=.false.
+        ! Get object to evaluate.
+        select case(field(2,command))
+        case("f")
+          deval%what='function'
+          deval%nderiv=0
+        case("f'")
+          deval%what='function'
+          deval%nderiv=1
+        case("f''")
+          deval%what='function'
+          deval%nderiv=2
+        case("sumf")
+          deval%what='sum'
+          deval%nderiv=0
+        case("sumf'")
+          deval%what='sum'
+          deval%nderiv=1
+        case("sumf''")
+          deval%what='sum'
+          deval%nderiv=2
+        case default
+          call msg('Syntax error: unknown function "'//&
+             &trim(field(2,command))//'".')
+          cycle user_loop
+        end select
+
+        ! Get target value.
+        find_target=dble_field(3,command,ierr1)
+        if(ierr1/=0)then
+          call msg('Syntax error: could not parse target value.')
+          cycle user_loop
+        endif
+
+        ! Parse options.
+        intersect_range=intersect_range_default
+        ifield=4
+        do
+          select case(field(ifield,command))
+          case("between")
+            if(intersect_range%have_x1.or.intersect_range%have_x2)then
+              call msg('Left and/or right range limits specified more than &
+                 &once.')
+              cycle user_loop
+            endif
+            ifield=ifield+1
+            t1=dble_field(ifield,command,ierr1)
+            ifield=ifield+1
+            t2=dble_field(ifield,command,ierr2)
+            if(ierr1/=0.or.ierr2/=0)then
+              call msg('Syntax error: could not parse arguments of &
+                 &"between" subcommand.')
+              cycle user_loop
+            endif
+            if(t1>=t2)then
+              call msg('Syntax error: intersection range has non-positive &
+                 &length.')
+              cycle user_loop
+            endif
+            intersect_range%x1=t1
+            intersect_range%x2=t2
+            intersect_range%have_x1=.true.
+            intersect_range%have_x2=.true.
+          case("rightof")
+            if(intersect_range%have_x1)then
+              call msg('Left range limit specified more than once.')
+              cycle user_loop
+            endif
+            ifield=ifield+1
+            if(trim(field(ifield,command))=='data')then
+              t1=maxval(dlist(1)%dataset%rtxy%x)
+              do iset=2,ndataset
+                t1=max(t1,maxval(dlist(iset)%dataset%rtxy%x))
+              enddo ! iset
+            else
+              t1=dble_field(ifield,command,ierr1)
+              if(ierr1/=0)then
+                call msg('Syntax error: could not parse argument of &
+                   &"rightof" subcommand.')
+                cycle user_loop
+              endif
+            endif
+            if(intersect_range%have_x2)then
+              if(t1>=intersect_range%x2)then
+                call msg('Syntax error: intersection range has non-positive &
+                   &length.')
+                cycle user_loop
+              endif
+            endif
+            intersect_range%x1=t1
+            intersect_range%have_x1=.true.
+          case("leftof")
+            if(intersect_range%have_x2)then
+              call msg('Right range limit specified more than once.')
+              cycle user_loop
+            endif
+            ifield=ifield+1
+            if(trim(field(ifield,command))=='data')then
+              t2=minval(dlist(1)%dataset%rtxy%x)
+              do iset=2,ndataset
+                t2=min(t2,minval(dlist(iset)%dataset%rtxy%x))
+              enddo ! iset
+            else
+              t2=dble_field(ifield,command,ierr2)
+              if(ierr2/=0)then
+                call msg('Syntax error: could not parse argument of &
+                   &"leftof" subcommand.')
+                cycle user_loop
+              endif
+            endif
+            if(intersect_range%have_x1)then
+              if(t2<=intersect_range%x1)then
+                call msg('Syntax error: intersection range has non-positive &
+                   &length.')
+                cycle user_loop
+              endif
+            endif
+            intersect_range%x2=t2
+            intersect_range%have_x2=.true.
+          case("near")
+            if(intersect_range%have_xmid)then
+              call msg('"near" reference point specified more than once.')
+              cycle user_loop
+            endif
+            ifield=ifield+1
+            t1=dble_field(ifield,command,ierr1)
+            if(ierr1/=0)then
+              call msg('Syntax error: could not parse argument of &
+                 &"near" subcommand.')
+              cycle user_loop
+            endif
+            intersect_range%xmid=t1
+            intersect_range%have_xmid=.true.
+          case('')
+            exit
+          case default
+            call msg('Syntax error: "'//trim(field(ifield,command))//&
+               &'" subcommand missing.')
+            cycle user_loop
+          end select
+          ifield=ifield+1
+        enddo
+
+        ! Perform intersection.
+        call find_fit_value(ndataset,dlist,nfit,flist,glob,drange,&
+           &intersect_range,deval,find_target)
 
       case('intersect')
 
@@ -2322,6 +2472,8 @@ CONTAINS
              &[for <set-list>]]',0,2)
           call pprint('* report <report>',0,2)
           call pprint('* evaluate <function> at X <X>',0,2)
+          call pprint('* find <function> <value> [between <X1> <X2>] &
+             &[rightof <X1>] [leftof <X2>] [near <Xmid>]',0,2)
           call pprint('* intersect [mix] [between <X1> <X2>] [rightof <X1>] &
              &[leftof <X2>] [near <Xmid>] [plot [at <xvalues>] &
              &[to <file-name>]]',0,2)
@@ -2569,6 +2721,53 @@ CONTAINS
              &have zero uncertainty.',2,2)
           call pprint('')
 
+        case('find')
+          call pprint('')
+          call pprint('Command: find <function> <value> [between <X1> <X2>] &
+             &[rightof <X1>] [leftof <X2>] [near <Xmid>]',0,9)
+          call pprint('')
+          call pprint('Report the location X at which <function> takes the &
+             &value <value>.',2,2)
+          call pprint('')
+          call pprint('<function> can be:',2,2)
+          call pprint('* f for the fit value',2,4)
+          call pprint('* f'' for the first derivative of the fit function',2,4)
+          call pprint('* f'''' for the second derivative of the fit function',&
+             &2,4)
+          call pprint('* sumf for the sum of fit values over all detasets &
+             &(weighted sum if dataset weights loaded)',2,4)
+          call pprint('* sumf'' for the sum of the first derivative of the &
+             &fit function over all datasets (weighted sum if dataset weights &
+             &loaded)',2,4)
+          call pprint('* sumf'''' for the sum of the second derivative of the &
+             &fit function over all datasets (weighted sum if dataset weights &
+             &loaded)',2,4)
+          call pprint('')
+          call pprint('If <function> is a linear polynomial, limits X1 and/or &
+             &X2 can be provided optionally, which will cause an error to be &
+             &flagged if <function> is not <value> in the range [X1,X2].  &
+             &Xmid is ignored in this case.',2,2)
+          call pprint('')
+          call pprint('If <function> is a quadratic polynomial, at least one &
+             &of X1, X2, and Xmid must be provided, which selects which of &
+             &the (potentially two) locations to choose.',2,2)
+          call pprint('')
+          call pprint('For all other fit forms, X1 and X2 must be provided, &
+             &and Xmid is ignored.  <function> minus <value> is required to &
+             &be of opposite signs at X1 and X2, and is assumed to change &
+             &sign only once in the interval.  An error will be flagged if &
+             &this is not consistently the case during random sampling.',2,2)
+          call pprint('')
+          call pprint('It is possible to specify "rightof data" or "leftof &
+             &data", which respectively set X1 to the maximum value of X or &
+             &X2 to the minimum value of X found in the datasets.',2,2)
+          call pprint('')
+          call pprint('The implementation tolerates up to 1% of the random &
+             &resample to yield no (or out-of-range) locations.  The &
+             &fraction of failures is reported as "missfrac".  The failures &
+             &are simply ignored in computing the results.',2,2)
+          call pprint('')
+
         case('intersect')
           call pprint('')
           call pprint('Command: intersect [mix] [between <X1> <X2>] &
@@ -2583,7 +2782,7 @@ CONTAINS
              &location of the intersection.  This operation requires two or &
              &more datasets to be loaded.',2,2)
           call pprint('')
-          call pprint('For linear fits, limits X1 andi/or X2 can be provided &
+          call pprint('For linear fits, limits X1 and/or X2 can be provided &
              &optionally, which will cause an error to be flagged if the &
              &intersection is not in the range [X1,X2].  Xmid is ignored &
              &in this case.',2,2)
@@ -3438,6 +3637,204 @@ CONTAINS
     deallocate(fmean,ferr)
 
   END SUBROUTINE evaluate_fit
+
+
+  SUBROUTINE find_fit_value(ndataset,dlist,nfit,flist,glob,drange,&
+    &intersect_range,deval,find_target)
+    !----------------------------------------------!
+    ! Find the location of the requested value and !
+    ! report to stdout.                            !
+    !----------------------------------------------!
+    IMPLICIT NONE
+    INTEGER,INTENT(in) :: ndataset,nfit
+    TYPE(dataset_list_type),POINTER :: dlist(:)
+    TYPE(fit_form_list_type),POINTER :: flist(:)
+    TYPE(global_params_type),INTENT(in) :: glob
+    TYPE(range_type),INTENT(in) :: drange
+    TYPE(intersect_range_type),INTENT(in) :: intersect_range
+    TYPE(eval_type),INTENT(in) :: deval
+    DOUBLE PRECISION,INTENT(in) :: find_target
+    ! Monte Carlo sample storage.
+    DOUBLE PRECISION,ALLOCATABLE :: w_vector(:)
+    DOUBLE PRECISION,ALLOCATABLE :: x0_array(:,:),y0_array(:,:)
+    INTEGER,ALLOCATABLE :: err_array(:,:)
+    ! Combined fit.
+    INTEGER,ALLOCATABLE :: map1(:,:),map2(:,:)
+    TYPE(fit_form_list_type),POINTER :: tmp_flist(:)
+    ! Parameter vector.
+    INTEGER max_npoly
+    DOUBLE PRECISION,ALLOCATABLE :: a(:,:),a_diff(:),a_target(:)
+    ! Pointers.
+    TYPE(dataset_list_type),POINTER :: tmp_dlist(:)
+    TYPE(dataset_type),POINTER :: dataset
+    TYPE(xy_type),POINTER :: xy,xy_orig
+    ! Local variables.
+    TYPE(fit_form_type),POINTER :: fit_form_target,tmp_fit_form
+    LOGICAL is_consecutive,all_are_poly1,all_are_poly2
+    INTEGER ifit,i,iset,irandom,nsample,ierr,ideriv
+    DOUBLE PRECISION x0,y0,dx0,dy0,errfrac,chi2
+    INTEGER op_npoly
+    DOUBLE PRECISION,ALLOCATABLE :: op_a(:),op_pow(:)
+
+    ! Build fit corresponding to target value.
+    allocate(fit_form_target)
+    allocate(fit_form_target%pow(1),fit_form_target%share(1),a_target(1))
+    fit_form_target%npoly=1
+    fit_form_target%pow(1)=0.d0
+    fit_form_target%share(1)=.false.
+    a_target(1)=find_target
+
+    ! Allocate op_* vectors, tmp_fit_form, and parameter vectors.
+    max_npoly=0
+    do ifit=1,nfit
+      max_npoly=max(max_npoly,flist(ifit)%fit%npoly)
+    enddo ! ifit
+    allocate(op_a(max_npoly),op_pow(max_npoly))
+    op_a=0.d0
+    op_pow=0.d0
+    allocate(tmp_fit_form)
+    allocate(tmp_fit_form%pow(max_npoly),tmp_fit_form%share(max_npoly))
+    tmp_fit_form%npoly=0
+    tmp_fit_form%pow=0.d0
+    tmp_fit_form%share=.false.
+    allocate(a(max_npoly,ndataset),a_diff(1+max_npoly))
+    a=0.d0
+    a_diff=0.d0
+
+    ! Range checks.
+    all_are_poly1=.true.
+    all_are_poly2=.true.
+    do ifit=1,nfit
+      op_npoly=flist(ifit)%fit%npoly
+      op_pow(1:op_npoly)=flist(ifit)%fit%pow(1:op_npoly)
+      do ideriv=1,deval%nderiv
+        call deriv_poly(op_npoly,op_pow,op_a)
+      enddo ! ideriv
+      is_consecutive=all(eq_dble(op_pow(1:op_npoly),&
+         &(/(dble(i-1),i=1,op_npoly)/)))
+      all_are_poly1=all_are_poly1.and.is_consecutive.and.&
+         &op_npoly==2.and.neq_dble(op_pow(op_npoly),0.d0)
+      all_are_poly2=all_are_poly2.and.is_consecutive.and.&
+         &op_npoly==3.and.neq_dble(op_pow(op_npoly),0.d0)
+    enddo
+    if(all_are_poly2)then
+      if(.not.intersect_range%have_x1.and..not.intersect_range%have_x2.and.&
+         &.not.intersect_range%have_xmid)then
+        call msg('Need at least one reference point to intersect &
+           &second-order polynomials.')
+        call kill_fit_form(tmp_fit_form)
+        call kill_fit_form(fit_form_target)
+        return
+      endif
+    elseif(.not.all_are_poly1)then
+      if(.not.intersect_range%have_x1.or..not.intersect_range%have_x2)then
+        call msg('Need explicit range to intersect generic polynomials.')
+        call kill_fit_form(tmp_fit_form)
+        call kill_fit_form(fit_form_target)
+        return
+      endif
+    endif
+
+    ! Build combination fit forms.
+    allocate(tmp_flist(nfit),map1(1+max_npoly,nfit),map2(1+max_npoly,nfit))
+    map1=0
+    map2=0
+    do ifit=1,nfit
+      op_npoly=flist(ifit)%fit%npoly
+      op_pow(1:op_npoly)=flist(ifit)%fit%pow(1:op_npoly)
+      do ideriv=1,deval%nderiv
+        call deriv_poly(op_npoly,op_pow,op_a)
+      enddo ! ideriv
+      tmp_fit_form%npoly=op_npoly
+      tmp_fit_form%pow(1:op_npoly)=op_pow(1:op_npoly)
+      call combine_fit_form(tmp_fit_form,fit_form_target,&
+         &tmp_flist(ifit)%fit,map1(1,ifit),map2(1,ifit))
+    enddo ! ifit
+
+    ! Make copy of datasets and apply qrandom.
+    call clone_dlist(dlist,tmp_dlist)
+    call qrandom_apply(ndataset,tmp_dlist,drange,nfit,flist,glob%X0)
+
+    ! Allocate storage for location of intersection.
+    allocate(w_vector(glob%nsample))
+    allocate(x0_array(glob%nsample,ndataset),y0_array(glob%nsample,ndataset),&
+       &err_array(glob%nsample,ndataset))
+    x0_array=0.d0
+    y0_array=0.d0
+    err_array=0
+    w_vector=1.d0
+
+    ! Initialize.
+    nsample=glob%nsample
+
+    ! Loop over random points.
+    irandom=0
+    do irandom=1,nsample
+      do iset=1,ndataset
+        dataset=>tmp_dlist(iset)%dataset
+        xy=>dataset%xy
+        xy_orig=>dlist(iset)%dataset%xy
+        ! Using xy%dx and xy%dy so we get qrandom accounted for.
+        if(xy%have_dx)xy%x=xy_orig%x+gaussian_random_number(xy%dx)
+        if(xy%have_dy)xy%y=xy_orig%y+gaussian_random_number(xy%dy)
+        call refresh_dataset(dataset,drange)
+      enddo ! iset
+      call perform_multifit(ndataset,tmp_dlist,glob%X0,nfit,flist,chi2,a,ierr)
+      if(ierr/=0)then
+        call kill_fit_form(tmp_fit_form)
+        call kill_fit_form(fit_form_target)
+        call kill_dlist(tmp_dlist)
+        call kill_flist(tmp_flist)
+        call msg('Could not perform fit.')
+        return
+      endif
+      ! Loop over datasets.
+      do iset=1,ndataset
+        ifit=tmp_dlist(iset)%dataset%ifit
+        op_npoly=flist(ifit)%fit%npoly
+        op_pow(1:op_npoly)=flist(ifit)%fit%pow(1:op_npoly)
+        op_a(1:op_npoly)=a(1:op_npoly,iset)
+        do ideriv=1,deval%nderiv
+          call deriv_poly(op_npoly,op_pow,op_a)
+        enddo ! ideriv
+        tmp_fit_form%npoly=op_npoly
+        tmp_fit_form%pow=op_pow(1:op_npoly)
+        call combine_fit_coeffs(tmp_fit_form,fit_form_target,&
+           &tmp_flist(ifit)%fit,map1(1,ifit),map2(1,ifit),op_a,&
+           &a_target,1.d0,-1.d0,a_diff)
+        ! Find intersection between sets ISET and JSET.
+        call intersect_zero(tmp_flist(ifit)%fit,glob%X0,a_diff,&
+           &intersect_range,x0,ierr)
+        x0_array(irandom,iset)=x0
+        err_array(irandom,iset)=ierr
+      enddo ! iset
+    enddo ! irandom
+
+    ! Compute and report location of value.
+    write(6,'(a)')'Location of values:'
+    write(6,'(4x)',advance='no')
+    write(6,'(1x,a3,3(1x,a20))')'Set','X0          ','DX0         ',&
+       &'missfrac      '
+    do iset=1,ndataset
+      call forgiving_analysis(nsample,x0_array(1,iset),y0_array(1,iset),&
+         &err_array(1,iset),x0,dx0,y0,dy0,errfrac,ierr)
+      if(ierr==0)then
+        write(6,'(a4)',advance='no')'FIND'
+        write(6,'(1x,i3,3(1x,es20.12))')iset,x0,dx0,errfrac
+      else
+        write(6,'(a4)',advance='no')'FIND'
+        write(6,'(1x,i3,3(1x,es20.12))')iset,0.d0,0.d0,errfrac
+      endif
+    enddo ! iset
+    write(6,'()')
+
+    ! Clean up.
+    call kill_fit_form(tmp_fit_form)
+    call kill_fit_form(fit_form_target)
+    call kill_dlist(tmp_dlist)
+    call kill_flist(tmp_flist)
+
+  END SUBROUTINE find_fit_value
 
 
   SUBROUTINE intersect_fit(ndataset,dlist,nfit,flist,glob,drange,&
