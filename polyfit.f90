@@ -1045,18 +1045,29 @@ CONTAINS
               cycle user_loop
             endif
             ifield=ifield+1
-            t1=dble_field(ifield,command,ierr1)
-            ifield=ifield+1
-            t2=dble_field(ifield,command,ierr2)
-            if(ierr1/=0.or.ierr2/=0)then
-              call msg('Syntax error: could not parse arguments of &
-                 &"between" subcommand.')
-              cycle user_loop
-            endif
-            if(t1>=t2)then
-              call msg('Syntax error: intersection range has non-positive &
-                 &length.')
-              cycle user_loop
+            if(trim(field(ifield,command))=='data')then
+              t1=minval(dlist(1)%dataset%rtxy%x)
+              do iset=2,ndataset
+                t1=min(t1,minval(dlist(iset)%dataset%rtxy%x))
+              enddo ! iset
+              t2=maxval(dlist(1)%dataset%rtxy%x)
+              do iset=2,ndataset
+                t2=max(t2,maxval(dlist(iset)%dataset%rtxy%x))
+              enddo ! iset
+            else
+              t1=dble_field(ifield,command,ierr1)
+              ifield=ifield+1
+              t2=dble_field(ifield,command,ierr2)
+              if(ierr1/=0.or.ierr2/=0)then
+                call msg('Syntax error: could not parse arguments of &
+                   &"between" subcommand.')
+                cycle user_loop
+              endif
+              if(t1>=t2)then
+                call msg('Syntax error: intersection range has non-positive &
+                   &length.')
+                cycle user_loop
+              endif
             endif
             intersect_range%x1=t1
             intersect_range%x2=t2
@@ -1175,18 +1186,29 @@ CONTAINS
               cycle user_loop
             endif
             ifield=ifield+1
-            t1=dble_field(ifield,command,ierr1)
-            ifield=ifield+1
-            t2=dble_field(ifield,command,ierr2)
-            if(ierr1/=0.or.ierr2/=0)then
-              call msg('Syntax error: could not parse arguments of &
-                 &"between" subcommand.')
-              cycle user_loop
-            endif
-            if(t1>=t2)then
-              call msg('Syntax error: intersection range has non-positive &
-                 &length.')
-              cycle user_loop
+            if(trim(field(ifield,command))=='data')then
+              t1=minval(dlist(1)%dataset%rtxy%x)
+              do iset=2,ndataset
+                t1=min(t1,minval(dlist(iset)%dataset%rtxy%x))
+              enddo ! iset
+              t2=maxval(dlist(1)%dataset%rtxy%x)
+              do iset=2,ndataset
+                t2=max(t2,maxval(dlist(iset)%dataset%rtxy%x))
+              enddo ! iset
+            else
+              t1=dble_field(ifield,command,ierr1)
+              ifield=ifield+1
+              t2=dble_field(ifield,command,ierr2)
+              if(ierr1/=0.or.ierr2/=0)then
+                call msg('Syntax error: could not parse arguments of &
+                   &"between" subcommand.')
+                cycle user_loop
+              endif
+              if(t1>=t2)then
+                call msg('Syntax error: intersection range has non-positive &
+                   &length.')
+                cycle user_loop
+              endif
             endif
             intersect_range%x1=t1
             intersect_range%x2=t2
@@ -2760,7 +2782,9 @@ CONTAINS
           call pprint('')
           call pprint('It is possible to specify "rightof data" or "leftof &
              &data", which respectively set X1 to the maximum value of X or &
-             &X2 to the minimum value of X found in the datasets.',2,2)
+             &X2 to the minimum value of X found in the datasets.  Also &
+             &accepted is "between data", which sets X1 and X2 to the minimum &
+             &and maximum value of X found in the datasets, respectively.',2,2)
           call pprint('')
           call pprint('The implementation tolerates up to 1% of the random &
              &resample to yield no (or out-of-range) locations.  The &
@@ -2800,7 +2824,9 @@ CONTAINS
           call pprint('')
           call pprint('It is possible to specify "rightof data" or "leftof &
              &data", which respectively set X1 to the maximum value of X or &
-             &X2 to the minimum value of X found in the datasets.',2,2)
+             &X2 to the minimum value of X found in the datasets.  Also &
+             &accepted is "between data", which sets X1 and X2 to the minimum &
+             &and maximum value of X found in the datasets, respectively.',2,2)
           call pprint('')
           call pprint('The implementation tolerates up to 1% of the random &
              &resample to yield no (or out-of-range) intersections.  The &
