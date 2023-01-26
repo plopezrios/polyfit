@@ -3831,7 +3831,10 @@ CONTAINS
         ! Find intersection between sets ISET and JSET.
         call intersect_zero(tmp_flist(ifit)%fit,glob%X0,a_diff,&
            &intersect_range,x0,ierr)
+        y0=eval_poly(flist(ifit)%fit%npoly,flist(ifit)%fit%pow,a(1,iset),&
+           &x0-glob%X0)
         x0_array(irandom,iset)=x0
+        y0_array(irandom,iset)=y0
         err_array(irandom,iset)=ierr
       enddo ! iset
     enddo ! irandom
@@ -3840,16 +3843,16 @@ CONTAINS
     write(6,'(a)')'Location of values:'
     write(6,'(4x)',advance='no')
     write(6,'(1x,a3,3(1x,a20))')'Set','X0          ','DX0         ',&
-       &'missfrac      '
+       &'Y0          ','DY0         ','missfrac      '
     do iset=1,ndataset
       call forgiving_analysis(nsample,x0_array(1,iset),y0_array(1,iset),&
          &err_array(1,iset),x0,dx0,y0,dy0,errfrac,ierr)
       if(ierr==0)then
         write(6,'(a4)',advance='no')'FIND'
-        write(6,'(1x,i3,3(1x,es20.12))')iset,x0,dx0,errfrac
+        write(6,'(1x,i3,5(1x,es20.12))')iset,x0,dx0,y0,dy0,errfrac
       else
         write(6,'(a4)',advance='no')'FIND'
-        write(6,'(1x,i3,3(1x,es20.12))')iset,0.d0,0.d0,errfrac
+        write(6,'(1x,i3,5(1x,es20.12))')iset,0.d0,0.d0,0.d0,0.d0,errfrac
       endif
     enddo ! iset
     write(6,'()')
