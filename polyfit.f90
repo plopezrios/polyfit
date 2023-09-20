@@ -3421,7 +3421,7 @@ CONTAINS
     LOGICAL any_apply_qrandom
     INTEGER max_npoly,ifit,iset,ixy,ipoly,ierr
     DOUBLE PRECISION sexp,sx0,alpha2,dy2,e_fit,chi2,t0,t1,t2,&
-       &alpha(ndataset),alpha_prime(ndataset)
+       &alpha(ndataset),alpha_prime(ndataset),dy2_save(ndataset)
     DOUBLE PRECISION,ALLOCATABLE :: a(:,:)
 
     ! See if we have anything to do here.
@@ -3480,6 +3480,7 @@ CONTAINS
       enddo ! ixy
       alpha2=alpha2/dble(dataset%rtxy%nxy-flist(ifit)%fit%npoly)
       ! alpha_prime is alpha pre dy correction.
+      dy2_save(iset)=sqrt(dy2/dble(dataset%rtxy%nxy))
       alpha_prime(iset)=sqrt(alpha2)
       alpha2=alpha2-dy2/dble(dataset%rtxy%nxy)
       if(le_dble(alpha2,0.d0))alpha2=0.d0
@@ -3501,9 +3502,11 @@ CONTAINS
       if(report)then
         write(6,'(a)')'Quasi-random noise'
         write(6,'(a)')'------------------'
-        write(6,'(2x,a5,1x,2(1x,a20))')'Set','alpha       ','alpha''      '
+        write(6,'(2x,a5,1x,3(1x,a20))')'Set','alpha       ','stddev       ',&
+           &'dy         '
         do iset=1,ndataset
-          write(6,'(2x,i5,1x,2(1x,es20.12))')iset,alpha(iset),alpha_prime(iset)
+          write(6,'(2x,i5,1x,3(1x,es20.12))')iset,alpha(iset),&
+             &alpha_prime(iset),dy2_save(iset)
         enddo ! iset
         write(6,'()')
       endif
