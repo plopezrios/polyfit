@@ -148,7 +148,7 @@ CONTAINS
     DOUBLE PRECISION wexp_default
     ! Input file information.
     INTEGER ncolumn,icol_x,icol_y,icol_dx,icol_dy,icol_w
-    CHARACTER(256) fname
+    CHARACTER(256) fname,dname
     ! Input file search facility.
     INTEGER,PARAMETER :: search_size=8192
     INTEGER nsearch,ndiscr
@@ -1165,10 +1165,11 @@ CONTAINS
           cycle user_loop
         endif
 
-        ! Initialize unused components.
+        ! Initialize.
         deval%rel=.false.
         deval%what='function'
         deval%nderiv=0
+        dname=''
         fname=''
 
         ! Parse options.
@@ -1320,6 +1321,26 @@ CONTAINS
               call msg('Syntax error: no range given for "plot" subcommand.')
               cycle user_loop
             endif
+          case('dump')
+            if(len_trim(dname)>0)then
+              call msg('Syntax error: "dump" subcommand found twice.')
+              cycle user_loop
+            endif
+            dname='intersection.dump'
+            do
+              select case(trim(field(ifield+1,command)))
+              case('to')
+                if(nfield(command)<ifield+2)then
+                  call msg('Syntax error: "to" subcommand must be followed &
+                     &by a filename.')
+                  cycle user_loop
+                endif
+                dname=field(ifield+2,command)
+                ifield=ifield+2
+              case default
+                exit
+              end select
+            enddo
           case('')
             exit
           case default
@@ -1335,11 +1356,15 @@ CONTAINS
           call msg('"plot" subcommand only available for "intersect mix".')
           cycle user_loop
         endif
+        if(use_mix.and.len_trim(dname)>0)then
+          call msg('"dump" subcommand not available for "intersect mix".')
+          cycle user_loop
+        endif
 
         ! Perform intersection.
         if(.not.use_mix)then
           call intersect_fit(ndataset,dlist,nfit,flist,glob,drange,&
-             &intersect_range)
+             &intersect_range,dname)
         else
           call intersect_mix_fit(ndataset,dlist,nfit,flist,glob,drange,&
              &intersect_range,deval,fname)
@@ -2795,8 +2820,8 @@ CONTAINS
         case('intersect')
           call pprint('')
           call pprint('Command: intersect [mix] [between <X1> <X2>] &
-             &[rightof <X1>] [leftof <X2>] [near <Xmid>] &
-             &[plot [at <xvalues>] [to <file-name]]',0,9)
+             &[rightof <X1>] [leftof <X2>] [near <Xmid>] [plot [at <xvalues>] &
+             &[to <file-name>]] [dump [to <file-name>]]',0,9)
           call pprint('')
           call pprint('Evaluate the average location of the intersections &
              &between each pair of datasets.',2,2)
@@ -2851,6 +2876,12 @@ CONTAINS
           call pprint('The "plot" subcommand causes the "mix" datasets to &
              &be plotted.  See "help plot" for details on the "at" and "to" &
              &subcommands.',2,2)
+          call pprint('')
+          call pprint('The "dump" subcommand causes a scatter plot of the &
+             &intersections found during random sampling to be dumped to &
+             &<file-name> ("intersection.dump" by default), with plots for &
+             &different dataset-pair intersections separated by two blank &
+             &lines.',2,2)
           call pprint('')
 
         case('probability')
@@ -3870,7 +3901,7 @@ CONTAINS
 
 
   SUBROUTINE intersect_fit(ndataset,dlist,nfit,flist,glob,drange,&
-     &intersect_range)
+     &intersect_range,dname)
     !------------------------------------------------!
     ! Find the intersection of all dataset pairs and !
     ! report to stdout.                              !
@@ -3882,6 +3913,7 @@ CONTAINS
     TYPE(global_params_type),INTENT(in) :: glob
     TYPE(range_type),INTENT(in) :: drange
     TYPE(intersect_range_type),INTENT(in) :: intersect_range
+    CHARACTER(*),INTENT(in) :: dname
     ! Monte Carlo sample storage.
     DOUBLE PRECISION,ALLOCATABLE :: w_vector(:)
     DOUBLE PRECISION,ALLOCATABLE :: x0_array(:,:),y0_array(:,:)
@@ -3898,7 +3930,8 @@ CONTAINS
     TYPE(dataset_type),POINTER :: dataset
     TYPE(xy_type),POINTER :: xy,xy_orig
     ! Local variables.
-    LOGICAL is_consecutive,all_are_poly1,all_are_poly2
+    INTEGER,PARAMETER :: io=10
+    LOGICAL is_consecutive,all_are_poly1,all_are_poly2,file_exists
     INTEGER ifit,jfit,icfit,ncfit,i,iset,jset,iyy,nyy,irandom,nsample,ierr
     DOUBLE PRECISION x0,y0,dx0,dy0,errfrac,chi2
 
@@ -4002,14 +4035,48 @@ CONTAINS
           ! Find intersection between sets ISET and JSET.
           call intersect_zero(tmp_flist(icfit)%fit,glob%X0,a_diff,&
              &intersect_range,x0,ierr)
-          y0=eval_poly(flist(ifit)%fit%npoly,flist(ifit)%fit%pow,a(1,iset),&
-             &x0-glob%X0)
+          select case(ierr)
+          case(0)
+            y0=eval_poly(flist(ifit)%fit%npoly,flist(ifit)%fit%pow,a(1,iset),&
+               &x0-glob%X0)
+          case default
+            x0=0.d0
+            y0=0.d0
+          end select
           x0_array(irandom,iyy)=x0
           y0_array(irandom,iyy)=y0
           err_array(irandom,iyy)=ierr
         enddo ! jset
       enddo ! iset
     enddo ! irandom
+
+    ! Dump scatter plot if requested.
+    if(len_trim(dname)/=0)then
+      ! Delete existing dump file.
+      inquire(file=trim(dname),exist=file_exists)
+      if(file_exists)then
+        open(io,file=trim(dname),status='old')
+        close(io,status='delete')
+      endif
+      open(unit=io,file=dname,status='new',iostat=ierr)
+      ! Loop over pairs of datasets.
+      iyy=0
+      do iset=1,ndataset
+        do jset=iset+1,ndataset
+          iyy=iyy+1
+          ! Dump scatter plot.
+          write(io,'("# Intersection of datasets ",i3," and ",i3)')iset,jset
+          do irandom=1,nsample
+            write(io,'(es20.12,1x,es20.12,1x,i1)')x0_array(irandom,iyy),&
+               &y0_array(irandom,iyy),err_array(irandom,iyy)
+          enddo ! irandom
+          write(io,'()')
+          write(io,'()')
+        enddo ! jset
+      enddo ! iset
+      ! Close dump file.
+      close(io)
+    endif
 
     ! Compute and report intersection(s).
     write(6,'(a)')'Intersections:'
@@ -4571,9 +4638,17 @@ CONTAINS
 
 
   SUBROUTINE intersect_zero(fit,glob_X0,a,intersect_range,x0,ierr)
-    !----------------------------------------!
-    ! Find zero of fit with parameters A(:). !
-    !----------------------------------------!
+    !------------------------------------------------------------------!
+    ! Find zero of fit with parameters A(:).  IERR return values:      !
+    ! 0: intersection found                                            !
+    ! 1: one linear/one or two quadratic intersections left of range   !
+    !    or no quadratic intersection in leftof search                 !
+    ! 2: one linear/one or two quadratic intersections right of range  !
+    !    or no quadratic intersection in rightof search                !
+    ! 3: two quadratic intersections, each either side of the range    !
+    ! 4: bisection error / no quadratic intersections in fully bounded !
+    !    or fully unbounded search                                     !
+    !------------------------------------------------------------------!
     IMPLICIT NONE
     TYPE(fit_form_type),INTENT(in) :: fit
     DOUBLE PRECISION,INTENT(in) :: glob_X0,a(fit%npoly)
@@ -4586,7 +4661,7 @@ CONTAINS
     DOUBLE PRECISION t1,x0a,x0b,xmid,xl,xr,yl,yr
 
     ! Initialize output variables.
-    ierr=1
+    ierr=4
     x0=0.d0
 
     ! See if we are dealing with an especially simple case.
@@ -4602,8 +4677,13 @@ CONTAINS
       x0=-a(1)/a(2)+glob_X0
 
       ! Flag error if outside range.
-      if((intersect_range%have_x1.and.x0<intersect_range%x1).or.&
-         &(intersect_range%have_x2.and.x0>intersect_range%x2))return
+      if(intersect_range%have_x1.and.x0<intersect_range%x1)then
+        ierr=1
+        return
+      elseif(intersect_range%have_x2.and.x0>intersect_range%x2)then
+        ierr=2
+        return
+      endif
 
     elseif(is_poly2)then
 
@@ -4613,11 +4693,25 @@ CONTAINS
         ! Discriminant is zero: one intersection.
         x0=-0.5d0*a(2)/a(3)+glob_X0
         ! Flag error if outside range.
-        if((intersect_range%have_x1.and.x0<intersect_range%x1).or.&
-           &(intersect_range%have_x2.and.x0>intersect_range%x2))return
+        if(intersect_range%have_x1.and.x0<intersect_range%x1)then
+          ierr=1
+          return
+        elseif(intersect_range%have_x2.and.x0>intersect_range%x2)then
+          ierr=2
+          return
+        endif
       elseif(t1<0.d0)then
         ! Discriminant is negative: no intersections.
-        return
+        if(intersect_range%have_x1.and..not.intersect_range%have_x2)then
+          ierr=2
+          return
+        elseif(intersect_range%have_x2.and..not.intersect_range%have_x1)then
+          ierr=1
+          return
+        else
+          ierr=4
+          return
+        endif
       else
         ! Discriminant is positive: two intersections.
         x0a=0.5d0*(-a(2)+sqrt(t1))/a(3)+glob_X0
@@ -4655,7 +4749,18 @@ CONTAINS
         elseif(x0b_in_interval)then
           x0=x0b
         else
-          return
+          if(intersect_range%have_x1.and.x0a<intersect_range%x1.and.&
+             &x0b<intersect_range%x1)then
+            ierr=1
+            return
+          elseif(intersect_range%have_x2.and.x0a>intersect_range%x2.and.&
+             &x0b>intersect_range%x2)then
+            ierr=2
+            return
+          else
+            ierr=3
+            return
+          endif
         endif ! x0a and/or x0b in interval
       endif ! sign of discriminant
 
