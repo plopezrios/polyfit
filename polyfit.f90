@@ -3937,6 +3937,7 @@ CONTAINS
     DOUBLE PRECISION x0,y0,dx0,dy0,errfrac,chi2
     DOUBLE PRECISION x0l,x0r,x02sl,x02sr,x01sl,x01sr,x0med,y0l,y0r,y02sl,&
        &y02sr,y01sl,y01sr,y0med
+    DOUBLE PRECISION, ALLOCATABLE :: xpack(:),ypack(:)
 
     ! Range checks.
     all_are_poly1=.true.
@@ -4118,32 +4119,30 @@ CONTAINS
            &err_array(1,iyy),x0,dx0,y0,dy0,errfrac,ierr)
         if(ierr==0)then
           ngood=count(err_array(:,iyy)==0)
-          x0l=find_pth_smallest(nint(dble(ngood)*0.001d0),ngood,&
-             &pack(x0_array(:,iyy),err_array(:,iyy)==0))
-          x0r=find_pth_smallest(nint(dble(ngood)*0.999d0),ngood,&
-             &pack(x0_array(:,iyy),err_array(:,iyy)==0))
+          allocate(xpack(ngood),ypack(ngood))
+          xpack=pack(x0_array(:,iyy),err_array(:,iyy)==0)
+          ypack=pack(y0_array(:,iyy),err_array(:,iyy)==0)
+          x0l=find_pth_smallest(nint(dble(ngood)*0.001d0),ngood,xpack)
+          x0r=find_pth_smallest(nint(dble(ngood)*0.999d0),ngood,xpack)
           x02sl=find_pth_smallest(nint(dble(ngood)*0.022750131948d0),ngood,&
-             &x0_array(:,iyy))
+             &xpack)
           x02sr=find_pth_smallest(nint(dble(ngood)*0.977249868052d0),ngood,&
-             &x0_array(:,iyy))
+             &xpack)
           x01sl=find_pth_smallest(nint(dble(ngood)*0.158655254d0),ngood,&
-             &x0_array(:,iyy))
+             &xpack)
           x01sr=find_pth_smallest(nint(dble(ngood)*0.841344746d0),ngood,&
-             &x0_array(:,iyy))
-          x0med=find_pth_smallest(nint(dble(ngood)*0.5d0),ngood,x0_array(:,iyy))
-          y0l=find_pth_smallest(nint(dble(ngood)*0.001d0),ngood,&
-             &pack(y0_array(:,iyy),err_array(:,iyy)==0))
-          y0r=find_pth_smallest(nint(dble(ngood)*0.999d0),ngood,&
-             &pack(y0_array(:,iyy),err_array(:,iyy)==0))
+             &xpack)
+          x0med=find_pth_smallest(nint(dble(ngood)*0.5d0),ngood,xpack)
+          y0l=find_pth_smallest(nint(dble(ngood)*0.001d0),ngood,ypack)
+          y0r=find_pth_smallest(nint(dble(ngood)*0.999d0),ngood,ypack)
           y02sl=find_pth_smallest(nint(dble(ngood)*0.022750131948d0),ngood,&
-             &y0_array(:,iyy))
+             &ypack)
           y02sr=find_pth_smallest(nint(dble(ngood)*0.977249868052d0),ngood,&
-             &y0_array(:,iyy))
-          y01sl=find_pth_smallest(nint(dble(ngood)*0.158655254d0),ngood,&
-             &y0_array(:,iyy))
-          y01sr=find_pth_smallest(nint(dble(ngood)*0.841344746d0),ngood,&
-             &y0_array(:,iyy))
-          y0med=find_pth_smallest(nint(dble(ngood)*0.5d0),ngood,y0_array(:,iyy))
+             &ypack)
+          y01sl=find_pth_smallest(nint(dble(ngood)*0.158655254d0),ngood,ypack)
+          y01sr=find_pth_smallest(nint(dble(ngood)*0.841344746d0),ngood,ypack)
+          y0med=find_pth_smallest(nint(dble(ngood)*0.5d0),ngood,ypack)
+          deallocate(xpack,ypack)
         else
           x0l=0.d0
           x0r=0.d0
