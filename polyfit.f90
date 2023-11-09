@@ -3933,7 +3933,10 @@ CONTAINS
     INTEGER,PARAMETER :: io=10
     LOGICAL is_consecutive,all_are_poly1,all_are_poly2,file_exists
     INTEGER ifit,jfit,icfit,ncfit,i,iset,jset,iyy,nyy,irandom,nsample,ierr
+    INTEGER ngood
     DOUBLE PRECISION x0,y0,dx0,dy0,errfrac,chi2
+    DOUBLE PRECISION x0l,x0r,x02sl,x02sr,x01sl,x01sr,x0med,y0l,y0r,y02sl,&
+       &y02sr,y01sl,y01sr,y0med
 
     ! Range checks.
     all_are_poly1=.true.
@@ -4098,6 +4101,86 @@ CONTAINS
           write(6,'(2(1x,i3),5(1x,es20.12))')iset,jset,&
              &0.d0,0.d0,0.d0,0.d0,errfrac
         endif
+      enddo ! jset
+    enddo ! iset
+    write(6,'()')
+
+    ! Report intersection quantiles:
+    write(6,'(a)')'Intersection quantiles:'
+    write(6,'(4x)',advance='no')
+    write(6,'(1x,a7,1x,a16,2(1x,a20))')'Sets ','Quantile    ',&
+       &'X0          ','Y0          '
+    iyy=0
+    do iset=1,ndataset
+      do jset=iset+1,ndataset
+        iyy=iyy+1
+        call forgiving_analysis(nsample,x0_array(1,iyy),y0_array(1,iyy),&
+           &err_array(1,iyy),x0,dx0,y0,dy0,errfrac,ierr)
+        if(ierr==0)then
+          ngood=count(err_array(:,iyy)==0)
+          x0l=find_pth_smallest(nint(dble(ngood)*0.001d0),ngood,&
+             &pack(x0_array(:,iyy),err_array(:,iyy)==0))
+          x0r=find_pth_smallest(nint(dble(ngood)*0.999d0),ngood,&
+             &pack(x0_array(:,iyy),err_array(:,iyy)==0))
+          x02sl=find_pth_smallest(nint(dble(ngood)*0.022750131948d0),ngood,&
+             &x0_array(:,iyy))
+          x02sr=find_pth_smallest(nint(dble(ngood)*0.977249868052d0),ngood,&
+             &x0_array(:,iyy))
+          x01sl=find_pth_smallest(nint(dble(ngood)*0.158655254d0),ngood,&
+             &x0_array(:,iyy))
+          x01sr=find_pth_smallest(nint(dble(ngood)*0.841344746d0),ngood,&
+             &x0_array(:,iyy))
+          x0med=find_pth_smallest(nint(dble(ngood)*0.5d0),ngood,x0_array(:,iyy))
+          y0l=find_pth_smallest(nint(dble(ngood)*0.001d0),ngood,&
+             &pack(y0_array(:,iyy),err_array(:,iyy)==0))
+          y0r=find_pth_smallest(nint(dble(ngood)*0.999d0),ngood,&
+             &pack(y0_array(:,iyy),err_array(:,iyy)==0))
+          y02sl=find_pth_smallest(nint(dble(ngood)*0.022750131948d0),ngood,&
+             &y0_array(:,iyy))
+          y02sr=find_pth_smallest(nint(dble(ngood)*0.977249868052d0),ngood,&
+             &y0_array(:,iyy))
+          y01sl=find_pth_smallest(nint(dble(ngood)*0.158655254d0),ngood,&
+             &y0_array(:,iyy))
+          y01sr=find_pth_smallest(nint(dble(ngood)*0.841344746d0),ngood,&
+             &y0_array(:,iyy))
+          y0med=find_pth_smallest(nint(dble(ngood)*0.5d0),ngood,y0_array(:,iyy))
+        else
+          x0l=0.d0
+          x0r=0.d0
+          x02sl=0.d0
+          x02sr=0.d0
+          x01sl=0.d0
+          x01sr=0.d0
+          x0med=0.d0
+          y0l=0.d0
+          y0r=0.d0
+          y02sl=0.d0
+          y02sr=0.d0
+          y01sl=0.d0
+          y01sr=0.d0
+          y0med=0.d0
+        endif
+        write(6,'(a4)',advance='no')'INTQ'
+        write(6,'(2(1x,i3),1x,a16,2(1x,es20.12))')iset,jset,&
+           &' 0.10%          ',x0l,y0l
+        write(6,'(a4)',advance='no')'INTQ'
+        write(6,'(2(1x,i3),1x,a16,4(1x,es20.12))')iset,jset,&
+           &' 2.27% (2-sigma)',x02sl,y02sl
+        write(6,'(a4)',advance='no')'INTQ'
+        write(6,'(2(1x,i3),1x,a16,4(1x,es20.12))')iset,jset,&
+           &'15.87% (1-sigma)',x01sl,y01sl
+        write(6,'(a4)',advance='no')'INTQ'
+        write(6,'(2(1x,i3),1x,a16,4(1x,es20.12))')iset,jset,&
+           &'50.00% (median) ',x0med,y0med
+        write(6,'(a4)',advance='no')'INTQ'
+        write(6,'(2(1x,i3),1x,a16,4(1x,es20.12))')iset,jset,&
+           &'84.13% (1-sigma)',x01sr,y01sr
+        write(6,'(a4)',advance='no')'INTQ'
+        write(6,'(2(1x,i3),1x,a16,4(1x,es20.12))')iset,jset,&
+           &'97.72% (2-sigma)',x02sr,y02sr
+        write(6,'(a4)',advance='no')'INTQ'
+        write(6,'(2(1x,i3),1x,a16,2(1x,es20.12))')iset,jset,&
+           &'99.9%           ',x0r,y0r
       enddo ! jset
     enddo ! iset
     write(6,'()')
