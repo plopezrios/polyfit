@@ -150,6 +150,7 @@ CONTAINS
     INTEGER ncolumn,icol_x,icol_y,icol_dx,icol_dy,icol_w
     CHARACTER(256) fname,dname
     ! Input file search facility.
+    LOGICAL neg
     INTEGER,PARAMETER :: search_size=8192
     INTEGER nsearch,ndiscr
     INTEGER,POINTER :: fsearch(:),fdiscr(:)
@@ -383,7 +384,7 @@ CONTAINS
           case('where')
             ! Add a search clause.
             ifield=ifield+1
-            call parse_search_clause(field(ifield,command),i,token)
+            call parse_search_clause(field(ifield,command),i,token,neg)
             if(i<1)then
               call msg('Syntax error: could not parse argument to "where" &
                  &subcommand.')
@@ -397,7 +398,9 @@ CONTAINS
             call resize_pointer_int1((/nsearch/),fsearch)
             call resize_pointer_char1(search_size,(/nsearch/),search)
             fsearch(nsearch)=i
+            if(neg)fsearch(nsearch)=-fsearch(nsearch)
             search(nsearch)=token
+
           case('by')
             ! Add a discriminator clause.
             if(trim(field(1,command))=='wload')then
@@ -2508,8 +2511,8 @@ CONTAINS
           call pprint('')
           call pprint('* inspect <file>',0,2)
           call pprint('* load <file> [type <type> [using <column-list>]] &
-             &[where $<column>==<value>] [by $<column>]',0,2)
-          call pprint('* wload <file> [using <column>] [where $<column>==&
+             &[where $<column><eq><value>] [by $<column>]',0,2)
+          call pprint('* wload <file> [using <column>] [where $<column><eq>&
              &<value>]',0,2)
           call pprint('* unload <set-index>',0,2)
           call pprint('* fit',0,2)
@@ -2546,7 +2549,7 @@ CONTAINS
         case('load')
           call pprint('')
           call pprint('Command: load <file> [type <type> &
-             &[using <column-list>]] [where $<column>==<value>] &
+             &[using <column-list>]] [where $<column><eq><value>] &
              &[by $<column>]',0,9)
           call pprint('')
           call pprint('Loads data from <file> into a new dataset.  By &
@@ -2572,8 +2575,9 @@ CONTAINS
              &the "load" command.',2,2)
           call pprint('')
           call pprint('The "where" subcommand restricts file parsing to lines &
-             &where column <column> takes the value <value>.  <value> can be &
-             &a string.  If multiple "where" subcommands are specified, only &
+             &where column <column> is either equal (when <eq> is ==) or &
+             &unequal (when <eq> is !=) to <value>.  <value> can be a &
+             &string.  If multiple "where" subcommands are specified, only &
              &lines for which ALL specified columns take the required values &
              &are loadedi (i.e., logical AND operations combine multiple &
              &"where" clauses).',2,2)
@@ -2587,12 +2591,12 @@ CONTAINS
           call pprint('Example:',2,2)
           call pprint('')
           call pprint('load "../data.dat" type ywdy using 3,5,4 &
-             &where $2==good where $7==1/4 by $1',4,6)
+             &where $2!=bad where $7==1/4 by $1',4,6)
           call pprint('')
           call pprint('This will read file "../data.dat", loading y, dy, and &
              &w from colums 3, 4, and 5, setting x to the data-point index. &
-             &Lines whose column 2 does not contain "good" or whose column 7 &
-             &does not contain 0.25 are skipped, and the loaded data are &
+             &Lines whose column 2 contains "bad" or whose column 7 does not &
+             &contain the value 0.25 are skipped, and the loaded data are &
              &split into individual datasets for each distinct value of &
              &column 1.  Note that data-point indices for each dataset run &
              &independently, i.e., the first value of x in each dataset will &
@@ -2602,7 +2606,7 @@ CONTAINS
         case('wload')
           call pprint('')
           call pprint('Command: wload <file> [using <column>] &
-             &[where $<column>==<value>]',0,9)
+             &[where $<column><eq><value>]',0,9)
           call pprint('')
           call pprint('Loads global dataset weights from column <column> &
              &(column 1 by default) of <file>.  These weights are applied to &
@@ -2616,8 +2620,9 @@ CONTAINS
              &sensitive).',2,2)
           call pprint('')
           call pprint('The "where" subcommand restricts file parsing to lines &
-             &where column <column> takes the value <value>.  <value> can be &
-             &a string.  If multiple "where" subcommands are specified, only &
+             &where column <column> is either equal (when <eq> is ==) or &
+             &unequal (when <eq> is !=) to <value>.  <value> can be a &
+             &string.  If multiple "where" subcommands are specified, only &
              &lines for which ALL specified columns take the required values &
              &are loadedi (i.e., logical AND operations combine multiple &
              &"where" clauses).',2,2)
@@ -6688,6 +6693,7 @@ CONTAINS
     CHARACTER(8192) line,label,sname
     CHARACTER(8192),POINTER :: discr(:,:)
     INTEGER i,ipos,isearch,iset,idiscr,io
+    LOGICAL neg,match
     ! Constants.
     INTEGER, PARAMETER :: io_stdin=5,io_file=10
 
@@ -6739,8 +6745,10 @@ CONTAINS
       endif
       ! Verify that this line contains all search strings.
       do isearch=1,nsearch
-        if(.not.eq_dble_string(trim(field(fsearch(isearch),line)),&
-          &trim(search(isearch))))exit
+        neg=fsearch(isearch)<0
+        match=eq_dble_string(trim(field(abs(fsearch(isearch)),line)),&
+          &trim(search(isearch)))
+        if(neg.eqv.match)exit
       enddo ! isearch
       if(isearch<=nsearch)cycle
       ! Decide which dataset this goes in.
@@ -8455,25 +8463,34 @@ CONTAINS
   END SUBROUTINE parse_rlist
 
 
-  SUBROUTINE parse_search_clause(string,icol,search)
-    !-------------------------------------------------------!
-    ! Given string "$n==search" return icol=n (where n is a !
-    ! positive integer) and search (a string), or icol=0 if !
-    ! there is an error.                                    !
-    !-------------------------------------------------------!
+  SUBROUTINE parse_search_clause(string,icol,search,neg)
+    !---------------------------------------------------------!
+    ! Given string "$n==search" or "$n!=search" return icol=n !
+    ! (where n is a positive integer) and search (a string),  !
+    ! or icol=0 if there is an error.                         !
+    !---------------------------------------------------------!
     IMPLICIT NONE
     CHARACTER(*),INTENT(in) :: string
     INTEGER,INTENT(inout) :: icol
     CHARACTER(*),INTENT(inout) :: search
+    LOGICAL,INTENT(inout) :: neg
     INTEGER ipos
 
     ! Initialize.
     icol=0
     search=''
+    neg=.false.
 
-    ! Find '=' and parse column number to its left.
-    ipos=scan(string,'=')
-    if(ipos<1)return
+    ! See if this is a negative clause.
+    ipos=scan(string,'!')
+    if(ipos<1)ipos=scan(string,'/')
+    if(ipos>0)then
+      neg=.true.
+    else
+      ! Find '=' and parse column number to its left.
+      ipos=scan(string,'=')
+      if(ipos<1)return
+    end if
     call parse_colnum(string(1:ipos-1),icol)
     if(icol<1)return
 
