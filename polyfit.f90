@@ -165,7 +165,7 @@ CONTAINS
     CHARACTER(8192) command,token
     LOGICAL, ALLOCATABLE :: lmask(:)
     INTEGER i,j,ifield,ierr,ipos_x,ipos_y,ipos_dx,ipos_dy,ipos_w,ierr1,&
-       &ierr2,nxy,itransf,iset,jset,npoly,ifit,jfit,max_npoly
+       &ierr2,nxy,itransf,iset,jset,npoly,ifit,jfit,max_npoly,ci_choice
     INTEGER, POINTER :: ilist(:)
     DOUBLE PRECISION t1,t2,wexp,find_target
     DOUBLE PRECISION, POINTER :: rlist(:)
@@ -664,6 +664,7 @@ CONTAINS
           cycle user_loop
         end select
         ! Parse sub-commands.
+        ci_choice=0
         fname='fit.plot'
         ifield=2
         do
@@ -704,6 +705,12 @@ CONTAINS
             deval%rel=.true.
             deval%Xrel=t1
             ifield=ifield+1
+          case('one-sigma')
+            ci_choice=1
+            ifield=ifield+1
+          case('two-sigma')
+            ci_choice=2
+            ifield=ifield+1
           case default
             call msg('Syntax error: unknown subcommand "'//&
                &trim(field(ifield,command))//'".')
@@ -711,7 +718,7 @@ CONTAINS
           end select
         enddo
         call plot_multipoly(ndataset,dlist,drange,nfit,flist,deval,glob,&
-           &trim(fname))
+           &trim(fname),ci_choice=ci_choice)
 
       case('probability')
         if(ndataset<1)then
@@ -2517,7 +2524,7 @@ CONTAINS
           call pprint('* unload <set-index>',0,2)
           call pprint('* fit',0,2)
           call pprint('* plot <function> [at <xvalues>] [wrt <X>] &
-             &[to <file-name>]',0,2)
+             &[to <file-name>] [one-sigma|two-sigma]',0,2)
           call pprint('* assess <variables> [using <function> at X <X> &
              &[for <set-list>]]',0,2)
           call pprint('* report <report>',0,2)
@@ -2646,7 +2653,7 @@ CONTAINS
         case('plot')
           call pprint('')
           call pprint('Command: plot <function> [at <xvalues>] [wrt <X>] &
-             &[to <filename>]',0,9)
+             &[to <filename>] [one-sigma|two-sigma]',0,9)
           call pprint('')
           call pprint('Plot a function of the fit to <filename>.',2,2)
           call pprint('')
@@ -2676,6 +2683,13 @@ CONTAINS
              &fit function is split into a shared part and a set-specific &
              &part -- data points are offset by the value of the set-specific &
              &part, and the shared part of the fit is plotted.',2,2)
+          call pprint('')
+          call pprint('By default, data are plotted as "x f df", where f is &
+             &the mean value of the function and df its standard error.  If &
+             &"one-sigma" or "two-sigma" are specified, data are instead &
+             &written as "x f_lo f f_hi", where f_lo and f_hi are the lower &
+             &and upper bounds of the requested (one-sigma or two-sigma) &
+             &confidence interval on the value of f.',2,2)
           call pprint('')
 
         case('assess')
@@ -4927,7 +4941,7 @@ CONTAINS
 
 
   SUBROUTINE plot_multipoly(ndataset,dlist,drange,nfit,flist,deval,glob,&
-     &fname,append)
+     &fname,append,ci_choice)
     !--------------------------------!
     ! Perform chosen fit and report. !
     !--------------------------------!
@@ -4940,14 +4954,15 @@ CONTAINS
     TYPE(global_params_type),INTENT(in) :: glob
     CHARACTER(*),INTENT(in) :: fname
     LOGICAL,INTENT(in),OPTIONAL :: append
+    INTEGER,INTENT(in),OPTIONAL :: ci_choice
     ! Quick-access pointers.
     TYPE(dataset_type),POINTER :: dataset
     TYPE(xy_type),POINTER :: xy
     ! Local variables.
-    INTEGER iset,ifit,i,ierr,op_npoly,max_npoly
+    INTEGER iset,ifit,i,ierr,op_npoly,max_npoly,plot_ci
     LOGICAL do_append
     DOUBLE PRECISION tx0,tx1,t1,f0
-    DOUBLE PRECISION,ALLOCATABLE :: fmean(:,:),ferr(:,:),a(:,:),&
+    DOUBLE PRECISION,ALLOCATABLE :: fmean(:,:),fmean_xs(:,:),ferr(:,:),a(:,:),&
        &op_a(:),op_pow(:)
     INTEGER,PARAMETER :: io=10
 
@@ -4960,8 +4975,11 @@ CONTAINS
     op_a=0.d0
     op_pow=0.d0
 
+    ! Handle optional arguments.
     do_append=.false.
     if(present(append))do_append=append
+    plot_ci=0
+    if(present(ci_choice))plot_ci=max(0,min(2,ci_choice))
 
     ! Open plot file.
     if(.not.do_append)then
@@ -5009,9 +5027,21 @@ CONTAINS
     ! Perform fit and plot
     allocate(fmean(deval%n,ndataset),ferr(deval%n,ndataset),&
        &a(max_npoly,ndataset))
+    if(plot_ci>0)allocate(fmean_xs(deval%n,ndataset))
     if(trim(deval%what)/='shared')then
-      call eval_multifit_monte_carlo(ndataset,dlist,drange,nfit,flist,&
-         &glob,deval,ierr,fmean=fmean,ferr=ferr,amean=a,silent=.true.)
+      select case(plot_ci)
+      case(0)
+        call eval_multifit_monte_carlo(ndataset,dlist,drange,nfit,flist,&
+           &glob,deval,ierr,fmean=fmean,ferr=ferr,amean=a,silent=.true.)
+      case(1)
+        call eval_multifit_monte_carlo(ndataset,dlist,drange,nfit,flist,&
+           &glob,deval,ierr,fmean=fmean,fmean_1s=fmean_xs,ferr_1s=ferr,&
+           &amean=a,silent=.true.)
+      case(2)
+        call eval_multifit_monte_carlo(ndataset,dlist,drange,nfit,flist,&
+           &glob,deval,ierr,fmean=fmean,fmean_2s=fmean_xs,ferr_2s=ferr,&
+           &amean=a,silent=.true.)
+      end select
       if(ierr/=0)then
         call msg('Could not perform fit.')
         close(io,status='delete')
@@ -5049,14 +5079,34 @@ CONTAINS
       ! Plot fit functions.
       do iset=1,ndataset
         do i=1,deval%n
-          write(io,*)deval%x(i),fmean(i,iset),ferr(i,iset)
+          select case(plot_ci)
+          case(0)
+            write(io,*)deval%x(i),fmean(i,iset),ferr(i,iset)
+          case(1)
+            write(io,*)deval%x(i),fmean_xs(i,iset)-ferr(i,iset),&
+               &fmean(i,iset),fmean_xs(i,iset)+ferr(i,iset)
+          case(2)
+            write(io,*)deval%x(i),fmean_xs(i,iset)-2.d0*ferr(i,iset),&
+               &fmean(i,iset),fmean_xs(i,iset)+2.d0*ferr(i,iset)
+          end select
         enddo ! i
         write(io,'()')
         write(io,'()')
       enddo ! iset
     else
-      call eval_multifit_monte_carlo(ndataset,dlist,drange,nfit,flist,&
-         &glob,deval,ierr,fmean=fmean,ferr=ferr,amean=a,silent=.true.)
+      select case(plot_ci)
+      case(0)
+        call eval_multifit_monte_carlo(ndataset,dlist,drange,nfit,flist,&
+           &glob,deval,ierr,fmean=fmean,ferr=ferr,amean=a,silent=.true.)
+      case(1)
+        call eval_multifit_monte_carlo(ndataset,dlist,drange,nfit,flist,&
+           &glob,deval,ierr,fmean=fmean,fmean_1s=fmean_xs,ferr_1s=ferr,&
+           &amean=a,silent=.true.)
+      case(2)
+        call eval_multifit_monte_carlo(ndataset,dlist,drange,nfit,flist,&
+           &glob,deval,ierr,fmean=fmean,fmean_2s=fmean_xs,ferr_2s=ferr,&
+           &amean=a,silent=.true.)
+      end select
       if(ierr/=0)then
         call msg('Could not perform fit.')
         close(io,status='delete')
@@ -5100,6 +5150,16 @@ CONTAINS
       ! Plot shared part of fit functions.
       do i=1,deval%n
         write(io,*)deval%x(i),fmean(i,1),ferr(i,1)
+        select case(plot_ci)
+        case(0)
+          write(io,*)deval%x(i),fmean(i,1),ferr(i,1)
+        case(1)
+          write(io,*)deval%x(i),fmean_xs(i,1)-ferr(i,1),&
+             &fmean(i,1),fmean_xs(i,1)+ferr(i,1)
+        case(2)
+          write(io,*)deval%x(i),fmean_xs(i,1)-2.d0*ferr(i,1),&
+             &fmean(i,1),fmean_xs(i,1)+2.d0*ferr(i,1)
+        end select
       enddo ! i
       write(io,'()')
       write(io,'()')
