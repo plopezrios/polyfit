@@ -158,7 +158,7 @@ CONTAINS
     ! Input echo.
     LOGICAL input_echo
     ! Intersect command.
-    LOGICAL use_mix
+    LOGICAL use_mix,use_Xrel
     TYPE(intersect_range_type) :: intersect_range
     ! Misc variables.
     CHARACTER(7) settype
@@ -167,7 +167,7 @@ CONTAINS
     INTEGER i,j,ifield,ierr,ipos_x,ipos_y,ipos_dx,ipos_dy,ipos_w,ierr1,&
        &ierr2,nxy,itransf,iset,jset,npoly,ifit,jfit,max_npoly,ci_choice
     INTEGER, POINTER :: ilist(:)
-    DOUBLE PRECISION t1,t2,wexp,find_target
+    DOUBLE PRECISION t1,t2,wexp,find_target,Xrel
     DOUBLE PRECISION, POINTER :: rlist(:)
 
     ! Write header.
@@ -1045,6 +1045,7 @@ CONTAINS
 
         ! Parse options.
         intersect_range=intersect_range_default
+        use_Xrel=.false.
         ifield=4
         do
           select case(field(ifield,command))
@@ -1153,6 +1154,20 @@ CONTAINS
             endif
             intersect_range%xmid=t1
             intersect_range%have_xmid=.true.
+          case('wrt')
+            if(nfield(command)<ifield+1)then
+              call msg('Syntax error: "wrt" subcommand must be followed &
+                 &by X value.')
+              cycle user_loop
+            endif
+            t1=dble_field(ifield+1,command,ierr)
+            if(ierr/=0)then
+              call msg('Syntax error: could not parse "wrt" value.')
+              cycle user_loop
+            endif
+            use_Xrel=.true.
+            Xrel=t1
+            ifield=ifield+1
           case('')
             exit
           case default
@@ -1165,7 +1180,7 @@ CONTAINS
 
         ! Perform intersection.
         call find_fit_value(ndataset,dlist,nfit,flist,glob,drange,&
-           &intersect_range,deval,find_target)
+           &intersect_range,deval,find_target,use_Xrel,Xrel)
 
       case('intersect')
 
@@ -2790,7 +2805,7 @@ CONTAINS
         case('find')
           call pprint('')
           call pprint('Command: find <function> <value> [between <X1> <X2>] &
-             &[rightof <X1>] [leftof <X2>] [near <Xmid>]',0,9)
+             &[rightof <X1>] [leftof <X2>] [near <Xmid>] [wrt <X0>]',0,9)
           call pprint('')
           call pprint('Report the location X at which <function> takes the &
              &value <value>.',2,2)
@@ -2834,6 +2849,10 @@ CONTAINS
              &resample to yield no (or out-of-range) locations.  The &
              &fraction of failures is reported as "missfrac".  The failures &
              &are simply ignored in computing the results.',2,2)
+          call pprint('')
+          call pprint('The "wrt" option causes the value of Y at X to be &
+             &reported relative to its value at the specified position X0.',&
+             &2,2)
           call pprint('')
 
         case('intersect')
@@ -3719,7 +3738,7 @@ CONTAINS
 
 
   SUBROUTINE find_fit_value(ndataset,dlist,nfit,flist,glob,drange,&
-    &intersect_range,deval,find_target)
+    &intersect_range,deval,find_target,use_Xrel,Xrel)
     !----------------------------------------------!
     ! Find the location of the requested value and !
     ! report to stdout.                            !
@@ -3733,6 +3752,8 @@ CONTAINS
     TYPE(intersect_range_type),INTENT(in) :: intersect_range
     TYPE(eval_type),INTENT(in) :: deval
     DOUBLE PRECISION,INTENT(in) :: find_target
+    LOGICAL,INTENT(in) :: use_Xrel
+    DOUBLE PRECISION,INTENT(in) :: Xrel
     ! Monte Carlo sample storage.
     DOUBLE PRECISION,ALLOCATABLE :: w_vector(:)
     DOUBLE PRECISION,ALLOCATABLE :: x0_array(:,:),y0_array(:,:)
@@ -3749,7 +3770,7 @@ CONTAINS
     TYPE(xy_type),POINTER :: xy,xy_orig
     ! Local variables.
     TYPE(fit_form_type),POINTER :: fit_form_target,tmp_fit_form
-    LOGICAL is_consecutive,all_are_poly1,all_are_poly2
+    LOGICAL report_relative_y,is_consecutive,all_are_poly1,all_are_poly2
     INTEGER ifit,i,iset,irandom,nsample,ierr,ideriv
     DOUBLE PRECISION x0,y0,dx0,dy0,errfrac,chi2
     INTEGER op_npoly
@@ -3886,6 +3907,8 @@ CONTAINS
            &intersect_range,x0,ierr)
         y0=eval_poly(flist(ifit)%fit%npoly,flist(ifit)%fit%pow,a(1,iset),&
            &x0-glob%X0)
+        if (use_Xrel) y0=y0-eval_poly(flist(ifit)%fit%npoly,&
+           &flist(ifit)%fit%pow,a(1,iset),Xrel-glob%X0)
         x0_array(irandom,iset)=x0
         y0_array(irandom,iset)=y0
         err_array(irandom,iset)=ierr
