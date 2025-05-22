@@ -61,6 +61,11 @@ PROGRAM polyfit
   END TYPE dataset_list_type
 
   ! * Fit form.
+  ! FIXME - allow setting fixed coefficients.  E.g., uncertainty
+  ! as a function of MC sample size in log-log scale should have a -1/2
+  ! slope; this could be done in linear scale by fitting with an (1/X)^1/2
+  ! form, but Y is allowed to be negative which is unphysical, so log-log
+  ! with fixed slope would be far better.
   TYPE fit_form_type
     ! Polynomial order, powers of X in polynomial, shared parameter indices.
     INTEGER :: npoly=0
