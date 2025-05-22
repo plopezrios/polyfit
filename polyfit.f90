@@ -707,10 +707,8 @@ CONTAINS
             ifield=ifield+1
           case('one-sigma')
             ci_choice=1
-            ifield=ifield+1
           case('two-sigma')
             ci_choice=2
-            ifield=ifield+1
           case default
             call msg('Syntax error: unknown subcommand "'//&
                &trim(field(ifield,command))//'".')
